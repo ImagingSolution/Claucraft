@@ -1,0 +1,49 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ClaudeCodeMDI.UsageChartWindow"
+        Title="Claude Usage Chart"
+        Width="650" Height="440"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#0D0D1A">
+
+    <DockPanel Margin="20">
+        <!-- Header -->
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
+            <TextBlock Text="Daily Usage"
+                       FontSize="20" FontWeight="Bold"
+                       Foreground="White" />
+            <TextBlock Text="Last 14 days activity overview"
+                       FontSize="12" Foreground="#60FFFFFF" Margin="0,2,0,0" />
+        </StackPanel>
+
+        <!-- Legend -->
+        <Border DockPanel.Dock="Bottom" Background="#10FFFFFF"
+                CornerRadius="8" Padding="12,8" Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="24"
+                        HorizontalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Border Width="14" Height="14" Background="#4CAF50" CornerRadius="3" />
+                    <TextBlock Text="Messages" FontSize="12"
+                               Foreground="#B0FFFFFF" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Border Width="14" Height="14" Background="#2196F3" CornerRadius="3" />
+                    <TextBlock Text="Tool Calls" FontSize="12"
+                               Foreground="#B0FFFFFF" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Border Width="14" Height="14" Background="#FF9800" CornerRadius="3" />
+                    <TextBlock Text="Sessions" FontSize="12"
+                               Foreground="#B0FFFFFF" VerticalAlignment="Center" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Chart canvas -->
+        <Border BorderBrush="#20FFFFFF" BorderThickness="1" CornerRadius="8"
+                Padding="0" ClipToBounds="True" Background="#08FFFFFF">
+            <Canvas x:Name="ChartCanvas" />
+        </Border>
+    </DockPanel>
+</Window>

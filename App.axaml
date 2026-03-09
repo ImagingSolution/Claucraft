@@ -1,0 +1,123 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="ClaudeCodeMDI.App"
+             RequestedThemeVariant="Dark">
+
+    <Application.Styles>
+        <FluentTheme />
+
+        <!-- Modern Button Style -->
+        <Style Selector="Button.toolbar">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Opacity" Value="0.85" />
+        </Style>
+        <Style Selector="Button.toolbar:pointerover">
+            <Setter Property="Background" Value="#30FFFFFF" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="Button.toolbar:pressed">
+            <Setter Property="Background" Value="#20FFFFFF" />
+        </Style>
+
+        <!-- Icon Button Style -->
+        <Style Selector="Button.icon-btn">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Opacity" Value="0.7" />
+        </Style>
+        <Style Selector="Button.icon-btn:pointerover">
+            <Setter Property="Background" Value="#25FFFFFF" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+
+        <!-- Primary accent button -->
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="#0D6EFD" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="14,6" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Button.primary:pointerover">
+            <Setter Property="Background" Value="#3D8BFD" />
+        </Style>
+        <Style Selector="Button.primary:pressed">
+            <Setter Property="Background" Value="#0A58CA" />
+        </Style>
+        <Style Selector="Button.primary:disabled">
+            <Setter Property="Background" Value="#30FFFFFF" />
+            <Setter Property="Foreground" Value="#60FFFFFF" />
+        </Style>
+
+        <!-- Modern TextBox -->
+        <Style Selector="TextBox.modern">
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="#40FFFFFF" />
+            <Setter Property="Background" Value="#15FFFFFF" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        <Style Selector="TextBox.modern:focus">
+            <Setter Property="BorderBrush" Value="#0D6EFD" />
+        </Style>
+
+        <!-- Modern ComboBox -->
+        <Style Selector="ComboBox.modern">
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="#40FFFFFF" />
+            <Setter Property="Background" Value="#15FFFFFF" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+
+        <!-- Modern ToggleButton -->
+        <Style Selector="ToggleButton.toolbar">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Opacity" Value="0.85" />
+        </Style>
+        <Style Selector="ToggleButton.toolbar:pointerover">
+            <Setter Property="Background" Value="#30FFFFFF" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="ToggleButton.toolbar:checked">
+            <Setter Property="Background" Value="#20FFFFFF" />
+        </Style>
+
+        <!-- Tab styling -->
+        <Style Selector="TabControl">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="TabItem">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="12,6" />
+        </Style>
+    </Application.Styles>
+
+    <Application.Resources>
+        <SolidColorBrush x:Key="ToolBarBg" Color="#1A1A2E" />
+        <SolidColorBrush x:Key="StatusBarBg" Color="#0F0F1A" />
+        <SolidColorBrush x:Key="SurfaceBg" Color="#16162A" />
+        <SolidColorBrush x:Key="AccentBlue" Color="#0D6EFD" />
+        <SolidColorBrush x:Key="AccentGreen" Color="#00C853" />
+        <SolidColorBrush x:Key="SubtleText" Color="#80FFFFFF" />
+        <SolidColorBrush x:Key="DividerColor" Color="#20FFFFFF" />
+    </Application.Resources>
+</Application>

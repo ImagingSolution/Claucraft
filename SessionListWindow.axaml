@@ -1,0 +1,38 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:svc="clr-namespace:ClaudeCodeMDI.Services"
+        x:Class="ClaudeCodeMDI.SessionListWindow"
+        Title="Past Sessions"
+        Width="700" Height="450"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+
+    <DockPanel Margin="12">
+        <TextBlock DockPanel.Dock="Top" Text="Select a session to resume:"
+                   FontSize="16" FontWeight="Bold" Margin="0,0,0,8" />
+
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Spacing="8" Margin="0,8,0,0">
+            <Button x:Name="BtnResume" Content="Resume" Click="OnResume"
+                    IsEnabled="False" Padding="16,6" />
+            <Button Content="Cancel" Click="OnCancel" Padding="16,6" />
+        </StackPanel>
+
+        <ListBox x:Name="SessionList" SelectionChanged="OnSelectionChanged">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="svc:SessionInfo">
+                    <StackPanel Margin="4">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <TextBlock Text="{Binding Id}" FontFamily="Consolas" FontSize="12"
+                                       Foreground="Gray" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:yyyy/MM/dd HH:mm}'}"
+                                       FontSize="12" Foreground="CornflowerBlue" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding Summary}" FontWeight="SemiBold" Margin="0,2,0,0"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</Window>

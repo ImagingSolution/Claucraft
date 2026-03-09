@@ -1,0 +1,46 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="ClaudeCodeMDI.SettingsWindow"
+        Title="Settings"
+        Width="400" Height="250"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#0D0D1A">
+
+    <DockPanel Margin="24">
+        <!-- Title -->
+        <TextBlock DockPanel.Dock="Top" Text="Console Settings"
+                   FontSize="18" FontWeight="Bold"
+                   Foreground="White" Margin="0,0,0,20" />
+
+        <!-- Buttons -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Spacing="8" Margin="0,20,0,0">
+            <Button Content="Cancel" Classes="toolbar" Click="OnCancel"
+                    Padding="16,6" />
+            <Button Content="OK" Classes="primary" Click="OnOk"
+                    Padding="16,6" />
+        </StackPanel>
+
+        <!-- Settings form -->
+        <StackPanel Spacing="16">
+            <!-- Font Family -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Font Family" FontSize="12"
+                           Foreground="#90FFFFFF" />
+                <ComboBox x:Name="CmbFontFamily" Classes="modern"
+                          HorizontalAlignment="Stretch" />
+            </StackPanel>
+
+            <!-- Font Size -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Font Size" FontSize="12"
+                           Foreground="#90FFFFFF" />
+                <NumericUpDown x:Name="NumFontSize"
+                               Minimum="8" Maximum="32" Increment="1"
+                               FormatString="0"
+                               HorizontalAlignment="Stretch" />
+            </StackPanel>
+        </StackPanel>
+    </DockPanel>
+</Window>

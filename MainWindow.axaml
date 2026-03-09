@@ -1,0 +1,221 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:svc="clr-namespace:ClaudeCodeMDI.Services"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="ClaudeCodeMDI.MainWindow"
+        Title="Claude Code MDI"
+        Width="1200" Height="800"
+        MinWidth="600" MinHeight="400"
+        WindowStartupLocation="CenterScreen"
+        Background="#0D0D1A">
+
+    <DockPanel>
+        <!-- Modern Toolbar -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource ToolBarBg}"
+                Padding="12,8" BorderBrush="{DynamicResource DividerColor}"
+                BorderThickness="0,0,0,1">
+            <StackPanel Spacing="8">
+                <!-- Row 1: Project + Actions -->
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <TextBlock Grid.Column="0" Text="Project" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{DynamicResource SubtleText}"
+                               FontWeight="Medium" />
+
+                    <Grid Grid.Column="1" Margin="8,0">
+                        <TextBox x:Name="TxtProjectFolder"
+                                 Classes="modern"
+                                 Watermark="Select project folder..."
+                                 VerticalAlignment="Center"
+                                 KeyDown="OnFolderTextBoxKeyDown" />
+                    </Grid>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+                        <Button x:Name="BtnSelectFolder" Classes="icon-btn"
+                                ToolTip.Tip="Browse folder"
+                                Click="OnSelectFolder">
+                            <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
+                                      Width="15" Height="15" />
+                        </Button>
+
+                        <Border Width="1" Background="{DynamicResource DividerColor}" Margin="6,4" />
+
+                        <Button x:Name="BtnNewClaude" Classes="primary"
+                                ToolTip.Tip="Open new Claude Code session"
+                                Click="OnNewClaude">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <PathIcon Data="M12 4V20M4 12H20" Width="12" Height="12"
+                                          Foreground="White" />
+                                <TextBlock Text="New Claude" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <ToggleButton x:Name="BtnTheme" Classes="toolbar"
+                                      IsChecked="True"
+                                      ToolTip.Tip="Toggle dark/light theme"
+                                      Click="OnToggleTheme">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <PathIcon x:Name="ThemeIcon"
+                                          Data="M12 3C7.03 3 3 7.03 3 12S7.03 21 12 21C12.83 21 13.5 20.33 13.5 19.5C13.5 19.11 13.35 18.76 13.11 18.49C12.88 18.23 12.73 17.88 12.73 17.5C12.73 16.67 13.4 16 14.23 16H16C18.76 16 21 13.76 21 11C21 6.58 16.97 3 12 3Z"
+                                          Width="13" Height="13" />
+                                <TextBlock x:Name="ThemeText" Text="Dark"
+                                           VerticalAlignment="Center" />
+                            </StackPanel>
+                        </ToggleButton>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row 2: Session selector -->
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                    <TextBlock Grid.Column="0" Text="Session" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{DynamicResource SubtleText}"
+                               FontWeight="Medium" />
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6"
+                                Margin="8,0">
+                        <ComboBox x:Name="CmbSessions"
+                                  Classes="modern"
+                                  VerticalAlignment="Center"
+                                  MinWidth="300"
+                                  PlaceholderText="Select a session to resume..."
+                                  SelectionChanged="OnSessionSelectionChanged">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="svc:SessionInfo">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Border Background="#200D6EFD" CornerRadius="4" Padding="6,2">
+                                            <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:yyyy/MM/dd HH:mm}'}"
+                                                       FontSize="11" Foreground="#7EB4FF"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+                                        <TextBlock Text="{Binding Summary}" FontSize="12"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"
+                                                   MaxWidth="400" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+
+                        <Button x:Name="BtnResumeSession"
+                                Classes="primary"
+                                ToolTip.Tip="Resume selected session"
+                                Click="OnResumeSession"
+                                IsEnabled="False">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <PathIcon Data="M8 5V19L19 12L8 5Z" Width="11" Height="11"
+                                          Foreground="White" />
+                                <TextBlock Text="Resume" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <Button Grid.Column="2" Classes="icon-btn"
+                            ToolTip.Tip="Settings"
+                            Click="OnSettings">
+                        <PathIcon Data="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5A3.5 3.5 0 0 1 15.5 12A3.5 3.5 0 0 1 12 15.5M19.43 12.97C19.47 12.65 19.5 12.33 19.5 12C19.5 11.67 19.47 11.34 19.43 11L21.54 9.37C21.73 9.22 21.78 8.95 21.66 8.73L19.66 5.27C19.54 5.05 19.27 4.96 19.05 5.05L16.56 6.05C16.04 5.66 15.5 5.32 14.87 5.07L14.5 2.42C14.46 2.18 14.25 2 14 2H10C9.75 2 9.54 2.18 9.5 2.42L9.13 5.07C8.5 5.32 7.96 5.66 7.44 6.05L4.95 5.05C4.73 4.96 4.46 5.05 4.34 5.27L2.34 8.73C2.21 8.95 2.27 9.22 2.46 9.37L4.57 11C4.53 11.34 4.5 11.67 4.5 12C4.5 12.33 4.53 12.65 4.57 12.97L2.46 14.63C2.27 14.78 2.21 15.05 2.34 15.27L4.34 18.73C4.46 18.95 4.73 19.04 4.95 18.95L7.44 17.94C7.96 18.34 8.5 18.68 9.13 18.93L9.5 21.58C9.54 21.82 9.75 22 10 22H14C14.25 22 14.46 21.82 14.5 21.58L14.87 18.93C15.5 18.67 16.04 18.34 16.56 17.94L19.05 18.95C19.27 19.04 19.54 18.95 19.66 18.73L21.66 15.27C21.78 15.05 21.73 14.78 21.54 14.63L19.43 12.97Z"
+                                  Width="14" Height="14" />
+                    </Button>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Modern Status Bar -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource StatusBarBg}"
+                Padding="12,5" BorderBrush="{DynamicResource DividerColor}"
+                BorderThickness="0,1,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6"
+                            VerticalAlignment="Center">
+                    <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
+                              Width="12" Height="12" Foreground="#60FFFFFF" />
+                    <TextBlock x:Name="StatusFolder"
+                               Text="No project folder selected"
+                               Foreground="#90FFFFFF" FontSize="11"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                            VerticalAlignment="Center" Margin="16,0"
+                            Cursor="Hand" Tapped="OnUsageTapped"
+                            ToolTip.Tip="Click to show usage chart">
+                    <TextBlock x:Name="StatusUsageLabel" Text="Usage"
+                               Foreground="#80FFFFFF" FontSize="11"
+                               VerticalAlignment="Center" />
+                    <Grid Width="130" Height="16" VerticalAlignment="Center">
+                        <Border Background="#15FFFFFF" CornerRadius="8" />
+                        <Border x:Name="UsageBarFill" Background="#4CAF50"
+                                CornerRadius="8" HorizontalAlignment="Left" Width="0" />
+                        <TextBlock x:Name="StatusUsagePercent" Text="0%"
+                                   Foreground="White" FontSize="10" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock x:Name="StatusUsageDetail" Text=""
+                               Foreground="#70FFFFFF" FontSize="10"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+
+                <Border Grid.Column="2" Background="#15FFFFFF" CornerRadius="10"
+                        Padding="10,2" Margin="8,0" VerticalAlignment="Center">
+                    <TextBlock x:Name="StatusTabs" Text="0 windows"
+                               Foreground="#90FFFFFF" FontSize="11"
+                               VerticalAlignment="Center" />
+                </Border>
+
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6"
+                            Margin="8,0,0,0" VerticalAlignment="Center">
+                    <Ellipse x:Name="StatusDot" Width="7" Height="7"
+                             Fill="#4CAF50" VerticalAlignment="Center" />
+                    <TextBlock x:Name="StatusProcess"
+                               Text="Ready"
+                               Foreground="#80FFFFFF" FontSize="11"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Window Strip + Layout Buttons -->
+        <Border DockPanel.Dock="Top" Background="#10FFFFFF" Padding="4,3"
+                BorderBrush="{DynamicResource DividerColor}" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,Auto">
+                <ScrollViewer Grid.Column="0"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="WindowStrip" Orientation="Horizontal" Spacing="3" />
+                </ScrollViewer>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2"
+                            Margin="8,0,0,0">
+                    <Border Width="1" Background="{DynamicResource DividerColor}" Margin="0,3" />
+                    <Button x:Name="BtnLayoutTile" Classes="icon-btn"
+                            ToolTip.Tip="Tile windows"
+                            Click="OnLayoutTile">
+                        <PathIcon Data="M3 3H10V10H3ZM14 3H21V10H14ZM3 14H10V21H3ZM14 14H21V21H14Z"
+                                  Width="14" Height="14" />
+                    </Button>
+                    <Button x:Name="BtnLayoutCascade" Classes="icon-btn"
+                            ToolTip.Tip="Cascade windows"
+                            Click="OnLayoutCascade">
+                        <PathIcon Data="M2 2H14V14H2ZM6 6H18V18H6ZM10 10H22V22H10Z"
+                                  Width="14" Height="14" />
+                    </Button>
+                    <Button x:Name="BtnLayoutMaximize" Classes="icon-btn"
+                            ToolTip.Tip="Full view"
+                            Click="OnLayoutMaximize">
+                        <PathIcon Data="M3 3H21V21H3ZM5 5V19H19V5Z"
+                                  Width="14" Height="14" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- MDI Container -->
+        <Canvas x:Name="MdiContainer" Background="Transparent" ClipToBounds="True" />
+    </DockPanel>
+</Window>
