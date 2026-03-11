@@ -9,6 +9,7 @@ public class AppSettings
     public string ProjectFolder { get; set; } = "";
     public string FontFamily { get; set; } = "Cascadia Mono";
     public double FontSize { get; set; } = 14;
+    public bool IsDark { get; set; } = true;
 
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

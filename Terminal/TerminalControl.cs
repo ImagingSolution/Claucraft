@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -95,7 +96,7 @@ public class TerminalControl : Control, IDisposable
             Padding = new Thickness(4, 2),
             FontSize = _fontSize,
             FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
-            Watermark = "日本語入力 → Enter で送信 / Half-width keys go directly to console",
+            Watermark = "IME input here — auto-sent on commit",
             Focusable = true,
             AcceptsReturn = false,
         };
@@ -103,7 +104,8 @@ public class TerminalControl : Control, IDisposable
         // Handle Enter key to send text to PTY
         _inputTextBox.AddHandler(KeyDownEvent, OnInputKeyDown, RoutingStrategies.Tunnel);
 
-        // Intercept TextInput: half-width chars go directly to PTY
+        // Intercept TextInput: half-width chars go directly to PTY,
+        // full-width (IME committed) chars also go to PTY immediately
         _inputTextBox.AddHandler(TextInputEvent, OnInputTextInput, RoutingStrategies.Tunnel);
 
         // Forward click to activate MDI window
@@ -124,27 +126,66 @@ public class TerminalControl : Control, IDisposable
     {
         foreach (char c in text)
         {
-            if (c > '\u007E') return false; // Beyond ASCII printable range
+            if (c > '\u007E') return false;
         }
         return true;
     }
 
+    /// <summary>
+    /// Set to true when IME text is committed via TextInput.
+    /// On the next KeyDown, any TextBox remnants are force-cleared.
+    /// </summary>
+    private bool _imeJustCommitted;
+
     private void OnInputTextInput(object? sender, TextInputEventArgs e)
     {
-        if (e.Text == null) return;
+        if (string.IsNullOrEmpty(e.Text)) return;
 
-        // Half-width characters: send directly to PTY
-        if (IsHalfWidth(e.Text))
+        // Filter out control characters (e.g., Backspace generates '\b' via TextInput
+        // which would double-send with the KeyDown handler's \x7f)
+        foreach (char c in e.Text)
         {
-            if (_hasSelection) ClearSelection();
-            _pty?.WriteInput(e.Text);
-            e.Handled = true; // Prevent TextBox from receiving it
+            if (c >= ' ') // Only process printable characters (U+0020 and above)
+            {
+                goto hasPrintable;
+            }
         }
-        // Full-width (Japanese etc.): let TextBox handle it, user sends with Enter
+        return; // All control characters — ignore
+    hasPrintable:
+
+        // Printable text committed (half-width direct or IME confirmed) — send to PTY
+        if (_hasSelection) ClearSelection();
+        _pty?.WriteInput(e.Text);
+        e.Handled = true;
+
+        // Mark that we just committed, so next KeyDown clears remnants
+        _imeJustCommitted = true;
+        _inputTextBox.Text = "";
     }
 
     private async void OnInputKeyDown(object? sender, KeyEventArgs e)
     {
+        // After IME commit, force-clear any preedit remnants that Avalonia
+        // may have re-inserted after our clear in OnInputTextInput
+        if (_imeJustCommitted)
+        {
+            _imeJustCommitted = false;
+            _inputTextBox.Text = "";
+            _inputTextBox.CaretIndex = 0;
+        }
+
+        // If TextBox has text, IME composition is in progress.
+        // Let TextBox handle keys (Backspace deletes preedit, etc.)
+        if (!string.IsNullOrEmpty(_inputTextBox.Text))
+        {
+            if (e.Key == Key.Escape)
+            {
+                _inputTextBox.Text = "";
+                e.Handled = true;
+            }
+            return;
+        }
+
         // Ctrl+C: copy selection or send SIGINT
         if (e.Key == Key.C && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
@@ -164,33 +205,23 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
-        // Ctrl+V: paste to PTY
+        // Ctrl+V: paste directly to PTY
         if (e.Key == Key.V && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-            if (clipboard != null)
-            {
-                var text = await clipboard.GetTextAsync();
-                if (!string.IsNullOrEmpty(text))
-                {
-                    // Insert pasted text into the TextBox at cursor position
-                    // (let default TextBox paste handle this, don't intercept)
-                }
-            }
-            return;
-        }
-
-        // Enter: send TextBox content to PTY and clear
-        if (e.Key == Key.Enter && !e.KeyModifiers.HasFlag(KeyModifiers.Shift))
-        {
-            var inputText = _inputTextBox.Text ?? "";
-            _pty?.WriteInput(inputText + "\r");
-            _inputTextBox.Text = "";
+            _ = PasteFromClipboardAsync();
             e.Handled = true;
             return;
         }
 
-        // Escape: send Escape to PTY
+        // Enter: send newline to PTY
+        if (e.Key == Key.Enter && !e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            _pty?.WriteInput("\r");
+            e.Handled = true;
+            return;
+        }
+
+        // Escape: send to PTY (IME case is handled above)
         if (e.Key == Key.Escape)
         {
             _pty?.WriteInput("\x1b");
@@ -198,10 +229,7 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
-        // When TextBox is empty, forward navigation/editing keys directly to PTY
-        bool tbEmpty = string.IsNullOrEmpty(_inputTextBox.Text);
-
-        if (tbEmpty)
+        // Forward navigation/editing keys directly to PTY
         {
             string? seq = e.Key switch
             {
@@ -209,7 +237,7 @@ public class TerminalControl : Control, IDisposable
                 Key.Delete => "\x1b[3~",
                 Key.Up => "\x1b[A",
                 Key.Down => "\x1b[B",
-                Key.Left => "\x1b[C",  // Note: Left/Right might seem swapped but this is correct for PTY
+                Key.Left => "\x1b[D",
                 Key.Right => "\x1b[C",
                 Key.Home => "\x1b[H",
                 Key.End => "\x1b[F",
@@ -231,25 +259,12 @@ public class TerminalControl : Control, IDisposable
                 _ => null
             };
 
-            // Fix Left/Right (above were both C, correct them)
-            if (e.Key == Key.Left) seq = "\x1b[D";
-
             if (seq != null)
             {
                 _pty?.WriteInput(seq);
                 e.Handled = true;
                 return;
             }
-        }
-
-        // Tab with text: send text + tab for completion, then clear
-        if (e.Key == Key.Tab && !tbEmpty)
-        {
-            var inputText = _inputTextBox.Text ?? "";
-            _pty?.WriteInput(inputText + "\t");
-            _inputTextBox.Text = "";
-            e.Handled = true;
-            return;
         }
 
         // Ctrl+D: send EOF
@@ -274,6 +289,17 @@ public class TerminalControl : Control, IDisposable
             _pty?.WriteInput("\x0c");
             e.Handled = true;
             return;
+        }
+    }
+
+    private async Task PasteFromClipboardAsync()
+    {
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard != null)
+        {
+            var text = await clipboard.GetTextAsync();
+            if (!string.IsNullOrEmpty(text))
+                _pty?.WriteInput(text);
         }
     }
 
@@ -394,8 +420,10 @@ public class TerminalControl : Control, IDisposable
         for (; col < _buffer.Cols; col++)
         {
             var cell = GetCellAt(row, col);
-            double charW = MeasureCharWidth(cell.Character);
-            double cellW = Math.Max(charW, _cellWidth);
+            if (cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
+                continue;
+            bool isWide = TerminalBuffer.IsWideChar(cell.Character);
+            double cellW = isWide ? _cellWidth * 2 : _cellWidth;
             if (x + cellW / 2 > pos.X) break;
             x += cellW;
         }
@@ -565,6 +593,9 @@ public class TerminalControl : Control, IDisposable
                     cell = (bufRow >= 0 && bufRow < _buffer.Rows)
                         ? _buffer.GetCell(bufRow, col) : TerminalCell.Empty;
                 }
+                // Skip wide-char trail cells (their content is '\0')
+                if (cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
+                    continue;
                 sb.Append(cell.Character == '\0' ? ' ' : cell.Character);
             }
             if (absRow < er)
@@ -674,8 +705,16 @@ public class TerminalControl : Control, IDisposable
             for (int col = 0; col < _buffer.Cols; col++)
             {
                 var cell = GetCellAt(row, col);
-                double charW = MeasureCharWidth(cell.Character);
-                double cellW = Math.Max(charW, _cellWidth);
+
+                // Skip wide-char trail cells (the lead cell already covers this space)
+                if (cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
+                {
+                    continue;
+                }
+
+                // Determine cell display width: wide chars use 2 cell widths
+                bool isWide = TerminalBuffer.IsWideChar(cell.Character);
+                double cellW = isWide ? _cellWidth * 2 : _cellWidth;
 
                 var fg = ResolveColor(cell.Foreground, fgDefault, true);
                 var bg = ResolveColor(cell.Background, bgDefault, false);

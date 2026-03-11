@@ -2,16 +2,16 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="ClaudeCodeMDI.SettingsWindow"
         Title="Settings"
-        Width="400" Height="250"
+        Width="400" Height="300"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
-        Background="#0D0D1A">
+        Background="{DynamicResource SurfaceBg}">
 
     <DockPanel Margin="24">
         <!-- Title -->
         <TextBlock DockPanel.Dock="Top" Text="Console Settings"
                    FontSize="18" FontWeight="Bold"
-                   Foreground="White" Margin="0,0,0,20" />
+                   Foreground="{DynamicResource SubtleText}" Margin="0,0,0,20" />
 
         <!-- Buttons -->
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
@@ -27,7 +27,7 @@
             <!-- Font Family -->
             <StackPanel Spacing="4">
                 <TextBlock Text="Font Family" FontSize="12"
-                           Foreground="#90FFFFFF" />
+                           Foreground="{DynamicResource SubtleText}" />
                 <ComboBox x:Name="CmbFontFamily" Classes="modern"
                           HorizontalAlignment="Stretch" />
             </StackPanel>
@@ -35,11 +35,19 @@
             <!-- Font Size -->
             <StackPanel Spacing="4">
                 <TextBlock Text="Font Size" FontSize="12"
-                           Foreground="#90FFFFFF" />
+                           Foreground="{DynamicResource SubtleText}" />
                 <NumericUpDown x:Name="NumFontSize"
                                Minimum="8" Maximum="32" Increment="1"
                                FormatString="0"
                                HorizontalAlignment="Stretch" />
+            </StackPanel>
+
+            <!-- Theme -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Theme" FontSize="12"
+                           Foreground="{DynamicResource SubtleText}" />
+                <ComboBox x:Name="CmbTheme" Classes="modern"
+                          HorizontalAlignment="Stretch" />
             </StackPanel>
         </StackPanel>
     </DockPanel>

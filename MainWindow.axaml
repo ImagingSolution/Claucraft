@@ -9,7 +9,7 @@
         Width="1200" Height="800"
         MinWidth="600" MinHeight="400"
         WindowStartupLocation="CenterScreen"
-        Background="#0D0D1A">
+        Background="{DynamicResource SurfaceBg}">
 
     <DockPanel>
         <!-- Modern Toolbar -->
@@ -24,17 +24,18 @@
                                FontWeight="Medium" />
 
                     <Grid Grid.Column="1" Margin="8,0">
-                        <TextBox x:Name="TxtProjectFolder"
-                                 Classes="modern"
-                                 Watermark="Select project folder..."
-                                 VerticalAlignment="Center"
-                                 KeyDown="OnFolderTextBoxKeyDown" />
+                        <ComboBox x:Name="CmbProjectFolder"
+                                  Classes="modern"
+                                  PlaceholderText="Select project folder..."
+                                  VerticalAlignment="Center"
+                                  HorizontalAlignment="Stretch"
+                                  SelectionChanged="OnProjectFolderSelectionChanged" />
                     </Grid>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
-                        <Button x:Name="BtnSelectFolder" Classes="icon-btn"
-                                ToolTip.Tip="Browse folder"
-                                Click="OnSelectFolder">
+                        <Button x:Name="BtnOpenExplorer" Classes="icon-btn"
+                                ToolTip.Tip="Open in Explorer"
+                                Click="OnOpenExplorer">
                             <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
                                       Width="15" Height="15" />
                         </Button>
@@ -51,18 +52,6 @@
                             </StackPanel>
                         </Button>
 
-                        <ToggleButton x:Name="BtnTheme" Classes="toolbar"
-                                      IsChecked="True"
-                                      ToolTip.Tip="Toggle dark/light theme"
-                                      Click="OnToggleTheme">
-                            <StackPanel Orientation="Horizontal" Spacing="5">
-                                <PathIcon x:Name="ThemeIcon"
-                                          Data="M12 3C7.03 3 3 7.03 3 12S7.03 21 12 21C12.83 21 13.5 20.33 13.5 19.5C13.5 19.11 13.35 18.76 13.11 18.49C12.88 18.23 12.73 17.88 12.73 17.5C12.73 16.67 13.4 16 14.23 16H16C18.76 16 21 13.76 21 11C21 6.58 16.97 3 12 3Z"
-                                          Width="13" Height="13" />
-                                <TextBlock x:Name="ThemeText" Text="Dark"
-                                           VerticalAlignment="Center" />
-                            </StackPanel>
-                        </ToggleButton>
                     </StackPanel>
                 </Grid>
 
@@ -135,10 +124,10 @@
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6"
                             VerticalAlignment="Center">
                     <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
-                              Width="12" Height="12" Foreground="#60FFFFFF" />
+                              Width="12" Height="12" Foreground="{DynamicResource SubtleText}" />
                     <TextBlock x:Name="StatusFolder"
                                Text="No project folder selected"
-                               Foreground="#90FFFFFF" FontSize="11"
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
 
@@ -147,10 +136,10 @@
                             Cursor="Hand" Tapped="OnUsageTapped"
                             ToolTip.Tip="Click to show usage chart">
                     <TextBlock x:Name="StatusUsageLabel" Text="Usage"
-                               Foreground="#80FFFFFF" FontSize="11"
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                     <Grid Width="130" Height="16" VerticalAlignment="Center">
-                        <Border Background="#15FFFFFF" CornerRadius="8" />
+                        <Border Background="{DynamicResource DividerColor}" CornerRadius="8" />
                         <Border x:Name="UsageBarFill" Background="#4CAF50"
                                 CornerRadius="8" HorizontalAlignment="Left" Width="0" />
                         <TextBlock x:Name="StatusUsagePercent" Text="0%"
@@ -158,14 +147,14 @@
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Grid>
                     <TextBlock x:Name="StatusUsageDetail" Text=""
-                               Foreground="#70FFFFFF" FontSize="10"
+                               Foreground="{DynamicResource SubtleText}" FontSize="10"
                                VerticalAlignment="Center" />
                 </StackPanel>
 
-                <Border Grid.Column="2" Background="#15FFFFFF" CornerRadius="10"
+                <Border Grid.Column="2" Background="{DynamicResource DividerColor}" CornerRadius="10"
                         Padding="10,2" Margin="8,0" VerticalAlignment="Center">
                     <TextBlock x:Name="StatusTabs" Text="0 windows"
-                               Foreground="#90FFFFFF" FontSize="11"
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </Border>
 
@@ -175,14 +164,14 @@
                              Fill="#4CAF50" VerticalAlignment="Center" />
                     <TextBlock x:Name="StatusProcess"
                                Text="Ready"
-                               Foreground="#80FFFFFF" FontSize="11"
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
             </Grid>
         </Border>
 
         <!-- Window Strip + Layout Buttons -->
-        <Border DockPanel.Dock="Top" Background="#10FFFFFF" Padding="4,3"
+        <Border DockPanel.Dock="Top" Background="{DynamicResource ToolBarBg}" Padding="4,3"
                 BorderBrush="{DynamicResource DividerColor}" BorderThickness="0,0,0,1">
             <Grid ColumnDefinitions="*,Auto">
                 <ScrollViewer Grid.Column="0"

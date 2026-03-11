@@ -53,12 +53,24 @@ public static class SessionService
                         {
                             string sessionId = Path.GetFileNameWithoutExtension(file);
                             var info = ParseSessionFile(file, sessionId);
-                            if (info != null)
+                            if (info != null && !string.IsNullOrWhiteSpace(info.Summary))
+                            {
                                 sessions.Add(info);
+                            }
+                            else
+                            {
+                                // Session has no user message — invalid/empty session, delete it
+                                try { File.Delete(file); }
+                                catch { }
+                                Debug.WriteLine($"Deleted empty session file: {file}");
+                            }
                         }
                         catch (Exception ex)
                         {
-                            Debug.WriteLine($"Failed to parse session file {file}: {ex.Message}");
+                            // Unparseable session file — delete it
+                            try { File.Delete(file); }
+                            catch { }
+                            Debug.WriteLine($"Deleted corrupt session file {file}: {ex.Message}");
                         }
                     }
                 }
@@ -196,6 +208,86 @@ public static class SessionService
             }
         }
         return sb.ToString().Trim('-');
+    }
+
+    /// <summary>
+    /// Get the most recent project folders (up to 10) from ~/.claude/projects/ JSONL files.
+    /// Returns actual folder paths extracted from session cwd fields, sorted by most recent first.
+    /// </summary>
+    public static Task<List<string>> GetRecentProjectFoldersAsync()
+    {
+        return Task.Run(() =>
+        {
+            var folderTimestamps = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                string claudeProjectsDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".claude", "projects");
+
+                if (!Directory.Exists(claudeProjectsDir))
+                    return new List<string>();
+
+                foreach (var dir in Directory.GetDirectories(claudeProjectsDir))
+                {
+                    var jsonlFiles = Directory.GetFiles(dir, "*.jsonl");
+                    foreach (var file in jsonlFiles)
+                    {
+                        try
+                        {
+                            string? cwd = null;
+                            DateTime? timestamp = null;
+
+                            using var reader = new StreamReader(file, Encoding.UTF8);
+                            int lineCount = 0;
+                            while (!reader.EndOfStream && lineCount < 10)
+                            {
+                                string? line = reader.ReadLine();
+                                if (string.IsNullOrWhiteSpace(line)) continue;
+                                lineCount++;
+
+                                try
+                                {
+                                    using var doc = JsonDocument.Parse(line);
+                                    var root = doc.RootElement;
+
+                                    if (cwd == null && root.TryGetProperty("cwd", out var cwdProp))
+                                        cwd = cwdProp.GetString();
+
+                                    if (root.TryGetProperty("timestamp", out var tsProp))
+                                    {
+                                        var tsStr = tsProp.GetString();
+                                        if (tsStr != null && DateTime.TryParse(tsStr, out var dt))
+                                            timestamp = dt;
+                                    }
+                                }
+                                catch { }
+
+                                if (cwd != null && timestamp != null) break;
+                            }
+
+                            if (cwd != null && Directory.Exists(cwd))
+                            {
+                                var ts = timestamp ?? File.GetLastWriteTime(file);
+                                if (!folderTimestamps.ContainsKey(cwd) || folderTimestamps[cwd] < ts)
+                                    folderTimestamps[cwd] = ts;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to get recent project folders: {ex.Message}");
+            }
+
+            return folderTimestamps
+                .OrderByDescending(kv => kv.Value)
+                .Take(10)
+                .Select(kv => kv.Key)
+                .ToList();
+        });
     }
 
     public static string BuildResumeCommand(string sessionId)

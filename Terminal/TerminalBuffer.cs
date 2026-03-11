@@ -73,10 +73,26 @@ public class TerminalBuffer
 
     public void WriteChar(char c)
     {
-        if (CursorCol >= Cols)
+        bool wide = IsWideChar(c);
+
+        if (wide && CursorCol >= Cols - 1)
+        {
+            // Not enough room for a 2-cell char on this line; wrap
+            if (CursorCol < Cols)
+                _cells[CursorRow, CursorCol] = TerminalCell.Empty;
+            CursorCol = 0;
+            LineFeed();
+        }
+        else if (CursorCol >= Cols)
         {
             CursorCol = 0;
             LineFeed();
+        }
+
+        // If we're overwriting a wide-char trail, clear the lead cell too
+        if (CursorCol > 0 && _cells[CursorRow, CursorCol].Attributes.HasFlag(CellAttributes.WideCharTrail))
+        {
+            _cells[CursorRow, CursorCol - 1] = TerminalCell.Empty;
         }
 
         _cells[CursorRow, CursorCol] = new TerminalCell
@@ -87,6 +103,46 @@ public class TerminalBuffer
             Attributes = CurrentAttrs
         };
         CursorCol++;
+
+        if (wide && CursorCol < Cols)
+        {
+            // Write trail marker in the next cell
+            _cells[CursorRow, CursorCol] = new TerminalCell
+            {
+                Character = '\0',
+                Foreground = CurrentFg,
+                Background = CurrentBg,
+                Attributes = CurrentAttrs | CellAttributes.WideCharTrail
+            };
+            CursorCol++;
+        }
+    }
+
+    /// <summary>
+    /// Determines if a character is a double-width (full-width) character
+    /// that occupies 2 cells in a terminal.
+    /// </summary>
+    public static bool IsWideChar(char c)
+    {
+        // CJK Radicals Supplement, Kangxi Radicals
+        if (c >= 0x2E80 && c <= 0x2FDF) return true;
+        // CJK Symbols and Punctuation, Hiragana, Katakana, Bopomofo, etc.
+        if (c >= 0x2FF0 && c <= 0x303F) return true;
+        if (c >= 0x3040 && c <= 0x309F) return true; // Hiragana
+        if (c >= 0x30A0 && c <= 0x30FF) return true; // Katakana
+        if (c >= 0x3100 && c <= 0x312F) return true; // Bopomofo
+        if (c >= 0x3130 && c <= 0x318F) return true; // Hangul Compatibility Jamo
+        if (c >= 0x3190 && c <= 0x31FF) return true; // Kanbun, CJK Strokes
+        if (c >= 0x3200 && c <= 0x33FF) return true; // Enclosed CJK, CJK Compatibility
+        if (c >= 0x3400 && c <= 0x4DBF) return true; // CJK Unified Ext A
+        if (c >= 0x4E00 && c <= 0x9FFF) return true; // CJK Unified Ideographs
+        if (c >= 0xA000 && c <= 0xA4CF) return true; // Yi
+        if (c >= 0xAC00 && c <= 0xD7AF) return true; // Hangul Syllables
+        if (c >= 0xF900 && c <= 0xFAFF) return true; // CJK Compatibility Ideographs
+        if (c >= 0xFE10 && c <= 0xFE6F) return true; // CJK Compatibility Forms, Small Forms
+        if (c >= 0xFF01 && c <= 0xFF60) return true; // Fullwidth Forms
+        if (c >= 0xFFE0 && c <= 0xFFE6) return true; // Fullwidth Signs
+        return false;
     }
 
     public void LineFeed()
@@ -122,6 +178,16 @@ public class TerminalBuffer
     {
         if (CursorCol > 0)
             CursorCol--;
+    }
+
+    /// <summary>
+    /// Check if the cell at (row, col) is a wide-char trail marker.
+    /// </summary>
+    public bool IsWideTrail(int row, int col)
+    {
+        if (row >= 0 && row < Rows && col >= 0 && col < Cols)
+            return _cells[row, col].Attributes.HasFlag(CellAttributes.WideCharTrail);
+        return false;
     }
 
     public void Tab()

@@ -26,5 +26,10 @@ public enum CellAttributes : byte
     Italic = 2,
     Underline = 4,
     Inverse = 8,
-    Dim = 16
+    Dim = 16,
+    /// <summary>
+    /// Marks the second cell of a double-width (full-width) character.
+    /// This cell should not be rendered independently.
+    /// </summary>
+    WideCharTrail = 32
 }

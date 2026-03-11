@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using Avalonia;
 using Avalonia.Controls;
@@ -28,6 +29,9 @@ public partial class MainWindow : Window
     private readonly List<MdiChildInfo> _children = new();
     private readonly AppSettings _settings;
 
+    private const string BrowseFolderItem = "📁 Browse folder...";
+    private bool _suppressFolderSelectionChanged;
+
     // Drag state
     private bool _isDragging;
     private Point _dragStart;
@@ -51,6 +55,7 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         _settings = AppSettings.Load();
+        _isDark = _settings.IsDark;
 
         _usageTracker.UsageUpdated += info =>
         {
@@ -61,13 +66,19 @@ public partial class MainWindow : Window
         _projectFolder = !string.IsNullOrEmpty(_settings.ProjectFolder) && Directory.Exists(_settings.ProjectFolder)
             ? _settings.ProjectFolder
             : Environment.CurrentDirectory;
-        TxtProjectFolder.Text = _projectFolder;
         StatusFolder.Text = _projectFolder;
+        LoadRecentProjectFolders();
 
         MdiContainer.SizeChanged += (_, _) =>
         {
             Dispatcher.UIThread.Post(ArrangeChildren, DispatcherPriority.Render);
         };
+
+        // Apply saved theme
+        if (!_isDark && Application.Current is App app)
+        {
+            app.SetTheme(false);
+        }
 
         RefreshSessionList();
 
@@ -79,42 +90,87 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnSelectFolder(object? sender, RoutedEventArgs e)
+    private async void LoadRecentProjectFolders()
     {
-        var startLocation = !string.IsNullOrEmpty(TxtProjectFolder.Text) && Directory.Exists(TxtProjectFolder.Text)
-            ? await StorageProvider.TryGetFolderFromPathAsync(TxtProjectFolder.Text)
-            : null;
+        var recentFolders = await SessionService.GetRecentProjectFoldersAsync();
+        var items = new List<string>();
 
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        // Add current project folder at top if it's not in the list
+        if (!string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder))
         {
-            Title = "Select Project Folder",
-            AllowMultiple = false,
-            SuggestedStartLocation = startLocation
-        });
-
-        if (folders.Count > 0)
-        {
-            SetProjectFolder(folders[0].Path.LocalPath);
+            items.Add(_projectFolder);
+            recentFolders.RemoveAll(f => f.Equals(_projectFolder, StringComparison.OrdinalIgnoreCase));
         }
+
+        // Add recent folders (up to 10 total)
+        foreach (var folder in recentFolders)
+        {
+            if (items.Count >= 10) break;
+            items.Add(folder);
+        }
+
+        // Add browse option at the bottom
+        items.Add(BrowseFolderItem);
+
+        _suppressFolderSelectionChanged = true;
+        CmbProjectFolder.ItemsSource = items;
+        if (items.Count > 0 && !string.IsNullOrEmpty(_projectFolder))
+        {
+            CmbProjectFolder.SelectedIndex = 0;
+        }
+        _suppressFolderSelectionChanged = false;
     }
 
-    private void OnFolderTextBoxKeyDown(object? sender, KeyEventArgs e)
+    private async void OnProjectFolderSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (e.Key == Key.Enter)
+        if (_suppressFolderSelectionChanged) return;
+
+        if (CmbProjectFolder.SelectedItem is string selected)
         {
-            var path = TxtProjectFolder.Text?.Trim();
-            if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
+            if (selected == BrowseFolderItem)
             {
-                SetProjectFolder(path);
+                // Reset selection to current project folder
+                _suppressFolderSelectionChanged = true;
+                if (!string.IsNullOrEmpty(_projectFolder))
+                {
+                    var items = CmbProjectFolder.ItemsSource as List<string>;
+                    int idx = items?.IndexOf(_projectFolder) ?? -1;
+                    CmbProjectFolder.SelectedIndex = idx >= 0 ? idx : -1;
+                }
+                else
+                {
+                    CmbProjectFolder.SelectedIndex = -1;
+                }
+                _suppressFolderSelectionChanged = false;
+
+                // Open folder picker
+                var startLocation = !string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder)
+                    ? await StorageProvider.TryGetFolderFromPathAsync(_projectFolder)
+                    : null;
+
+                var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+                {
+                    Title = "Select Project Folder",
+                    AllowMultiple = false,
+                    SuggestedStartLocation = startLocation
+                });
+
+                if (folders.Count > 0)
+                {
+                    SetProjectFolder(folders[0].Path.LocalPath);
+                    LoadRecentProjectFolders();
+                }
             }
-            e.Handled = true;
+            else if (Directory.Exists(selected))
+            {
+                SetProjectFolder(selected);
+            }
         }
     }
 
     private void SetProjectFolder(string path)
     {
         _projectFolder = path;
-        TxtProjectFolder.Text = path;
         StatusFolder.Text = path;
         RefreshSessionList();
     }
@@ -151,13 +207,21 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnOpenExplorer(object? sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder))
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = _projectFolder,
+                UseShellExecute = true
+            });
+        }
+    }
+
     private void OnNewClaude(object? sender, RoutedEventArgs e)
     {
-        var folder = TxtProjectFolder.Text?.Trim();
-        if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder))
-        {
-            SetProjectFolder(folder);
-        }
         CreateNewChild("claude", "Claude");
     }
 
@@ -169,16 +233,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnToggleTheme(object? sender, RoutedEventArgs e)
+    private void ApplyTheme(bool isDark)
     {
-        _isDark = BtnTheme.IsChecked == true;
-        ThemeText.Text = _isDark ? "Dark" : "Light";
-
+        _isDark = isDark;
         if (Application.Current is App app)
         {
             app.SetTheme(_isDark);
         }
-
         foreach (var child in _children)
         {
             child.Terminal.IsDarkTheme = _isDark;
@@ -601,18 +662,24 @@ public partial class MainWindow : Window
 
     private async void OnSettings(object? sender, RoutedEventArgs e)
     {
-        var dlg = new SettingsWindow(_settings.FontFamily, _settings.FontSize);
+        var dlg = new SettingsWindow(_settings.FontFamily, _settings.FontSize, _isDark);
         await dlg.ShowDialog(this);
 
         if (dlg.Confirmed)
         {
             _settings.FontFamily = dlg.SelectedFontFamily;
             _settings.FontSize = dlg.SelectedFontSize;
+            _settings.IsDark = dlg.SelectedIsDark;
             _settings.Save();
 
             foreach (var child in _children)
             {
                 child.Terminal.SetFont(_settings.FontFamily, _settings.FontSize);
+            }
+
+            if (_isDark != dlg.SelectedIsDark)
+            {
+                ApplyTheme(dlg.SelectedIsDark);
             }
         }
     }
