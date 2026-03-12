@@ -48,23 +48,15 @@
                               SelectionChanged="OnProjectFolderSelectionChanged"
                               KeyDown="OnProjectFolderKeyDown" />
 
-                    <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="6">
-                        <Button x:Name="BtnOpenExplorer" Classes="icon-btn"
-                                ToolTip.Tip="Open in Explorer"
-                                Click="OnOpenExplorer">
-                            <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
-                                      Width="15" Height="15" />
-                        </Button>
-
-                        <Border Width="1" Background="{DynamicResource DividerColor}" Margin="4,6" />
-
-                        <Button x:Name="BtnNewClaude" Classes="primary"
-                                ToolTip.Tip="Open new Claude Code session"
-                                Click="OnNewClaude">
-                            <TextBlock x:Name="LblNewClaude" Text="New Claude"
-                                       VerticalAlignment="Center" HorizontalAlignment="Center" />
-                        </Button>
-                    </StackPanel>
+                    <Button x:Name="BtnNewClaude" Grid.Row="0" Grid.Column="2"
+                            Classes="primary"
+                            ToolTip.Tip="Open new Claude Code session"
+                            Click="OnNewClaude"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center">
+                        <TextBlock x:Name="LblNewClaude" Text="New Claude"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center" />
+                    </Button>
 
                     <!-- Row 1: Session -->
                     <TextBlock x:Name="LblSession" Grid.Row="1" Grid.Column="0"
@@ -101,7 +93,9 @@
                             ToolTip.Tip="Resume selected session"
                             Click="OnResumeSession"
                             IsEnabled="False"
-                            Margin="6,6,0,0">
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Margin="0,6,0,0">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <PathIcon Data="M8 5V19L19 12L8 5Z" Width="11" Height="11"
                                       Foreground="White" />
@@ -190,10 +184,21 @@
                 <DockPanel>
                     <Border DockPanel.Dock="Top" Padding="14,10"
                             BorderBrush="{DynamicResource DividerColor}" BorderThickness="0,0,0,0.5">
-                        <TextBlock x:Name="SidePanelTitle" Text="EXPLORER"
-                                   FontSize="11" FontWeight="Medium"
-                                   Foreground="{DynamicResource SubtleText}"
-                                   LetterSpacing="1.5" />
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock x:Name="SidePanelTitle" Text="EXPLORER"
+                                       FontSize="11" FontWeight="Medium"
+                                       Foreground="{DynamicResource SubtleText}"
+                                       LetterSpacing="1.5"
+                                       VerticalAlignment="Center" />
+                            <Button x:Name="BtnBrowseFolder" Grid.Column="1"
+                                    Classes="icon-btn"
+                                    ToolTip.Tip="Browse folder..."
+                                    Click="OnBrowseFolder"
+                                    Padding="4" Margin="0,-4,0,-4">
+                                <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
+                                          Width="13" Height="13" />
+                            </Button>
+                        </Grid>
                     </Border>
 
                     <Grid>
@@ -318,7 +323,7 @@
                             <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                                           VerticalScrollBarVisibility="Auto">
                                 <StackPanel x:Name="SnippetsList" Spacing="6"
-                                            Margin="10,8" />
+                                            Margin="5,8" />
                             </ScrollViewer>
                         </DockPanel>
                     </Grid>

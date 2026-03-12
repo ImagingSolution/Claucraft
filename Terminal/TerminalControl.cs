@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -113,6 +114,11 @@ public class TerminalControl : Control, IDisposable
 
         VisualChildren.Add(_inputTextBox);
         LogicalChildren.Add(_inputTextBox);
+
+        // Enable file drag & drop
+        DragDrop.SetAllowDrop(this, true);
+        AddHandler(DragDrop.DropEvent, OnFileDrop);
+        AddHandler(DragDrop.DragOverEvent, OnFileDragOver);
 
         MeasureCellSize();
 
@@ -303,11 +309,69 @@ public class TerminalControl : Control, IDisposable
     private async Task PasteFromClipboardAsync()
     {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard != null)
+        if (clipboard == null) return;
+
+        // Check for image data in clipboard (same behavior as Claude Code CLI)
+        try
         {
-            var text = await clipboard.GetTextAsync();
-            if (!string.IsNullOrEmpty(text))
-                _pty?.WriteInput(text);
+            var formats = await clipboard.GetFormatsAsync();
+            if (formats != null)
+            {
+                string? imageFormat = null;
+                foreach (var f in formats)
+                {
+                    if (f is "PNG" or "image/png" or "CF_DIB" or "DeviceIndependentBitmap" or "Bitmap")
+                    {
+                        imageFormat = f;
+                        break;
+                    }
+                }
+
+                if (imageFormat != null)
+                {
+                    var data = await clipboard.GetDataAsync(imageFormat);
+                    byte[]? imageBytes = data switch
+                    {
+                        byte[] bytes => bytes,
+                        MemoryStream ms => ms.ToArray(),
+                        _ => null
+                    };
+
+                    if (imageBytes is { Length: > 0 })
+                    {
+                        var tempPath = SaveClipboardImage(imageBytes);
+                        if (tempPath != null)
+                        {
+                            var pathStr = tempPath.Contains(' ') ? $"\"{tempPath}\"" : tempPath;
+                            _pty?.WriteInput(pathStr);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+
+        // Fallback: paste text
+        var text = await clipboard.GetTextAsync();
+        if (!string.IsNullOrEmpty(text))
+            _pty?.WriteInput(text);
+    }
+
+    private static string? SaveClipboardImage(byte[] imageData)
+    {
+        try
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "ClaudeCodeMDI");
+            Directory.CreateDirectory(tempDir);
+            var fileName = $"clipboard_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+            var filePath = Path.Combine(tempDir, fileName);
+            File.WriteAllBytes(filePath, imageData);
+            return filePath;
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -320,14 +384,6 @@ public class TerminalControl : Control, IDisposable
             _typeface, _fontSize, Brushes.White);
         _cellWidth = ft.Width;
         _cellHeight = ft.Height;
-    }
-
-    private double MeasureCharWidth(char c)
-    {
-        if (c <= ' ') return _cellWidth;
-        var ft = new FormattedText(c.ToString(), CultureInfo.CurrentCulture,
-            FlowDirection.LeftToRight, _typeface, _fontSize, Brushes.White);
-        return ft.Width;
     }
 
     private void RecalcTerminalSize()
@@ -755,10 +811,19 @@ public class TerminalControl : Control, IDisposable
                 // Draw character
                 if (cell.Character > ' ')
                 {
-                    var ft = new FormattedText(cell.Character.ToString(), CultureInfo.CurrentCulture,
-                        FlowDirection.LeftToRight, _typeface, _fontSize, new SolidColorBrush(fg));
-                    double charOffset = (cellW - ft.Width) / 2;
-                    context.DrawText(ft, new Point(x + charOffset, y));
+                    // Render block element characters (U+2580-U+259F) programmatically
+                    // to avoid font-dependent rendering issues in status line graphs
+                    if (cell.Character >= '\u2580' && cell.Character <= '\u259F')
+                    {
+                        var fgBrush = new SolidColorBrush(fg);
+                        DrawBlockElement(context, cell.Character, x, y, cellW, _cellHeight, fg, fgBrush);
+                    }
+                    else
+                    {
+                        var ft = new FormattedText(cell.Character.ToString(), CultureInfo.CurrentCulture,
+                            FlowDirection.LeftToRight, _typeface, _fontSize, new SolidColorBrush(fg));
+                        context.DrawText(ft, new Point(x, y));
+                    }
                 }
 
                 // Draw underline
@@ -770,6 +835,39 @@ public class TerminalControl : Control, IDisposable
 
                 x += cellW;
             }
+        }
+    }
+
+    private static void DrawBlockElement(DrawingContext ctx, char c, double x, double y, double w, double h, Color fg, IBrush brush)
+    {
+        switch (c)
+        {
+            case '\u2580': ctx.FillRectangle(brush, new Rect(x, y, w, h / 2)); break;
+            case '\u2581': ctx.FillRectangle(brush, new Rect(x, y + h * 7 / 8, w, h / 8)); break;
+            case '\u2582': ctx.FillRectangle(brush, new Rect(x, y + h * 3 / 4, w, h / 4)); break;
+            case '\u2583': ctx.FillRectangle(brush, new Rect(x, y + h * 5 / 8, w, h * 3 / 8)); break;
+            case '\u2584': ctx.FillRectangle(brush, new Rect(x, y + h / 2, w, h / 2)); break;
+            case '\u2585': ctx.FillRectangle(brush, new Rect(x, y + h * 3 / 8, w, h * 5 / 8)); break;
+            case '\u2586': ctx.FillRectangle(brush, new Rect(x, y + h / 4, w, h * 3 / 4)); break;
+            case '\u2587': ctx.FillRectangle(brush, new Rect(x, y + h / 8, w, h * 7 / 8)); break;
+            case '\u2588': ctx.FillRectangle(brush, new Rect(x, y, w, h)); break;
+            case '\u2589': ctx.FillRectangle(brush, new Rect(x, y, w * 7 / 8, h)); break;
+            case '\u258A': ctx.FillRectangle(brush, new Rect(x, y, w * 3 / 4, h)); break;
+            case '\u258B': ctx.FillRectangle(brush, new Rect(x, y, w * 5 / 8, h)); break;
+            case '\u258C': ctx.FillRectangle(brush, new Rect(x, y, w / 2, h)); break;
+            case '\u258D': ctx.FillRectangle(brush, new Rect(x, y, w * 3 / 8, h)); break;
+            case '\u258E': ctx.FillRectangle(brush, new Rect(x, y, w / 4, h)); break;
+            case '\u258F': ctx.FillRectangle(brush, new Rect(x, y, w / 8, h)); break;
+            case '\u2590': ctx.FillRectangle(brush, new Rect(x + w / 2, y, w / 2, h)); break;
+            case '\u2591': // ░ Light shade (25%)
+                ctx.FillRectangle(new SolidColorBrush(Color.FromArgb(64, fg.R, fg.G, fg.B)), new Rect(x, y, w, h)); break;
+            case '\u2592': // ▒ Medium shade (50%)
+                ctx.FillRectangle(new SolidColorBrush(Color.FromArgb(128, fg.R, fg.G, fg.B)), new Rect(x, y, w, h)); break;
+            case '\u2593': // ▓ Dark shade (75%)
+                ctx.FillRectangle(new SolidColorBrush(Color.FromArgb(192, fg.R, fg.G, fg.B)), new Rect(x, y, w, h)); break;
+            case '\u2594': ctx.FillRectangle(brush, new Rect(x, y, w, h / 8)); break;
+            case '\u2595': ctx.FillRectangle(brush, new Rect(x + w * 7 / 8, y, w / 8, h)); break;
+            default: ctx.FillRectangle(brush, new Rect(x, y, w, h)); break;
         }
     }
 
@@ -826,6 +924,47 @@ public class TerminalControl : Control, IDisposable
     }
 
     public void SendText(string text) => _pty?.WriteInput(text);
+
+    private void OnFileDragOver(object? sender, DragEventArgs e)
+    {
+        if (e.Data.Contains(DataFormats.Files))
+            e.DragEffects = DragDropEffects.Copy;
+        else
+            e.DragEffects = DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnFileDrop(object? sender, DragEventArgs e)
+    {
+        if (!e.Data.Contains(DataFormats.Files)) return;
+
+        var files = e.Data.GetFiles();
+        if (files == null) return;
+
+        var paths = new System.Text.StringBuilder();
+        foreach (var file in files)
+        {
+            var path = file.Path?.LocalPath;
+            if (string.IsNullOrEmpty(path)) continue;
+
+            if (paths.Length > 0)
+                paths.Append(' ');
+
+            // Quote paths containing spaces
+            if (path.Contains(' '))
+                paths.Append('"').Append(path).Append('"');
+            else
+                paths.Append(path);
+        }
+
+        if (paths.Length > 0)
+        {
+            _pty?.WriteInput(paths.ToString());
+            _inputTextBox.Focus();
+        }
+
+        e.Handled = true;
+    }
 
     public void FocusTerminal()
     {

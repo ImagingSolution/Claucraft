@@ -33,7 +33,6 @@ public partial class MainWindow : Window
     private readonly List<MdiChildInfo> _children = new();
     private readonly AppSettings _settings;
 
-    private const string BrowseFolderItem = "\U0001F4C1 Browse folder...";
     private bool _suppressFolderSelectionChanged;
 
     // Sidebar state
@@ -130,13 +129,15 @@ public partial class MainWindow : Window
         // Toolbar
         LblProject.Text = Loc.Get("Project");
         CmbProjectFolder.PlaceholderText = Loc.Get("SelectProjectFolder");
-        ToolTip.SetTip(BtnOpenExplorer, Loc.Get("OpenInExplorer"));
         LblNewClaude.Text = Loc.Get("NewClaude");
         LblSession.Text = Loc.Get("Session");
         CmbSessions.PlaceholderText = Loc.Get("SelectSession");
         LblResume.Text = Loc.Get("Resume");
 
         // Status Bar - git info updated via RefreshGitInfo()
+
+        // Explorer panel header
+        ToolTip.SetTip(BtnBrowseFolder, Loc.Get("SelectProjectFolder"));
 
         // Activity Bar tooltips
         ToolTip.SetTip(BtnActivityExplorer, Loc.Get("ExplorerTooltip"));
@@ -268,6 +269,7 @@ public partial class MainWindow : Window
             SidebarPanel.Snippets => Loc.Get("SNIPPETS"),
             _ => ""
         };
+        BtnBrowseFolder.IsVisible = panel == SidebarPanel.Explorer;
     }
 
     private void UpdateActivityBarHighlight()
@@ -340,24 +342,17 @@ public partial class MainWindow : Window
         var node = GetSelectedTreeNode();
         if (node == null) return;
 
-        if (node.IsDirectory)
+        // Open parent folder with the item selected
+        try
         {
-            OpenFolderInExplorer(node.FullPath);
-        }
-        else
-        {
-            // Select the file in Explorer
-            try
+            Process.Start(new ProcessStartInfo
             {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "explorer.exe",
-                    Arguments = $"/select,\"{node.FullPath}\"",
-                    UseShellExecute = true
-                });
-            }
-            catch { }
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{node.FullPath}\"",
+                UseShellExecute = true
+            });
         }
+        catch { }
     }
 
     private async void OnTreeCopyPath(object? sender, RoutedEventArgs e)
@@ -544,8 +539,8 @@ public partial class MainWindow : Window
             MinHeight = 34,
             FontSize = 13,
             Padding = new Thickness(10, 6),
-            CornerRadius = new CornerRadius(0, 8, 8, 0),
-            BorderThickness = new Thickness(0, 1, 1, 1),
+            CornerRadius = new CornerRadius(0),
+            BorderThickness = new Thickness(0, 1, 0, 1),
             BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 60)),
             Background = new SolidColorBrush(Color.FromRgb(28, 28, 30)),
             Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
@@ -572,14 +567,45 @@ public partial class MainWindow : Window
             }
         };
 
+        var sendBtn = new Button
+        {
+            Content = new PathIcon
+            {
+                Data = StreamGeometry.Parse("M8 5V19L19 12L8 5Z"),
+                Width = 10, Height = 10
+            },
+            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),
+            Foreground = new SolidColorBrush(Color.FromRgb(48, 209, 88)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 60)),
+            BorderThickness = new Thickness(0, 1, 1, 1),
+            CornerRadius = new CornerRadius(0, 8, 8, 0),
+            Padding = new Thickness(4, 0),
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        ToolTip.SetTip(sendBtn, Loc.Get("SendToConsole"));
+
+        sendBtn.Click += (_, _) =>
+        {
+            if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
+                && !string.IsNullOrEmpty(textBox.Text))
+            {
+                _children[_activeChildIndex].Terminal.SendText(textBox.Text);
+                BringToFront(_activeChildIndex);
+                _children[_activeChildIndex].Terminal.FocusTerminal();
+            }
+        };
+
         var grid = new Grid
         {
-            ColumnDefinitions = ColumnDefinitions.Parse("Auto,*")
+            ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto")
         };
         Grid.SetColumn(dragHandle, 0);
         Grid.SetColumn(textBox, 1);
+        Grid.SetColumn(sendBtn, 2);
         grid.Children.Add(dragHandle);
         grid.Children.Add(textBox);
+        grid.Children.Add(sendBtn);
 
         var border = new Border
         {
@@ -601,17 +627,6 @@ public partial class MainWindow : Window
         {
             Items =
             {
-                CreateSnippetMenuItem(Loc.Get("SendToConsole"), "M8 5V19L19 12L8 5Z", () =>
-                {
-                    if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
-                        && !string.IsNullOrEmpty(textBox.Text))
-                    {
-                        _children[_activeChildIndex].Terminal.SendText(textBox.Text);
-                        BringToFront(_activeChildIndex);
-                        _children[_activeChildIndex].Terminal.FocusTerminal();
-                    }
-                }),
-                new Separator(),
                 CreateSnippetMenuItem(Loc.Get("Delete"), "M6 19C6 20.1 6.9 21 8 21H16C17.1 21 18 20.1 18 19V7H6V19ZM19 4H15.5L14.5 3H9.5L8.5 4H5V6H19V4Z", () =>
                 {
                     _snippetStore.Snippets.Remove(item);
@@ -751,8 +766,6 @@ public partial class MainWindow : Window
             items.Add(folder);
         }
 
-        items.Add(BrowseFolderItem);
-
         _suppressFolderSelectionChanged = true;
         CmbProjectFolder.ItemsSource = items;
         if (items.Count > 0 && !string.IsNullOrEmpty(_projectFolder))
@@ -762,45 +775,13 @@ public partial class MainWindow : Window
         _suppressFolderSelectionChanged = false;
     }
 
-    private async void OnProjectFolderSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private void OnProjectFolderSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (_suppressFolderSelectionChanged) return;
 
         if (CmbProjectFolder.SelectedItem is string selected)
         {
-            if (selected == BrowseFolderItem)
-            {
-                _suppressFolderSelectionChanged = true;
-                if (!string.IsNullOrEmpty(_projectFolder))
-                {
-                    var items = CmbProjectFolder.ItemsSource as List<string>;
-                    int idx = items?.IndexOf(_projectFolder) ?? -1;
-                    CmbProjectFolder.SelectedIndex = idx >= 0 ? idx : -1;
-                }
-                else
-                {
-                    CmbProjectFolder.SelectedIndex = -1;
-                }
-                _suppressFolderSelectionChanged = false;
-
-                var startLocation = !string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder)
-                    ? await StorageProvider.TryGetFolderFromPathAsync(_projectFolder)
-                    : null;
-
-                var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-                {
-                    Title = "Select Project Folder",
-                    AllowMultiple = false,
-                    SuggestedStartLocation = startLocation
-                });
-
-                if (folders.Count > 0)
-                {
-                    SetProjectFolder(folders[0].Path.LocalPath);
-                    LoadRecentProjectFolders();
-                }
-            }
-            else if (Directory.Exists(selected))
+            if (Directory.Exists(selected))
             {
                 SetProjectFolder(selected);
             }
@@ -818,6 +799,26 @@ public partial class MainWindow : Window
                 LoadRecentProjectFolders();
             }
             e.Handled = true;
+        }
+    }
+
+    private async void OnBrowseFolder(object? sender, RoutedEventArgs e)
+    {
+        var startLocation = !string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder)
+            ? await StorageProvider.TryGetFolderFromPathAsync(_projectFolder)
+            : null;
+
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select Project Folder",
+            AllowMultiple = false,
+            SuggestedStartLocation = startLocation
+        });
+
+        if (folders.Count > 0)
+        {
+            SetProjectFolder(folders[0].Path.LocalPath);
+            LoadRecentProjectFolders();
         }
     }
 
@@ -939,19 +940,6 @@ public partial class MainWindow : Window
                 ? session.Summary[..Math.Min(20, session.Summary.Length)]
                 : $"Session: {session.Id[..Math.Min(8, session.Id.Length)]}";
             CreateNewChild(cmd, tabLabel);
-        }
-    }
-
-    private void OnOpenExplorer(object? sender, RoutedEventArgs e)
-    {
-        if (!string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder))
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = _projectFolder,
-                UseShellExecute = true
-            });
         }
     }
 
