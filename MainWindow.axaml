@@ -30,22 +30,25 @@
                 Padding="16,10" BorderBrush="{DynamicResource DividerColor}"
                 BorderThickness="0,0,0,0.5">
             <StackPanel Spacing="10">
-                <!-- Row 1: Project + Actions -->
-                <Grid ColumnDefinitions="Auto,*,Auto">
-                    <TextBlock Grid.Column="0" Text="Project" VerticalAlignment="Center"
+                <!-- Row 1: Project + Row 2: Session -->
+                <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="56,*,Auto">
+                    <!-- Row 0: Project -->
+                    <TextBlock x:Name="LblProject" Grid.Row="0" Grid.Column="0"
+                               Text="Project" VerticalAlignment="Center"
                                FontSize="12" Foreground="{DynamicResource SubtleText}"
                                FontWeight="Normal" />
 
-                    <Grid Grid.Column="1" Margin="10,0">
-                        <ComboBox x:Name="CmbProjectFolder"
-                                  Classes="modern"
-                                  PlaceholderText="Select project folder..."
-                                  VerticalAlignment="Center"
-                                  HorizontalAlignment="Stretch"
-                                  SelectionChanged="OnProjectFolderSelectionChanged" />
-                    </Grid>
+                    <ComboBox x:Name="CmbProjectFolder" Grid.Row="0" Grid.Column="1"
+                              Classes="modern"
+                              IsEditable="True"
+                              PlaceholderText="Select project folder..."
+                              VerticalAlignment="Center"
+                              HorizontalAlignment="Stretch"
+                              Margin="10,0"
+                              SelectionChanged="OnProjectFolderSelectionChanged"
+                              KeyDown="OnProjectFolderKeyDown" />
 
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                    <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="6">
                         <Button x:Name="BtnOpenExplorer" Classes="icon-btn"
                                 ToolTip.Tip="Open in Explorer"
                                 Click="OnOpenExplorer">
@@ -58,58 +61,53 @@
                         <Button x:Name="BtnNewClaude" Classes="primary"
                                 ToolTip.Tip="Open new Claude Code session"
                                 Click="OnNewClaude">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <PathIcon Data="M12 4V20M4 12H20" Width="12" Height="12"
-                                          Foreground="White" />
-                                <TextBlock Text="New Claude" VerticalAlignment="Center" />
-                            </StackPanel>
+                            <TextBlock x:Name="LblNewClaude" Text="New Claude"
+                                       VerticalAlignment="Center" HorizontalAlignment="Center" />
                         </Button>
                     </StackPanel>
-                </Grid>
 
-                <!-- Row 2: Session selector -->
-                <Grid ColumnDefinitions="Auto,*">
-                    <TextBlock Grid.Column="0" Text="Session" VerticalAlignment="Center"
+                    <!-- Row 1: Session -->
+                    <TextBlock x:Name="LblSession" Grid.Row="1" Grid.Column="0"
+                               Text="Session" VerticalAlignment="Center"
                                FontSize="12" Foreground="{DynamicResource SubtleText}"
-                               FontWeight="Normal" />
+                               FontWeight="Normal" Margin="0,6,0,0" />
 
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
-                                Margin="10,0">
-                        <ComboBox x:Name="CmbSessions"
-                                  Classes="modern"
-                                  VerticalAlignment="Center"
-                                  MinWidth="300"
-                                  PlaceholderText="Select a session to resume..."
-                                  SelectionChanged="OnSessionSelectionChanged">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate x:DataType="svc:SessionInfo">
-                                    <StackPanel Orientation="Horizontal" Spacing="10">
-                                        <Border Background="#18007AFF" CornerRadius="6" Padding="8,3">
-                                            <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:yyyy/MM/dd HH:mm}'}"
-                                                       FontSize="11" Foreground="#64A5FF"
-                                                       VerticalAlignment="Center" />
-                                        </Border>
-                                        <TextBlock Text="{Binding Summary}" FontSize="13"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center"
-                                                   MaxWidth="400" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
+                    <ComboBox x:Name="CmbSessions" Grid.Row="1" Grid.Column="1"
+                              Classes="modern"
+                              VerticalAlignment="Center"
+                              HorizontalAlignment="Stretch"
+                              Margin="10,6,10,0"
+                              PlaceholderText="Select a session to resume..."
+                              SelectionChanged="OnSessionSelectionChanged">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="svc:SessionInfo">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Border Background="#18007AFF" CornerRadius="6" Padding="8,3">
+                                        <TextBlock Text="{Binding Timestamp, StringFormat='{}{0:yyyy/MM/dd HH:mm}'}"
+                                                   FontSize="11" Foreground="#64A5FF"
+                                                   VerticalAlignment="Center" />
+                                    </Border>
+                                    <TextBlock Text="{Binding Summary}" FontSize="13"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center"
+                                               MaxWidth="400" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
 
-                        <Button x:Name="BtnResumeSession"
-                                Classes="primary"
-                                ToolTip.Tip="Resume selected session"
-                                Click="OnResumeSession"
-                                IsEnabled="False">
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <PathIcon Data="M8 5V19L19 12L8 5Z" Width="11" Height="11"
-                                          Foreground="White" />
-                                <TextBlock Text="Resume" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-                    </StackPanel>
+                    <Button x:Name="BtnResumeSession" Grid.Row="1" Grid.Column="2"
+                            Classes="primary"
+                            ToolTip.Tip="Resume selected session"
+                            Click="OnResumeSession"
+                            IsEnabled="False"
+                            Margin="6,6,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <PathIcon Data="M8 5V19L19 12L8 5Z" Width="11" Height="11"
+                                      Foreground="White" />
+                            <TextBlock x:Name="LblResume" Text="Resume" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                 </Grid>
             </StackPanel>
         </Border>
@@ -118,61 +116,25 @@
         <Border DockPanel.Dock="Bottom" Background="{DynamicResource StatusBarBg}"
                 Padding="16,6" BorderBrush="{DynamicResource DividerColor}"
                 BorderThickness="0,0.5,0,0">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6"
-                            VerticalAlignment="Center">
-                    <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
-                              Width="12" Height="12" Foreground="{DynamicResource SubtleText}" />
-                    <TextBlock x:Name="StatusFolder"
-                               Text="No project folder selected"
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <!-- Git repo icon + name -->
+                <StackPanel Orientation="Horizontal" Spacing="5">
+                    <PathIcon Data="M8 0C3.58 0 0 3.58 0 8C0 11.54 2.29 14.53 5.47 15.59C5.87 15.66 6.02 15.42 6.02 15.21C6.02 15.02 6.01 14.39 6.01 13.72C4 14.09 3.48 13.23 3.32 12.78C3.23 12.55 2.84 11.84 2.5 11.65C2.22 11.5 1.82 11.13 2.49 11.12C3.12 11.11 3.57 11.7 3.72 11.94C4.44 13.15 5.59 12.81 6.05 12.6C6.12 12.08 6.33 11.73 6.56 11.53C4.78 11.33 2.92 10.64 2.92 7.58C2.92 6.71 3.23 5.99 3.74 5.43C3.66 5.23 3.38 4.41 3.82 3.31C3.82 3.31 4.49 3.1 6.02 4.13C6.66 3.95 7.34 3.86 8.02 3.86C8.7 3.86 9.38 3.95 10.02 4.13C11.55 3.09 12.22 3.31 12.22 3.31C12.66 4.41 12.38 5.23 12.3 5.43C12.81 5.99 13.12 6.7 13.12 7.58C13.12 10.65 11.25 11.33 9.47 11.53C9.76 11.78 10.01 12.26 10.01 13.01C10.01 14.08 10 14.94 10 15.21C10 15.42 10.15 15.67 10.55 15.59C13.71 14.53 16 11.53 16 8C16 3.58 12.42 0 8 0Z"
+                              Width="14" Height="14" Foreground="{DynamicResource SubtleText}" />
+                    <TextBlock x:Name="StatusRepoName" Text=""
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
+                               VerticalAlignment="Center" Cursor="Hand"
+                               DoubleTapped="OnRepoNameDoubleTapped" />
+                </StackPanel>
+                <!-- Git branch icon + name -->
+                <StackPanel Orientation="Horizontal" Spacing="5">
+                    <PathIcon Data="M6 3C4.34 3 3 4.34 3 6C3 7.31 3.84 8.41 5 8.83V15.17C3.84 15.59 3 16.69 3 18C3 19.66 4.34 21 6 21C7.66 21 9 19.66 9 18C9 16.69 8.16 15.59 7 15.17V8.83C8.16 8.41 9 7.31 9 6C9 4.34 7.66 3 6 3ZM6 5C6.55 5 7 5.45 7 6C7 6.55 6.55 7 6 7C5.45 7 5 6.55 5 6C5 5.45 5.45 5 6 5ZM6 17C6.55 17 7 17.45 7 18C7 18.55 6.55 19 6 19C5.45 19 5 18.55 5 18C5 17.45 5.45 17 6 17ZM18 3C16.34 3 15 4.34 15 6C15 7.31 15.84 8.41 17 8.83V12C17 13.1 16.1 14 15 14H13V12L9 16L13 20V18H15C18.31 18 19 15.31 19 12V8.83C20.16 8.41 21 7.31 21 6C21 4.34 19.66 3 18 3ZM18 5C18.55 5 19 5.45 19 6C19 6.55 18.55 7 18 7C17.45 7 17 6.55 17 6C17 5.45 17.45 5 18 5Z"
+                              Width="14" Height="14" Foreground="{DynamicResource SubtleText}" />
+                    <TextBlock x:Name="StatusBranchName" Text=""
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
-
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
-                            VerticalAlignment="Center" Margin="16,0"
-                            Cursor="Hand" Tapped="OnUsageTapped"
-                            ToolTip.Tip="Click to show usage chart">
-                    <TextBlock x:Name="StatusUsageLabel" Text="Usage"
-                               Foreground="{DynamicResource SubtleText}" FontSize="11"
-                               VerticalAlignment="Center" />
-                    <Grid Width="130" Height="6" VerticalAlignment="Center">
-                        <Border Background="{DynamicResource DividerColor}" CornerRadius="3" />
-                        <Border x:Name="UsageBarFill" Background="#30D158"
-                                CornerRadius="3" HorizontalAlignment="Left" Width="0" />
-                    </Grid>
-                    <TextBlock x:Name="StatusUsagePercent" Text="0%"
-                               Foreground="{DynamicResource SubtleText}" FontSize="11"
-                               VerticalAlignment="Center" />
-                    <TextBlock x:Name="StatusUsageDetail" Text=""
-                               Foreground="{DynamicResource SubtleText}" FontSize="10"
-                               VerticalAlignment="Center" />
-                </StackPanel>
-
-                <Border Grid.Column="2" Background="#18FFFFFF" CornerRadius="10"
-                        Padding="10,2" Margin="8,0" VerticalAlignment="Center">
-                    <TextBlock x:Name="StatusTabs" Text="0 windows"
-                               Foreground="{DynamicResource SubtleText}" FontSize="11"
-                               VerticalAlignment="Center" />
-                </Border>
-
-                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6"
-                            Margin="8,0,0,0" VerticalAlignment="Center">
-                    <Ellipse x:Name="StatusDot" Width="7" Height="7"
-                             Fill="#30D158" VerticalAlignment="Center" />
-                    <TextBlock x:Name="StatusProcess"
-                               Text="Ready"
-                               Foreground="{DynamicResource SubtleText}" FontSize="11"
-                               VerticalAlignment="Center" />
-                </StackPanel>
-            </Grid>
+            </StackPanel>
         </Border>
 
         <!-- Main Area: ActivityBar | SidePanel | Splitter | RightArea(WindowStrip + MDI) -->
@@ -243,26 +205,26 @@
                                       DoubleTapped="OnTreeItemDoubleTapped">
                                 <TreeView.ContextMenu>
                                     <ContextMenu>
-                                        <MenuItem Header="Open" Click="OnTreeOpenDefault">
+                                        <MenuItem x:Name="MenuTreeOpen" Header="Open" Click="OnTreeOpenDefault">
                                             <MenuItem.Icon>
                                                 <PathIcon Data="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2ZM18 20H6V4H13V9H18V20Z"
                                                           Width="14" Height="14" />
                                             </MenuItem.Icon>
                                         </MenuItem>
-                                        <MenuItem Header="Open with..." Click="OnTreeOpenWith">
+                                        <MenuItem x:Name="MenuTreeOpenWith" Header="Open with..." Click="OnTreeOpenWith">
                                             <MenuItem.Icon>
                                                 <PathIcon Data="M19 19H5V5H12V3H5C3.89 3 3 3.9 3 5V19C3 20.1 3.89 21 5 21H19C20.1 21 21 20.1 21 19V12H19V19ZM14 3V5H17.59L7.76 14.83L9.17 16.24L19 6.41V10H21V3H14Z"
                                                           Width="14" Height="14" />
                                             </MenuItem.Icon>
                                         </MenuItem>
                                         <Separator />
-                                        <MenuItem Header="Show in Explorer" Click="OnTreeShowInExplorer">
+                                        <MenuItem x:Name="MenuTreeShowInExplorer" Header="Show in Explorer" Click="OnTreeShowInExplorer">
                                             <MenuItem.Icon>
                                                 <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
                                                           Width="14" Height="14" />
                                             </MenuItem.Icon>
                                         </MenuItem>
-                                        <MenuItem Header="Copy Path" Click="OnTreeCopyPath">
+                                        <MenuItem x:Name="MenuTreeCopyPath" Header="Copy Path" Click="OnTreeCopyPath">
                                             <MenuItem.Icon>
                                                 <PathIcon Data="M16 1H4C2.9 1 2 1.9 2 3V17H4V3H16V1ZM19 5H8C6.9 5 6 5.9 6 7V21C6 22.1 6.9 23 8 23H19C20.1 23 21 22.1 21 21V7C21 5.9 20.1 5 19 5ZM19 21H8V7H19V21Z"
                                                           Width="14" Height="14" />
@@ -295,16 +257,22 @@
                                       HorizontalScrollBarVisibility="Disabled"
                                       VerticalScrollBarVisibility="Auto">
                             <StackPanel Spacing="20" Margin="14,16">
-                                <TextBlock Text="Console Settings" FontSize="17" FontWeight="SemiBold"
+                                <TextBlock x:Name="LblConsoleSettings" Text="Console Settings" FontSize="17" FontWeight="SemiBold"
                                            Foreground="{DynamicResource SubtleText}" Margin="0,0,0,4" />
                                 <StackPanel Spacing="6">
-                                    <TextBlock Text="Font Family" FontSize="13"
+                                    <TextBlock x:Name="LblLanguage" Text="Language" FontSize="13"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <ComboBox x:Name="CmbSettingsLanguage" Classes="modern"
+                                              HorizontalAlignment="Stretch" />
+                                </StackPanel>
+                                <StackPanel Spacing="6">
+                                    <TextBlock x:Name="LblFontFamily" Text="Font Family" FontSize="13"
                                                Foreground="{DynamicResource SubtleText}" />
                                     <ComboBox x:Name="CmbSettingsFontFamily" Classes="modern"
                                               HorizontalAlignment="Stretch" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
-                                    <TextBlock Text="Font Size" FontSize="13"
+                                    <TextBlock x:Name="LblFontSize" Text="Font Size" FontSize="13"
                                                Foreground="{DynamicResource SubtleText}" />
                                     <NumericUpDown x:Name="NumSettingsFontSize"
                                                    Minimum="8" Maximum="32" Increment="1"
@@ -312,15 +280,26 @@
                                                    HorizontalAlignment="Stretch" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
-                                    <TextBlock Text="Theme" FontSize="13"
+                                    <TextBlock x:Name="LblTheme" Text="Theme" FontSize="13"
                                                Foreground="{DynamicResource SubtleText}" />
                                     <ComboBox x:Name="CmbSettingsTheme" Classes="modern"
                                               HorizontalAlignment="Stretch" />
                                 </StackPanel>
-                                <Button Content="Apply" Classes="primary"
+                                <Button x:Name="BtnApplySettings" Content="Apply" Classes="primary"
                                         HorizontalAlignment="Stretch"
                                         Click="OnApplySettings"
                                         Margin="0,8,0,0" />
+                                <Button x:Name="BtnOpenClaudeFolder" Classes="primary"
+                                        HorizontalAlignment="Stretch"
+                                        Click="OnOpenClaudeFolder"
+                                        Margin="0,16,0,0">
+                                    <StackPanel Orientation="Horizontal" Spacing="6"
+                                                HorizontalAlignment="Center">
+                                        <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
+                                                  Width="12" Height="12" Foreground="White" />
+                                        <TextBlock x:Name="LblOpenClaudeFolder" Text="Open .claude Folder" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
                             </StackPanel>
                         </ScrollViewer>
 
@@ -333,7 +312,7 @@
                                             HorizontalAlignment="Center">
                                     <PathIcon Data="M12 4V20M4 12H20" Width="12" Height="12"
                                               Foreground="White" />
-                                    <TextBlock Text="Add Snippet" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="LblAddSnippet" Text="Add Snippet" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
                             <ScrollViewer HorizontalScrollBarVisibility="Disabled"

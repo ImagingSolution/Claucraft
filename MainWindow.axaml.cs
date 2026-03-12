@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     private enum SidebarPanel { None, Explorer, Snippets, Settings }
 
     private string? _projectFolder;
+    private string? _gitRepoUrl;
     private readonly UsageTracker _usageTracker = new();
     private bool _isDark = true;
     private MdiLayout _layout = MdiLayout.Maximize;
@@ -66,6 +68,7 @@ public partial class MainWindow : Window
     };
 
     private static readonly List<string> ThemeList = new() { "Dark", "Light" };
+    private static readonly List<string> LanguageList = new() { "English", "日本語" };
 
     private record MdiChildInfo(
         Border Container,
@@ -86,16 +89,11 @@ public partial class MainWindow : Window
         _snippetStore = SnippetStore.Load();
         _isDark = _settings.IsDark;
 
-        _usageTracker.UsageUpdated += info =>
-        {
-            Dispatcher.UIThread.Post(() => UpdateUsageDisplay(info));
-        };
         _usageTracker.Start();
 
         _projectFolder = !string.IsNullOrEmpty(_settings.ProjectFolder) && Directory.Exists(_settings.ProjectFolder)
             ? _settings.ProjectFolder
             : Environment.CurrentDirectory;
-        StatusFolder.Text = _projectFolder;
         LoadRecentProjectFolders();
 
         MdiContainer.SizeChanged += (_, _) =>
@@ -109,6 +107,11 @@ public partial class MainWindow : Window
             app.SetTheme(false);
         }
 
+        // Apply saved language
+        Loc.Language = _settings.Language;
+        ApplyLocalization();
+
+        RefreshGitInfo();
         RefreshSessionList();
         RefreshFileTree();
 
@@ -118,6 +121,60 @@ public partial class MainWindow : Window
             Dispatcher.UIThread.Post(() => CreateNewChild("claude -c", "Claude"),
                 DispatcherPriority.Background);
         }
+    }
+
+    // ── Localization ──
+
+    private void ApplyLocalization()
+    {
+        // Toolbar
+        LblProject.Text = Loc.Get("Project");
+        CmbProjectFolder.PlaceholderText = Loc.Get("SelectProjectFolder");
+        ToolTip.SetTip(BtnOpenExplorer, Loc.Get("OpenInExplorer"));
+        LblNewClaude.Text = Loc.Get("NewClaude");
+        LblSession.Text = Loc.Get("Session");
+        CmbSessions.PlaceholderText = Loc.Get("SelectSession");
+        LblResume.Text = Loc.Get("Resume");
+
+        // Status Bar - git info updated via RefreshGitInfo()
+
+        // Activity Bar tooltips
+        ToolTip.SetTip(BtnActivityExplorer, Loc.Get("ExplorerTooltip"));
+        ToolTip.SetTip(BtnActivitySnippets, Loc.Get("SnippetsTooltip"));
+        ToolTip.SetTip(BtnActivityCompact, Loc.Get("CompactTooltip"));
+        ToolTip.SetTip(BtnActivitySettings, Loc.Get("SettingsTooltip"));
+
+        // Side Panel title (if open)
+        if (_activeSidePanel != SidebarPanel.None)
+            ShowPanelContent(_activeSidePanel);
+
+        // Explorer context menu
+        MenuTreeOpen.Header = Loc.Get("Open");
+        MenuTreeOpenWith.Header = Loc.Get("OpenWith");
+        MenuTreeShowInExplorer.Header = Loc.Get("ShowInExplorer");
+        MenuTreeCopyPath.Header = Loc.Get("CopyPath");
+
+        // Settings panel labels
+        LblConsoleSettings.Text = Loc.Get("ConsoleSettings");
+        LblLanguage.Text = Loc.Get("LanguageSetting");
+        LblFontFamily.Text = Loc.Get("FontFamily");
+        LblFontSize.Text = Loc.Get("FontSize");
+        LblTheme.Text = Loc.Get("Theme");
+        BtnApplySettings.Content = Loc.Get("Apply");
+        LblOpenClaudeFolder.Text = Loc.Get("OpenClaudeFolder");
+
+        // Snippets panel
+        LblAddSnippet.Text = Loc.Get("AddSnippet");
+
+        // Window strip tooltips
+        ToolTip.SetTip(BtnLayoutTile, Loc.Get("TileWindows"));
+        ToolTip.SetTip(BtnLayoutCascade, Loc.Get("CascadeWindows"));
+        ToolTip.SetTip(BtnLayoutMaximize, Loc.Get("FullView"));
+
+        // Window title
+        var ver = Assembly.GetExecutingAssembly().GetName().Version;
+        var verStr = ver != null ? $"Ver.{ver.Major}.{ver.Minor}.{ver.Build}.{ver.Revision}" : "";
+        Title = $"{Loc.Get("AppTitle")}  {verStr}";
     }
 
     // ── Sidebar Panel ──
@@ -206,9 +263,9 @@ public partial class MainWindow : Window
         SnippetsPanel.IsVisible = panel == SidebarPanel.Snippets;
         SidePanelTitle.Text = panel switch
         {
-            SidebarPanel.Explorer => "EXPLORER",
-            SidebarPanel.Settings => "SETTINGS",
-            SidebarPanel.Snippets => "SNIPPETS",
+            SidebarPanel.Explorer => Loc.Get("EXPLORER"),
+            SidebarPanel.Settings => Loc.Get("SETTINGS"),
+            SidebarPanel.Snippets => Loc.Get("SNIPPETS"),
             _ => ""
         };
     }
@@ -364,6 +421,11 @@ public partial class MainWindow : Window
     {
         _settingsInitialized = true;
 
+        CmbSettingsLanguage.ItemsSource = LanguageList;
+        CmbSettingsLanguage.SelectedItem = LanguageList.Contains(_settings.Language)
+            ? _settings.Language
+            : LanguageList[0];
+
         var availableFonts = new List<string>();
         foreach (var name in FontList)
         {
@@ -391,14 +453,19 @@ public partial class MainWindow : Window
 
     private void OnApplySettings(object? sender, RoutedEventArgs e)
     {
+        var language = CmbSettingsLanguage.SelectedItem as string ?? "English";
         var fontFamily = CmbSettingsFontFamily.SelectedItem as string ?? "Cascadia Mono";
         var fontSize = (double)(NumSettingsFontSize.Value ?? 14);
         var isDark = (CmbSettingsTheme.SelectedItem as string) == "Dark";
 
+        _settings.Language = language;
         _settings.FontFamily = fontFamily;
         _settings.FontSize = fontSize;
         _settings.IsDark = isDark;
         _settings.Save();
+
+        Loc.Language = language;
+        ApplyLocalization();
 
         foreach (var child in _children)
         {
@@ -408,6 +475,15 @@ public partial class MainWindow : Window
         if (_isDark != isDark)
         {
             ApplyTheme(isDark);
+        }
+    }
+
+    private void OnOpenClaudeFolder(object? sender, RoutedEventArgs e)
+    {
+        var claudeDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
+        if (Directory.Exists(claudeDir))
+        {
+            Process.Start(new ProcessStartInfo { FileName = claudeDir, UseShellExecute = true });
         }
     }
 
@@ -473,7 +549,7 @@ public partial class MainWindow : Window
             BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 60)),
             Background = new SolidColorBrush(Color.FromRgb(28, 28, 30)),
             Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
-            Watermark = "Enter snippet text...",
+            Watermark = Loc.Get("EnterSnippetText"),
             Classes = { "snippet-text" }
         };
 
@@ -525,7 +601,7 @@ public partial class MainWindow : Window
         {
             Items =
             {
-                CreateSnippetMenuItem("Send to Console", "M8 5V19L19 12L8 5Z", () =>
+                CreateSnippetMenuItem(Loc.Get("SendToConsole"), "M8 5V19L19 12L8 5Z", () =>
                 {
                     if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
                         && !string.IsNullOrEmpty(textBox.Text))
@@ -536,7 +612,7 @@ public partial class MainWindow : Window
                     }
                 }),
                 new Separator(),
-                CreateSnippetMenuItem("Delete", "M6 19C6 20.1 6.9 21 8 21H16C17.1 21 18 20.1 18 19V7H6V19ZM19 4H15.5L14.5 3H9.5L8.5 4H5V6H19V4Z", () =>
+                CreateSnippetMenuItem(Loc.Get("Delete"), "M6 19C6 20.1 6.9 21 8 21H16C17.1 21 18 20.1 18 19V7H6V19ZM19 4H15.5L14.5 3H9.5L8.5 4H5V6H19V4Z", () =>
                 {
                     _snippetStore.Snippets.Remove(item);
                     SnippetsList.Children.Remove(border);
@@ -731,12 +807,107 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnProjectFolderKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            var text = CmbProjectFolder.Text?.Trim();
+            if (!string.IsNullOrEmpty(text) && Directory.Exists(text))
+            {
+                SetProjectFolder(text);
+                LoadRecentProjectFolders();
+            }
+            e.Handled = true;
+        }
+    }
+
     private void SetProjectFolder(string path)
     {
         _projectFolder = path;
-        StatusFolder.Text = path;
+        RefreshGitInfo();
         RefreshSessionList();
         RefreshFileTree();
+    }
+
+    private void OnRepoNameDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_gitRepoUrl))
+        {
+            Process.Start(new ProcessStartInfo { FileName = _gitRepoUrl, UseShellExecute = true });
+        }
+        e.Handled = true;
+    }
+
+    private void RefreshGitInfo()
+    {
+        StatusRepoName.Text = "";
+        StatusBranchName.Text = "";
+        _gitRepoUrl = null;
+
+        if (string.IsNullOrEmpty(_projectFolder) || !Directory.Exists(_projectFolder))
+            return;
+
+        try
+        {
+            // Get remote origin URL -> extract repo name
+            var remoteInfo = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = "remote get-url origin",
+                WorkingDirectory = _projectFolder,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var remoteProc = Process.Start(remoteInfo);
+            var remoteUrl = remoteProc?.StandardOutput.ReadToEnd().Trim() ?? "";
+            remoteProc?.WaitForExit();
+
+            if (!string.IsNullOrEmpty(remoteUrl))
+            {
+                // Build browser URL from remote
+                // https://github.com/owner/repo.git or git@github.com:owner/repo.git
+                var cleanUrl = remoteUrl;
+                if (cleanUrl.EndsWith(".git"))
+                    cleanUrl = cleanUrl[..^4];
+                if (cleanUrl.StartsWith("git@"))
+                {
+                    // git@github.com:owner/repo -> https://github.com/owner/repo
+                    cleanUrl = cleanUrl.Replace("git@", "https://").Replace(":", "/");
+                }
+                _gitRepoUrl = cleanUrl;
+
+                // Extract "owner/repo" for display
+                var repoName = cleanUrl;
+                var idx = repoName.LastIndexOf('/');
+                if (idx >= 0)
+                {
+                    var ownerStart = repoName.LastIndexOf('/', idx - 1);
+                    repoName = ownerStart >= 0 ? repoName[(ownerStart + 1)..] : repoName[(idx + 1)..];
+                }
+                StatusRepoName.Text = repoName;
+            }
+
+            // Get current branch name
+            var branchInfo = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = "rev-parse --abbrev-ref HEAD",
+                WorkingDirectory = _projectFolder,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var branchProc = Process.Start(branchInfo);
+            var branch = branchProc?.StandardOutput.ReadToEnd().Trim() ?? "";
+            branchProc?.WaitForExit();
+
+            if (!string.IsNullOrEmpty(branch))
+                StatusBranchName.Text = branch;
+        }
+        catch { }
     }
 
     private async void RefreshSessionList()
@@ -1151,7 +1322,6 @@ public partial class MainWindow : Window
         {
             dot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));   // Apple systemGray
             stripDot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));
-            StatusProcess.Text = $"Exited: {titleText.Text}";
             RefreshSessionList();
         };
 
@@ -1159,7 +1329,6 @@ public partial class MainWindow : Window
         _activeChildIndex = _children.Count - 1;
         MdiContainer.Children.Add(container);
         WindowStrip.Children.Add(stripButton);
-        UpdateTabCount();
         ArrangeChildren();
 
         Dispatcher.UIThread.Post(() =>
@@ -1169,7 +1338,6 @@ public partial class MainWindow : Window
                 : "";
             string fullCommand = $"cmd.exe /c chcp 65001 >nul && {cdPart}{command}";
             terminal.StartProcess(fullCommand, _projectFolder);
-            StatusProcess.Text = $"Running: {command}";
             terminal.FocusTerminal();
         }, DispatcherPriority.Background);
     }
@@ -1191,35 +1359,7 @@ public partial class MainWindow : Window
         else if (idx <= _activeChildIndex && _activeChildIndex > 0)
             _activeChildIndex--;
 
-        UpdateTabCount();
         ArrangeChildren();
-    }
-
-    private async void OnUsageTapped(object? sender, TappedEventArgs e)
-    {
-        var chart = new UsageChartWindow();
-        await chart.ShowDialog(this);
-    }
-
-    private void UpdateUsageDisplay(UsageInfo info)
-    {
-        double pct = Math.Clamp(info.Percentage, 0, 100);
-        StatusUsagePercent.Text = $"{pct:F0}%";
-        UsageBarFill.Width = 130.0 * pct / 100.0;
-
-        if (pct < 50)
-            UsageBarFill.Background = new SolidColorBrush(Color.FromRgb(48, 209, 88));   // Apple Green
-        else if (pct < 80)
-            UsageBarFill.Background = new SolidColorBrush(Color.FromRgb(255, 214, 10));  // Apple Yellow
-        else
-            UsageBarFill.Background = new SolidColorBrush(Color.FromRgb(255, 69, 58));   // Apple Red
-
-        StatusUsageDetail.Text = $"{info.TodayMessages} msgs / {info.TodaySessions} sessions";
-    }
-
-    private void UpdateTabCount()
-    {
-        StatusTabs.Text = $"{_children.Count} windows";
     }
 
     protected override void OnClosed(EventArgs e)
