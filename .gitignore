@@ -4,3 +4,10 @@ obj/
 *.suo
 .vs/
 *.DotSettings.user
+
+# Build outputs
+publish/
+publish-*/
+
+# Claude Code local settings
+.claude/
