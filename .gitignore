@@ -11,3 +11,6 @@ publish-*/
 
 # Claude Code local settings
 .claude/
+
+# Documentation
+Qiita/

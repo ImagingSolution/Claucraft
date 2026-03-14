@@ -11,7 +11,7 @@ Manage multiple Claude Code sessions side-by-side in a dark-themed interface wit
 - **Session Management** - Resume previous Claude Code sessions with history and timestamps
 - **Project Context Switching** - Automatically switch project folder, explorer, and sessions when switching between MDI windows
 - **Project Explorer** - Browse project file trees with syntax-aware icons and color-coded file types
-- **Snippets Panel** - Store and quickly send code snippets to the active console
+- **Snippets Panel** - Store and quickly send code snippets to the active console (`\r` in text sends Enter key)
 - **Usage Tracking** - Monitor daily Claude API usage (messages, tool calls, sessions) with a chart view
 - **Mode Switch** - Switch Claude Code mode (Shift+Tab) from the toolbar
 - **Compact** - Send /compact command from the toolbar
@@ -99,7 +99,7 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **セッション管理** - 過去の Claude Code セッションを履歴とタイムスタンプ付きで再開
 - **プロジェクトコンテキスト切替** - MDI ウィンドウの切り替え時に、プロジェクトフォルダ・エクスプローラー・セッション一覧を自動切替
 - **プロジェクトエクスプローラー** - ファイルツリーを構文対応のアイコンと色分けで表示
-- **スニペットパネル** - コードスニペットを保存し、アクティブなコンソールにワンクリックで送信
+- **スニペットパネル** - コードスニペットを保存し、アクティブなコンソールにワンクリックで送信（テキスト中の `\r` で Enter キーを送信）
 - **使用量トラッキング** - Claude API の日次使用量（メッセージ数、ツールコール数、セッション数）をチャートで表示
 - **モード切替** - ツールバーから Claude Code のモードを切替（Shift+Tab）
 - **コンパクト** - ツールバーから /compact コマンドを送信

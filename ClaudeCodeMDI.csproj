@@ -7,10 +7,21 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>icon.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
-    <Version>0.1.1.$([System.DateTime]::UtcNow.Subtract($([System.DateTime]::new(2025,1,1))).Days)</Version>
-    <AssemblyVersion>0.1.1.$([System.DateTime]::UtcNow.Subtract($([System.DateTime]::new(2025,1,1))).Days)</AssemblyVersion>
-    <FileVersion>0.1.1.$([System.DateTime]::UtcNow.Subtract($([System.DateTime]::new(2025,1,1))).Days)</FileVersion>
   </PropertyGroup>
+
+  <Target Name="IncrementBuildNumber" BeforeTargets="BeforeBuild">
+    <ReadLinesFromFile File="build.number">
+      <Output TaskParameter="Lines" ItemName="BuildNumberLines" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <CurrentBuildNumber>@(BuildNumberLines)</CurrentBuildNumber>
+      <NextBuildNumber>$([MSBuild]::Add($(CurrentBuildNumber), 1))</NextBuildNumber>
+      <Version>0.1.2.$(NextBuildNumber)</Version>
+      <AssemblyVersion>0.1.2.$(NextBuildNumber)</AssemblyVersion>
+      <FileVersion>0.1.2.$(NextBuildNumber)</FileVersion>
+    </PropertyGroup>
+    <WriteLinesToFile File="build.number" Lines="$(NextBuildNumber)" Overwrite="true" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.12" />

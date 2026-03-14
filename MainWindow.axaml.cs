@@ -606,7 +606,7 @@ public partial class MainWindow : Window
             if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
                 && !string.IsNullOrEmpty(textBox.Text))
             {
-                _children[_activeChildIndex].Terminal.SendText(textBox.Text);
+                _children[_activeChildIndex].Terminal.SendText(textBox.Text.Replace("\\r", "\r"));
                 BringToFront(_activeChildIndex);
                 _children[_activeChildIndex].Terminal.FocusTerminal();
             }
