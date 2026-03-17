@@ -4,6 +4,8 @@ A Windows MDI (Multiple Document Interface) terminal application for [Claude Cod
 
 Manage multiple Claude Code sessions side-by-side in a dark-themed interface with welcome page, project explorer, snippet management, and usage tracking.
 
+![説明]](https://github.com/user-attachments/assets/ed655337-ba75-4975-95da-0d31454db6bf)
+
 ## Features
 
 - **Welcome Page** - VS Code-style startup page with new project, previous project, and recent projects list. Previous/recent projects automatically resume with `claude -c`
