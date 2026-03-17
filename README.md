@@ -4,7 +4,11 @@ A Windows MDI (Multiple Document Interface) terminal application for [Claude Cod
 
 Manage multiple Claude Code sessions side-by-side in a dark-themed interface with welcome page, project explorer, snippet management, and usage tracking.
 
-![説明]](https://github.com/user-attachments/assets/ed655337-ba75-4975-95da-0d31454db6bf)
+![MDI Windows]]([https://github.com/user-attachments/assets/ed655337-ba75-4975-95da-0d31454db6bf])
+
+![ReeView]]([https://github.com/user-attachments/assets/3bd58b27-8314-4d3b-9503-a9d3b6b37845])
+
+![Snippets]]([https://github.com/user-attachments/assets/c4e2b938-7648-42b8-8a89-10873857d682])
 
 ## Features
 
