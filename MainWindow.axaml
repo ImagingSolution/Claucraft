@@ -188,6 +188,12 @@
                             <PathIcon Data="M4 2H14L20 8V22H4V2ZM6 4V20H18V9H13V4H6ZM7 12H17V14H7V12ZM7 16H14V18H7V16Z"
                                       Width="20" Height="20" />
                         </Button>
+                        <Button x:Name="BtnActivityWindows" Classes="activity-btn"
+                                ToolTip.Tip="Windows"
+                                Click="OnActivityWindows">
+                            <PathIcon Data="M3 3H21V10H3ZM3 14H21V21H3Z"
+                                      Width="20" Height="20" />
+                        </Button>
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom"
                                 Spacing="2" Margin="0,8">
@@ -399,6 +405,13 @@
                                             Margin="5,8" />
                             </ScrollViewer>
                         </DockPanel>
+
+                        <!-- Windows Panel -->
+                        <ScrollViewer x:Name="WindowsPanel" IsVisible="False"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="WindowsList" Spacing="2" Margin="4,8" />
+                        </ScrollViewer>
                     </Grid>
                 </DockPanel>
             </Border>
@@ -426,6 +439,18 @@
                                     ToolTip.Tip="Tile windows"
                                     Click="OnLayoutTile">
                                 <PathIcon Data="M3 3H10V10H3ZM14 3H21V10H14ZM3 14H10V21H3ZM14 14H21V21H14Z"
+                                          Width="14" Height="14" />
+                            </Button>
+                            <Button x:Name="BtnLayoutTileH" Classes="icon-btn"
+                                    ToolTip.Tip="Tile horizontally"
+                                    Click="OnLayoutTileH">
+                                <PathIcon Data="M3 3H21V10H3ZM3 14H21V21H3Z"
+                                          Width="14" Height="14" />
+                            </Button>
+                            <Button x:Name="BtnLayoutTileV" Classes="icon-btn"
+                                    ToolTip.Tip="Tile vertically"
+                                    Click="OnLayoutTileV">
+                                <PathIcon Data="M3 3H10V21H3ZM14 3H21V21H14Z"
                                           Width="14" Height="14" />
                             </Button>
                             <Button x:Name="BtnLayoutCascade" Classes="icon-btn"

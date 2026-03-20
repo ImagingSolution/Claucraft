@@ -22,8 +22,8 @@ namespace ClaudeCodeMDI;
 
 public partial class MainWindow : Window
 {
-    private enum MdiLayout { Maximize, Tile, Cascade }
-    private enum SidebarPanel { None, Explorer, Snippets, Settings }
+    private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical, Cascade }
+    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows }
 
     private string? _projectFolder;
     private string? _gitRepoUrl;
@@ -83,6 +83,7 @@ public partial class MainWindow : Window
     )
     {
         public string? ProjectFolder { get; set; }
+        public string? FirstInput { get; set; }
     };
 
     public MainWindow()
@@ -158,6 +159,7 @@ public partial class MainWindow : Window
         // Activity Bar tooltips
         ToolTip.SetTip(BtnActivityExplorer, Loc.Get("ExplorerTooltip"));
         ToolTip.SetTip(BtnActivitySnippets, Loc.Get("SnippetsTooltip"));
+        ToolTip.SetTip(BtnActivityWindows, Loc.Get("WindowsTooltip"));
         ToolTip.SetTip(BtnActivityCompact, Loc.Get("CompactTooltip"));
         ToolTip.SetTip(BtnActivitySettings, Loc.Get("SettingsTooltip"));
 
@@ -187,6 +189,8 @@ public partial class MainWindow : Window
 
         // Window strip tooltips
         ToolTip.SetTip(BtnLayoutTile, Loc.Get("TileWindows"));
+        ToolTip.SetTip(BtnLayoutTileH, Loc.Get("TileHorizontally"));
+        ToolTip.SetTip(BtnLayoutTileV, Loc.Get("TileVertically"));
         ToolTip.SetTip(BtnLayoutCascade, Loc.Get("CascadeWindows"));
         ToolTip.SetTip(BtnLayoutMaximize, Loc.Get("FullView"));
 
@@ -211,6 +215,11 @@ public partial class MainWindow : Window
     private void OnActivitySnippets(object? sender, RoutedEventArgs e)
     {
         ToggleSidePanel(SidebarPanel.Snippets);
+    }
+
+    private void OnActivityWindows(object? sender, RoutedEventArgs e)
+    {
+        ToggleSidePanel(SidebarPanel.Windows);
     }
 
     private void OnActivityModeSwitch(object? sender, RoutedEventArgs e)
@@ -289,14 +298,18 @@ public partial class MainWindow : Window
         ExplorerPanel.IsVisible = panel == SidebarPanel.Explorer;
         SettingsPanel.IsVisible = panel == SidebarPanel.Settings;
         SnippetsPanel.IsVisible = panel == SidebarPanel.Snippets;
+        WindowsPanel.IsVisible = panel == SidebarPanel.Windows;
         SidePanelTitle.Text = panel switch
         {
             SidebarPanel.Explorer => Loc.Get("EXPLORER"),
             SidebarPanel.Settings => Loc.Get("SETTINGS"),
             SidebarPanel.Snippets => Loc.Get("SNIPPETS"),
+            SidebarPanel.Windows => Loc.Get("WINDOWS"),
             _ => ""
         };
         BtnBrowseFolder.IsVisible = panel == SidebarPanel.Explorer;
+        if (panel == SidebarPanel.Windows)
+            RefreshWindowsPanel();
     }
 
     private void UpdateActivityBarHighlight()
@@ -304,6 +317,7 @@ public partial class MainWindow : Window
         SetActivityButtonActive(BtnActivityExplorer, _activeSidePanel == SidebarPanel.Explorer);
         SetActivityButtonActive(BtnActivitySnippets, _activeSidePanel == SidebarPanel.Snippets);
         SetActivityButtonActive(BtnActivitySettings, _activeSidePanel == SidebarPanel.Settings);
+        SetActivityButtonActive(BtnActivityWindows, _activeSidePanel == SidebarPanel.Windows);
     }
 
     private static void SetActivityButtonActive(Button btn, bool active)
@@ -316,6 +330,123 @@ public partial class MainWindow : Window
         else
         {
             btn.Classes.Remove("active");
+        }
+    }
+
+    // ── Windows Panel ──
+
+    private void RefreshWindowsPanel()
+    {
+        if (!WindowsPanel.IsVisible) return;
+        WindowsList.Children.Clear();
+
+        for (int i = 0; i < _children.Count; i++)
+        {
+            var child = _children[i];
+            int idx = i;
+            bool isActive = i == _activeChildIndex;
+            bool isRunning = child.StatusDot.Fill is SolidColorBrush b
+                             && b.Color == Color.FromRgb(48, 209, 88);
+
+            var dot = new Ellipse
+            {
+                Width = 8, Height = 8,
+                Fill = isRunning
+                    ? new SolidColorBrush(Color.FromRgb(48, 209, 88))
+                    : new SolidColorBrush(Color.FromRgb(142, 142, 147)),
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 5, 0, 0),
+            };
+
+            var title = new TextBlock
+            {
+                Text = child.StripText.Text ?? "Claude",
+                FontSize = 13,
+                FontWeight = FontWeight.Normal,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+
+            var summary = new TextBlock
+            {
+                Text = child.Terminal.FirstUserInput ?? "",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(_isDark ? Color.FromArgb(140, 200, 200, 205) : Color.FromArgb(160, 80, 80, 90)),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxHeight = 16,
+            };
+
+            var textStack = new StackPanel { Spacing = 1 };
+            textStack.Children.Add(title);
+            if (!string.IsNullOrEmpty(child.Terminal.FirstUserInput))
+                textStack.Children.Add(summary);
+
+            var closeBtn = new Button
+            {
+                Content = "\u00D7",
+                FontSize = 12,
+                Padding = new Thickness(4, 0),
+                Background = Brushes.Transparent,
+                Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+                BorderThickness = new Thickness(0),
+                VerticalAlignment = VerticalAlignment.Top,
+                CornerRadius = new CornerRadius(4),
+                Cursor = new Cursor(StandardCursorType.Hand),
+                Margin = new Thickness(4, 2, 0, 0),
+            };
+            closeBtn.Click += (_, ev) => { CloseChild(child); ev.Handled = true; };
+
+            var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
+            Grid.SetColumn(dot, 0);
+            Grid.SetColumn(textStack, 1);
+            Grid.SetColumn(closeBtn, 2);
+            grid.Children.Add(dot);
+            grid.Children.Add(textStack);
+            grid.Children.Add(closeBtn);
+            grid.Margin = new Thickness(4, 0);
+
+            var item = new Border
+            {
+                Child = grid,
+                Padding = new Thickness(6, 5),
+                CornerRadius = new CornerRadius(6),
+                Background = isActive
+                    ? new SolidColorBrush(Color.FromArgb(30, 0, 122, 255))
+                    : Brushes.Transparent,
+                Cursor = new Cursor(StandardCursorType.Hand),
+            };
+
+            // Preview tooltip (first 10 lines of terminal output)
+            var preview = child.Terminal.GetPreviewText(10);
+            if (!string.IsNullOrWhiteSpace(preview))
+            {
+                var previewBlock = new TextBlock
+                {
+                    Text = preview,
+                    FontSize = 11,
+                    FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New"),
+                    MaxWidth = 500,
+                    TextWrapping = TextWrapping.NoWrap,
+                };
+                ToolTip.SetTip(item, previewBlock);
+                ToolTip.SetShowDelay(item, 300);
+            }
+
+            item.PointerPressed += (_, _) =>
+            {
+                BringToFront(idx);
+                _children[idx].Terminal.FocusTerminal();
+            };
+            // Hover
+            item.PointerEntered += (s, _) =>
+            {
+                if (!isActive) ((Border)s!).Background = new SolidColorBrush(_isDark ? Color.FromArgb(20, 255, 255, 255) : Color.FromArgb(20, 0, 0, 0));
+            };
+            item.PointerExited += (s, _) =>
+            {
+                if (!isActive) ((Border)s!).Background = Brushes.Transparent;
+            };
+
+            WindowsList.Children.Add(item);
         }
     }
 
@@ -1134,7 +1265,7 @@ public partial class MainWindow : Window
             string tabLabel = !string.IsNullOrEmpty(session.Summary)
                 ? session.Summary[..Math.Min(20, session.Summary.Length)]
                 : $"Session: {session.Id[..Math.Min(8, session.Id.Length)]}";
-            CreateNewChild(cmd, tabLabel);
+            CreateNewChild(cmd, tabLabel, session.Summary);
         }
     }
 
@@ -1281,6 +1412,8 @@ public partial class MainWindow : Window
             ("Toggle Settings", "", () => ToggleSidePanel(SidebarPanel.Settings)),
             ("Tile Windows", "", () => { _layout = MdiLayout.Tile; ArrangeChildren(); }),
             ("Cascade Windows", "", () => { _layout = MdiLayout.Cascade; ArrangeChildren(); }),
+            ("Tile Horizontally", "", () => { _layout = MdiLayout.TileHorizontal; ArrangeChildren(); }),
+            ("Tile Vertically", "", () => { _layout = MdiLayout.TileVertical; ArrangeChildren(); }),
             ("Full View", "", () => { _layout = MdiLayout.Maximize; ArrangeChildren(); }),
             ("Compact (/compact)", "", () => OnActivityCompact(null, null!)),
             ("Switch Mode (Shift+Tab)", "", () => OnActivityModeSwitch(null, null!)),
@@ -1500,6 +1633,18 @@ public partial class MainWindow : Window
         ArrangeChildren();
     }
 
+    private void OnLayoutTileH(object? sender, RoutedEventArgs e)
+    {
+        _layout = MdiLayout.TileHorizontal;
+        ArrangeChildren();
+    }
+
+    private void OnLayoutTileV(object? sender, RoutedEventArgs e)
+    {
+        _layout = MdiLayout.TileVertical;
+        ArrangeChildren();
+    }
+
     private void ArrangeChildren()
     {
         double w = MdiContainer.Bounds.Width;
@@ -1551,6 +1696,42 @@ public partial class MainWindow : Window
                 break;
             }
 
+            case MdiLayout.TileHorizontal:
+            {
+                int count = _children.Count;
+                double ch = h / count;
+                for (int i = 0; i < count; i++)
+                {
+                    var c = _children[i];
+                    c.Container.IsVisible = true;
+                    c.TitleBar.IsVisible = false;
+                    Canvas.SetLeft(c.Container, 0);
+                    Canvas.SetTop(c.Container, i * ch);
+                    c.Container.Width = w;
+                    c.Container.Height = ch;
+                    c.Container.ZIndex = 0;
+                }
+                break;
+            }
+
+            case MdiLayout.TileVertical:
+            {
+                int count = _children.Count;
+                double cw = w / count;
+                for (int i = 0; i < count; i++)
+                {
+                    var c = _children[i];
+                    c.Container.IsVisible = true;
+                    c.TitleBar.IsVisible = false;
+                    Canvas.SetLeft(c.Container, i * cw);
+                    Canvas.SetTop(c.Container, 0);
+                    c.Container.Width = cw;
+                    c.Container.Height = h;
+                    c.Container.ZIndex = 0;
+                }
+                break;
+            }
+
             case MdiLayout.Cascade:
             {
                 double offset = 32;
@@ -1576,6 +1757,7 @@ public partial class MainWindow : Window
         }
 
         UpdateStripSelection();
+        RefreshWindowsPanel();
     }
 
     private void BringToFront(int index)
@@ -1647,7 +1829,7 @@ public partial class MainWindow : Window
 
     // ── MDI Child management ──
 
-    private void CreateNewChild(string command, string tabTitle)
+    private void CreateNewChild(string command, string tabTitle, string? firstInput = null)
     {
         var terminal = new TerminalControl { IsDarkTheme = _isDark };
         terminal.SetFont(_settings.FontFamily, _settings.FontSize);
@@ -1773,8 +1955,13 @@ public partial class MainWindow : Window
             container, titleBar, titleText, dot, stripDot, terminal, stripButton, stripText
         )
         {
-            ProjectFolder = _projectFolder
+            ProjectFolder = _projectFolder,
+            FirstInput = firstInput
         };
+
+        // Set FirstUserInput on terminal if provided (e.g. from resumed session)
+        if (!string.IsNullOrEmpty(firstInput))
+            terminal.FirstUserInput = firstInput;
 
         // --- Events ---
         closeBtn.Click += (_, _) => CloseChild(entry);
@@ -1904,6 +2091,7 @@ public partial class MainWindow : Window
             var displayTitle = string.IsNullOrWhiteSpace(title) ? tabTitle : title;
             titleText.Text = displayTitle;
             stripText.Text = displayTitle;
+            RefreshWindowsPanel();
         };
 
         terminal.Exited += () =>
@@ -2221,13 +2409,20 @@ public partial class MainWindow : Window
         return border;
     }
 
-    private void OpenProjectFromWelcome(string folderPath, bool continueSession = false)
+    private async void OpenProjectFromWelcome(string folderPath, bool continueSession = false)
     {
         CloseWelcomePage();
         SetProjectFolder(folderPath);
         LoadRecentProjectFolders();
         if (continueSession)
-            CreateNewChild("claude -c", "Claude");
+        {
+            // Get latest session summary for the project
+            string? summary = null;
+            var sessions = await SessionService.GetSessionsForProjectAsync(folderPath);
+            if (sessions.Count > 0)
+                summary = sessions[0].Summary;
+            CreateNewChild("claude -c", "Claude", summary);
+        }
         else
             LaunchClaudeWithInitialPrompt();
     }

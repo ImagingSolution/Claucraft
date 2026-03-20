@@ -79,6 +79,7 @@ public class TerminalControl : Control, IDisposable
 
     public string TabTitle { get; private set; } = "Console";
     public bool IsManualTitle { get; set; }
+    public string? FirstUserInput { get; set; }
     private bool _firstInputCaptured;
     private readonly System.Text.StringBuilder _firstInputBuffer = new();
     public event Action<string>? TitleChanged;
@@ -384,7 +385,8 @@ public class TerminalControl : Control, IDisposable
             if (!_firstInputCaptured && _firstInputBuffer.Length > 0)
             {
                 _firstInputCaptured = true;
-                var summary = _firstInputBuffer.ToString().Trim();
+                FirstUserInput = _firstInputBuffer.ToString().Trim();
+                var summary = FirstUserInput;
                 if (summary.Length > 30) summary = summary[..30] + "...";
                 if (!string.IsNullOrWhiteSpace(summary))
                     TitleChanged?.Invoke(summary);
@@ -1157,7 +1159,8 @@ public class TerminalControl : Control, IDisposable
             if (!_firstInputCaptured)
             {
                 _firstInputCaptured = true;
-                var summary = text.Replace("\r", " ").Replace("\n", " ").Trim();
+                FirstUserInput = text.Replace("\r", " ").Replace("\n", " ").Trim();
+                var summary = FirstUserInput;
                 if (summary.Length > 30) summary = summary[..30] + "...";
                 if (!string.IsNullOrWhiteSpace(summary))
                     TitleChanged?.Invoke(summary);
@@ -1500,6 +1503,59 @@ public class TerminalControl : Control, IDisposable
     }
 
     // ── Export ──
+
+    public string GetPreviewText(int maxLines = 10)
+    {
+        int scrollbackCount = _buffer.Scrollback.Count;
+
+        // Include scrollback + screen buffer, but exclude bottom rows
+        // (status line, prompt, empty lines at bottom)
+        // Find last meaningful content row in screen buffer by scanning upward from cursor
+        int lastContentRow = _buffer.CursorRow - 1; // exclude cursor/prompt row
+        // Skip status-like rows from bottom (typically contain | or are very short prompts)
+        for (; lastContentRow >= 0; lastContentRow--)
+        {
+            var rowText = GetRowText(scrollbackCount + lastContentRow).TrimEnd();
+            // Stop skipping if we find a substantial content line (not status/prompt)
+            if (!string.IsNullOrWhiteSpace(rowText) && rowText.Length > 2
+                && !rowText.StartsWith(">") && !rowText.Contains(" | "))
+                break;
+        }
+
+        int totalRows = scrollbackCount + lastContentRow + 1;
+
+        var lines = new List<string>();
+        var current = new System.Text.StringBuilder();
+        for (int absRow = 0; absRow < totalRows; absRow++)
+        {
+            var rowText = GetRowText(absRow).TrimEnd();
+            bool isWrapped = absRow < scrollbackCount
+                ? _buffer.IsScrollbackLineWrapped(absRow)
+                : _buffer.IsLineWrapped(absRow - scrollbackCount);
+            current.Append(rowText);
+            if (!isWrapped)
+            {
+                lines.Add(current.ToString());
+                current.Clear();
+            }
+        }
+        if (current.Length > 0) lines.Add(current.ToString());
+
+        // Take last N non-empty lines, excluding user input lines
+        var result = new List<string>();
+        for (int i = lines.Count - 1; i >= 0 && result.Count < maxLines; i--)
+        {
+            var line = lines[i];
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            // Skip user input prompts (Claude Code uses > or ❯ prefix)
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith(">") || trimmed.StartsWith("❯") || trimmed.StartsWith("$"))
+                continue;
+            result.Add(line);
+        }
+        result.Reverse();
+        return string.Join("\n", result);
+    }
 
     public string ExportAsText()
     {

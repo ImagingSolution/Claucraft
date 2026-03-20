@@ -62,6 +62,8 @@ public static class Loc
         // ── Window Strip Tooltips ──
         ["TileWindows"] = new() { ["English"] = "Tile windows", ["日本語"] = "タイル配置" },
         ["CascadeWindows"] = new() { ["English"] = "Cascade windows", ["日本語"] = "カスケード配置" },
+        ["TileHorizontally"] = new() { ["English"] = "Tile horizontally", ["日本語"] = "横に並べる" },
+        ["TileVertically"] = new() { ["English"] = "Tile vertically", ["日本語"] = "縦に並べる" },
         ["FullView"] = new() { ["English"] = "Full view", ["日本語"] = "最大表示" },
 
         // ── Window Title ──
@@ -116,6 +118,10 @@ public static class Loc
 
         // ── File Preview ──
         ["Preview"] = new() { ["English"] = "Preview", ["日本語"] = "プレビュー" },
+
+        // ── Windows Panel ──
+        ["WindowsTooltip"] = new() { ["English"] = "Windows", ["日本語"] = "ウィンドウ" },
+        ["WINDOWS"] = new() { ["English"] = "WINDOWS", ["日本語"] = "ウィンドウ" },
     };
 
     public static string Get(string key)
