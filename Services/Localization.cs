@@ -88,6 +88,34 @@ public static class Loc
         ["CloseToRight"] = new() { ["English"] = "Close to the Right", ["日本語"] = "右側を閉じる" },
         ["Duplicate"] = new() { ["English"] = "Duplicate", ["日本語"] = "複製" },
         ["ExportOutput"] = new() { ["English"] = "Export Output...", ["日本語"] = "出力をエクスポート..." },
+
+        // ── Notifications ──
+        ["TaskComplete"] = new() { ["English"] = "Task completed", ["日本語"] = "タスク完了" },
+
+        // ── Tab Rename ──
+        ["RenameTab"] = new() { ["English"] = "Rename Tab", ["日本語"] = "タブ名を変更" },
+
+        // ── Search ──
+        ["Regex"] = new() { ["English"] = "Regex", ["日本語"] = "正規表現" },
+        ["MatchCase"] = new() { ["English"] = "Match Case", ["日本語"] = "大文字小文字" },
+
+        // ── Command Palette ──
+        ["CommandPalette"] = new() { ["English"] = "Command Palette", ["日本語"] = "コマンドパレット" },
+        ["TypeToSearch"] = new() { ["English"] = "Type to search commands...", ["日本語"] = "コマンドを検索..." },
+
+        // ── Theme ──
+        ["DarkMode"] = new() { ["English"] = "Dark Mode", ["日本語"] = "ダークモード" },
+
+        // ── Workspace ──
+        ["SaveWorkspace"] = new() { ["English"] = "Save Workspace", ["日本語"] = "ワークスペースを保存" },
+        ["RestoreWorkspace"] = new() { ["English"] = "Restore Workspace", ["日本語"] = "ワークスペースを復元" },
+
+        // ── Session Management ──
+        ["DeleteSession"] = new() { ["English"] = "Delete", ["日本語"] = "削除" },
+        ["SearchSessions"] = new() { ["English"] = "Search sessions...", ["日本語"] = "セッション検索..." },
+
+        // ── File Preview ──
+        ["Preview"] = new() { ["English"] = "Preview", ["日本語"] = "プレビュー" },
     };
 
     public static string Get(string key)

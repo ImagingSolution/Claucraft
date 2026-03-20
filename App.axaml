@@ -67,8 +67,8 @@
         <Style Selector="TextBox.modern">
             <Setter Property="CornerRadius" Value="8" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="BorderBrush" Value="#3A3A3C" />
-            <Setter Property="Background" Value="#1C1C1E" />
+            <Setter Property="BorderBrush" Value="{DynamicResource DividerColor}" />
+            <Setter Property="Background" Value="{DynamicResource SidePanelBg}" />
             <Setter Property="Padding" Value="10,6" />
             <Setter Property="FontSize" Value="13" />
         </Style>
@@ -80,8 +80,8 @@
         <Style Selector="ComboBox.modern">
             <Setter Property="CornerRadius" Value="8" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="BorderBrush" Value="#3A3A3C" />
-            <Setter Property="Background" Value="#1C1C1E" />
+            <Setter Property="BorderBrush" Value="{DynamicResource DividerColor}" />
+            <Setter Property="Background" Value="{DynamicResource SidePanelBg}" />
             <Setter Property="Padding" Value="10,5" />
             <Setter Property="FontSize" Value="13" />
         </Style>

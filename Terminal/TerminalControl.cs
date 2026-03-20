@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -46,8 +47,22 @@ public class TerminalControl : Control, IDisposable
 
     // Input TextBox at bottom
     private readonly TextBox _inputTextBox;
+    private readonly Button _expandButton;
     private const double InputBoxHeight = 28;
     private const double InputBoxMargin = 2;
+    private const double ExpandButtonWidth = 32;
+
+    // Expanded input panel
+    private Border _expandedPanel = null!;
+    private TextBox _expandedTextBox = null!;
+    private Border _dragHandle = null!;
+    private Button _collapseButton = null!;
+    private Button _sendButton = null!;
+    private bool _isExpanded;
+    private double _expandedHeight; // absolute pixels
+    private bool _isDragResizing;
+    private double _dragResizeStartY;
+    private double _dragResizeStartHeight;
 
     // Search bar state
     private Border? _searchBar;
@@ -55,10 +70,17 @@ public class TerminalControl : Control, IDisposable
     private TextBlock? _searchCountLabel;
     private bool _searchVisible;
     private string _searchTerm = "";
+    private bool _searchRegex;
+    private bool _searchCaseSensitive;
+    private ToggleButton? _searchRegexToggle;
+    private ToggleButton? _searchCaseToggle;
     private readonly List<(int absRow, int col, int length)> _searchMatches = new();
     private int _searchCurrentIndex = -1;
 
     public string TabTitle { get; private set; } = "Console";
+    public bool IsManualTitle { get; set; }
+    private bool _firstInputCaptured;
+    private readonly System.Text.StringBuilder _firstInputBuffer = new();
     public event Action<string>? TitleChanged;
     public event Action? Exited;
     public event Action? Clicked;
@@ -70,14 +92,57 @@ public class TerminalControl : Control, IDisposable
         set
         {
             _isDark = value;
-            _inputTextBox.Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(28, 28, 30));
-            _inputTextBox.Background = new SolidColorBrush(_isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 247));
-            InvalidateVisual();
+            ApplyThemeColors();
         }
     }
 
-    // Terminal area height = total height - input box area
-    private double TerminalAreaHeight => Math.Max(0, Bounds.Height - InputBoxHeight - InputBoxMargin);
+    private void ApplyThemeColors()
+    {
+        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(28, 28, 30);
+        var bg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 247);
+        var bgDeep = _isDark ? Color.FromRgb(34, 34, 36) : Color.FromRgb(250, 250, 252);
+        var border = _isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200);
+        var subtle = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(100, 100, 105);
+
+        _inputTextBox.Foreground = new SolidColorBrush(fg);
+        _inputTextBox.Background = new SolidColorBrush(bg);
+        _inputTextBox.BorderBrush = new SolidColorBrush(border);
+
+        _expandButton.Background = new SolidColorBrush(bg);
+        _expandButton.Foreground = new SolidColorBrush(subtle);
+        _expandButton.BorderBrush = new SolidColorBrush(border);
+
+        // Expanded panel
+        _expandedPanel.Background = new SolidColorBrush(bgDeep);
+        _expandedPanel.BorderBrush = new SolidColorBrush(border);
+        _expandedTextBox.Background = new SolidColorBrush(bgDeep);
+        _expandedTextBox.Foreground = new SolidColorBrush(fg);
+        _expandedTextBox.CaretBrush = new SolidColorBrush(fg);
+        _dragHandle.Background = new SolidColorBrush(border);
+        _collapseButton.Background = new SolidColorBrush(bg);
+        _collapseButton.Foreground = new SolidColorBrush(subtle);
+        _sendButton.Background = new SolidColorBrush(Color.FromRgb(0, 122, 255));
+
+        // Search bar
+        if (_searchBar != null)
+        {
+            _searchBar.Background = new SolidColorBrush(_isDark ? Color.FromRgb(38, 38, 40) : Color.FromRgb(245, 245, 248));
+            _searchBar.BorderBrush = new SolidColorBrush(border);
+        }
+        if (_searchTextBox != null)
+        {
+            _searchTextBox.Background = new SolidColorBrush(bg);
+            _searchTextBox.Foreground = new SolidColorBrush(fg);
+            _searchTextBox.BorderBrush = new SolidColorBrush(border);
+        }
+
+        InvalidateVisual();
+    }
+
+    // Terminal area height = total height - input area - expanded panel
+    private double ExpandedPanelHeight => _isExpanded ? _expandedHeight : 0;
+    private double InputAreaHeight => _isExpanded ? 0 : InputBoxHeight + InputBoxMargin;
+    private double TerminalAreaHeight => Math.Max(0, Bounds.Height - InputAreaHeight - ExpandedPanelHeight);
 
     public void SetFont(string fontFamily, double fontSize)
     {
@@ -128,8 +193,33 @@ public class TerminalControl : Control, IDisposable
         // Forward click to activate MDI window
         _inputTextBox.PointerPressed += (s, e) => Clicked?.Invoke();
 
+        // Expand button (▲)
+        _expandButton = new Button
+        {
+            Content = "\u25B2",
+            FontSize = 10,
+            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),
+            Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 165)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58)),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(6, 0),
+            Width = ExpandButtonWidth,
+            CornerRadius = new CornerRadius(0),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Focusable = false,
+        };
+        ToolTip.SetTip(_expandButton, "Expand input (multi-line)");
+        _expandButton.Click += (_, _) => ToggleExpandedMode();
+
+        // Build expanded input panel
+        BuildExpandedPanel();
+
         VisualChildren.Add(_inputTextBox);
         LogicalChildren.Add(_inputTextBox);
+        VisualChildren.Add(_expandButton);
+        LogicalChildren.Add(_expandButton);
+        VisualChildren.Add(_expandedPanel);
+        LogicalChildren.Add(_expandedPanel);
 
         // Build search bar
         BuildSearchBar();
@@ -140,6 +230,7 @@ public class TerminalControl : Control, IDisposable
         AddHandler(DragDrop.DragOverEvent, OnFileDragOver);
 
         MeasureCellSize();
+        ApplyThemeColors();
 
         _buffer.BufferChanged += () =>
         {
@@ -186,6 +277,10 @@ public class TerminalControl : Control, IDisposable
             _inputStartPending = false;
             System.Diagnostics.Debug.WriteLine($"[InputStart] recorded at ({_inputStartAbsRow},{_inputStartCol})");
         }
+
+        // Capture first user input for tab title
+        if (!_firstInputCaptured)
+            _firstInputBuffer.Append(e.Text);
 
         // Printable text committed (half-width direct or IME confirmed) — send to PTY
         if (_hasSelection) ClearSelection();
@@ -285,16 +380,28 @@ public class TerminalControl : Control, IDisposable
         // Enter: send carriage return to PTY (submit)
         if (e.Key == Key.Enter)
         {
+            // Capture first input as tab title
+            if (!_firstInputCaptured && _firstInputBuffer.Length > 0)
+            {
+                _firstInputCaptured = true;
+                var summary = _firstInputBuffer.ToString().Trim();
+                if (summary.Length > 30) summary = summary[..30] + "...";
+                if (!string.IsNullOrWhiteSpace(summary))
+                    TitleChanged?.Invoke(summary);
+            }
             _inputStartPending = true;
             _pty?.WriteInput("\r");
             e.Handled = true;
             return;
         }
 
-        // Escape: send to PTY (IME case is handled above)
+        // Escape: collapse expanded panel if open, otherwise send to PTY
         if (e.Key == Key.Escape)
         {
-            _pty?.WriteInput("\x1b");
+            if (_isExpanded)
+                CollapseInputPanel();
+            else
+                _pty?.WriteInput("\x1b");
             e.Handled = true;
             return;
         }
@@ -509,16 +616,35 @@ public class TerminalControl : Control, IDisposable
 
     protected override Size MeasureOverride(Size availableSize)
     {
-        _inputTextBox.Measure(new Size(availableSize.Width, InputBoxHeight));
+        double tbW = Math.Max(0, availableSize.Width - ExpandButtonWidth);
+        _inputTextBox.Measure(new Size(tbW, InputBoxHeight));
+        _expandButton.Measure(new Size(ExpandButtonWidth, InputBoxHeight));
+        if (_isExpanded)
+            _expandedPanel.Measure(new Size(availableSize.Width, _expandedHeight));
         _searchBar?.Measure(availableSize);
         return availableSize;
     }
 
     protected override Size ArrangeOverride(Size finalSize)
     {
-        // Position TextBox at the bottom of the control
-        double tbY = finalSize.Height - InputBoxHeight;
-        _inputTextBox.Arrange(new Rect(0, tbY, finalSize.Width, InputBoxHeight));
+        if (_isExpanded)
+        {
+            // Expanded: panel at bottom, hide input row
+            double epY = finalSize.Height - _expandedHeight;
+            _expandedPanel.Arrange(new Rect(0, epY, finalSize.Width, _expandedHeight));
+            // Move input row off-screen
+            _inputTextBox.Arrange(new Rect(0, finalSize.Height, 0, 0));
+            _expandButton.Arrange(new Rect(0, finalSize.Height, 0, 0));
+        }
+        else
+        {
+            // Normal: input row at bottom
+            double tbY = finalSize.Height - InputBoxHeight;
+            double tbW = Math.Max(0, finalSize.Width - ExpandButtonWidth);
+            _inputTextBox.Arrange(new Rect(0, tbY, tbW, InputBoxHeight));
+            _expandButton.Arrange(new Rect(tbW, tbY, ExpandButtonWidth, InputBoxHeight));
+        }
+
         // Position search bar at top-right
         if (_searchBar != null && _searchVisible)
         {
@@ -889,6 +1015,213 @@ public class TerminalControl : Control, IDisposable
         return toCol > fromCol ? count : -count;
     }
 
+    // ── Expanded Input Panel ──
+
+    private void BuildExpandedPanel()
+    {
+        // Drag handle bar at top
+        _dragHandle = new Border
+        {
+            Height = 4,
+            Background = new SolidColorBrush(Color.FromRgb(65, 65, 70)),
+            Cursor = new Cursor(StandardCursorType.SizeNorthSouth),
+        };
+        _dragHandle.PointerPressed += OnDragHandlePressed;
+        _dragHandle.PointerMoved += OnDragHandleMoved;
+        _dragHandle.PointerReleased += OnDragHandleReleased;
+
+        // Multi-line text box
+        _expandedTextBox = new TextBox
+        {
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            Background = new SolidColorBrush(Color.FromRgb(34, 34, 36)),
+            Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 215)),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(8, 6),
+            FontSize = _fontSize,
+            FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
+            Watermark = "Multi-line input (Enter=newline, Ctrl+Enter=send)",
+            VerticalContentAlignment = VerticalAlignment.Top,
+        };
+        _expandedTextBox.AddHandler(KeyDownEvent, OnExpandedKeyDown, RoutingStrategies.Tunnel);
+
+        // Collapse button (▼)
+        _collapseButton = new Button
+        {
+            Content = "\u25BC", FontSize = 10,
+            Padding = new Thickness(8, 4),
+            Background = new SolidColorBrush(Color.FromRgb(50, 50, 52)),
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Margin = new Thickness(0, 0, 4, 0),
+            Focusable = false,
+        };
+        ToolTip.SetTip(_collapseButton, "Collapse input (Escape)");
+        _collapseButton.Click += (_, _) => CollapseInputPanel();
+
+        // Send button (▶)
+        _sendButton = new Button
+        {
+            Content = "\u25B6", FontSize = 10,
+            Padding = new Thickness(8, 4),
+            Background = new SolidColorBrush(Color.FromRgb(0, 122, 255)),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Focusable = false,
+        };
+        ToolTip.SetTip(_sendButton, "Send message (Ctrl+Enter)");
+        _sendButton.Click += (_, _) => SendExpandedText();
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 4, 8, 4),
+        };
+        buttonPanel.Children.Add(_collapseButton);
+        buttonPanel.Children.Add(_sendButton);
+
+        var dock = new DockPanel();
+        DockPanel.SetDock(_dragHandle, Dock.Top);
+        DockPanel.SetDock(buttonPanel, Dock.Bottom);
+        dock.Children.Add(_dragHandle);
+        dock.Children.Add(buttonPanel);
+        dock.Children.Add(_expandedTextBox);
+
+        _expandedPanel = new Border
+        {
+            Child = dock,
+            Background = new SolidColorBrush(Color.FromRgb(34, 34, 36)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58)),
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            IsVisible = false,
+        };
+    }
+
+    private void ToggleExpandedMode()
+    {
+        if (_isExpanded)
+            CollapseInputPanel();
+        else
+            ExpandInputPanel();
+    }
+
+    private void ExpandInputPanel()
+    {
+        _isExpanded = true;
+        _expandedHeight = Math.Max(80, Bounds.Height * 0.3);
+        _expandedPanel.IsVisible = true;
+        _inputTextBox.IsVisible = false;
+        _expandButton.IsVisible = false;
+        _expandedTextBox.Focus();
+        RecalcTerminalSize();
+        InvalidateMeasure();
+        InvalidateVisual();
+    }
+
+    private void CollapseInputPanel()
+    {
+        // Move text to normal input (send to PTY without submitting)
+        var text = _expandedTextBox.Text;
+        if (!string.IsNullOrEmpty(text))
+        {
+            // Normalize to single \n, then remove consecutive blank lines
+            var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            while (normalized.Contains("\n\n"))
+                normalized = normalized.Replace("\n\n", "\n");
+            _pty?.WriteInput(normalized);
+            _expandedTextBox.Text = "";
+        }
+
+        _isExpanded = false;
+        _expandedPanel.IsVisible = false;
+        _inputTextBox.IsVisible = true;
+        _expandButton.IsVisible = true;
+        _inputTextBox.Focus();
+        RecalcTerminalSize();
+        InvalidateMeasure();
+        InvalidateVisual();
+    }
+
+    private void SendExpandedText()
+    {
+        var text = _expandedTextBox.Text;
+        if (!string.IsNullOrEmpty(text))
+        {
+            // Capture first input as tab title
+            if (!_firstInputCaptured)
+            {
+                _firstInputCaptured = true;
+                var summary = text.Replace("\r", " ").Replace("\n", " ").Trim();
+                if (summary.Length > 30) summary = summary[..30] + "...";
+                if (!string.IsNullOrWhiteSpace(summary))
+                    TitleChanged?.Invoke(summary);
+            }
+            _pty?.WriteInput(text + "\r");
+            _expandedTextBox.Text = "";
+        }
+        _expandedTextBox.Focus();
+    }
+
+    private void OnExpandedKeyDown(object? sender, KeyEventArgs e)
+    {
+        // Ctrl+Enter: send
+        if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            SendExpandedText();
+            e.Handled = true;
+            return;
+        }
+        // Escape: collapse
+        if (e.Key == Key.Escape)
+        {
+            CollapseInputPanel();
+            e.Handled = true;
+            return;
+        }
+        // Enter without modifiers: just newline (AcceptsReturn handles it)
+    }
+
+    private void OnDragHandlePressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.GetCurrentPoint(_dragHandle).Properties.IsLeftButtonPressed)
+        {
+            _isDragResizing = true;
+            _dragResizeStartY = e.GetPosition(this).Y;
+            _dragResizeStartHeight = _expandedHeight;
+            e.Pointer.Capture(_dragHandle);
+            e.Handled = true;
+        }
+    }
+
+    private void OnDragHandleMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_isDragResizing) return;
+        double currentY = e.GetPosition(this).Y;
+        double delta = _dragResizeStartY - currentY;
+        double newHeight = Math.Clamp(_dragResizeStartHeight + delta, 80, Bounds.Height * 0.7);
+        _expandedHeight = newHeight;
+        RecalcTerminalSize();
+        InvalidateMeasure();
+        InvalidateVisual();
+        e.Handled = true;
+    }
+
+    private void OnDragHandleReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_isDragResizing)
+        {
+            _isDragResizing = false;
+            e.Pointer.Capture(null);
+            e.Handled = true;
+        }
+    }
+
     // ── Search Bar ──
 
     private void BuildSearchBar()
@@ -952,12 +1285,42 @@ public class TerminalControl : Control, IDisposable
         };
         closeBtn.Click += (_, _) => HideSearchBar();
 
+        _searchRegexToggle = new ToggleButton
+        {
+            Content = ".*", FontSize = 10,
+            Padding = new Thickness(4, 2),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 85)),
+            CornerRadius = new CornerRadius(3),
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+        ToolTip.SetTip(_searchRegexToggle, "Regex");
+        _searchRegexToggle.IsCheckedChanged += (_, _) => { _searchRegex = _searchRegexToggle.IsChecked == true; UpdateSearchMatches(); };
+
+        _searchCaseToggle = new ToggleButton
+        {
+            Content = "Aa", FontSize = 10,
+            Padding = new Thickness(4, 2),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
+            BorderThickness = new Thickness(1),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(80, 80, 85)),
+            CornerRadius = new CornerRadius(3),
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+        ToolTip.SetTip(_searchCaseToggle, "Match Case");
+        _searchCaseToggle.IsCheckedChanged += (_, _) => { _searchCaseSensitive = _searchCaseToggle.IsChecked == true; UpdateSearchMatches(); };
+
         var panel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Spacing = 4,
         };
         panel.Children.Add(_searchTextBox);
+        panel.Children.Add(_searchRegexToggle);
+        panel.Children.Add(_searchCaseToggle);
         panel.Children.Add(_searchCountLabel);
         panel.Children.Add(prevBtn);
         panel.Children.Add(nextBtn);
@@ -1029,15 +1392,37 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
+        var comparison = _searchCaseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        System.Text.RegularExpressions.Regex? regex = null;
+        if (_searchRegex)
+        {
+            try
+            {
+                var opts = _searchCaseSensitive
+                    ? System.Text.RegularExpressions.RegexOptions.None
+                    : System.Text.RegularExpressions.RegexOptions.IgnoreCase;
+                regex = new System.Text.RegularExpressions.Regex(_searchTerm, opts);
+            }
+            catch { /* invalid regex — skip */ _searchCountLabel!.Text = "!"; InvalidateVisual(); return; }
+        }
+
         int totalRows = _buffer.Scrollback.Count + _buffer.Rows;
         for (int absRow = 0; absRow < totalRows; absRow++)
         {
             var rowText = GetRowText(absRow);
-            int idx = 0;
-            while ((idx = rowText.IndexOf(_searchTerm, idx, StringComparison.OrdinalIgnoreCase)) >= 0)
+            if (regex != null)
             {
-                _searchMatches.Add((absRow, idx, _searchTerm.Length));
-                idx += _searchTerm.Length;
+                foreach (System.Text.RegularExpressions.Match m in regex.Matches(rowText))
+                    _searchMatches.Add((absRow, m.Index, m.Length));
+            }
+            else
+            {
+                int idx = 0;
+                while ((idx = rowText.IndexOf(_searchTerm, idx, comparison)) >= 0)
+                {
+                    _searchMatches.Add((absRow, idx, _searchTerm.Length));
+                    idx += _searchTerm.Length;
+                }
             }
         }
 
@@ -1205,6 +1590,10 @@ public class TerminalControl : Control, IDisposable
         var fgDefault = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(28, 28, 30);
         double termH = TerminalAreaHeight;
 
+        // Draw entire control background (covers area around input box / expand button)
+        var inputBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 247);
+        context.FillRectangle(new SolidColorBrush(inputBg), new Rect(0, 0, Bounds.Width, Bounds.Height));
+
         // Draw terminal background
         context.FillRectangle(new SolidColorBrush(bgDefault), new Rect(0, 0, Bounds.Width, termH));
 
@@ -1218,11 +1607,12 @@ public class TerminalControl : Control, IDisposable
             var (thumbY, thumbH) = GetScrollbarThumb();
             double barX = Bounds.Width - ScrollbarWidth;
 
-            context.FillRectangle(new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)),
+            byte scrollbarBase = _isDark ? (byte)255 : (byte)0;
+            context.FillRectangle(new SolidColorBrush(Color.FromArgb(30, scrollbarBase, scrollbarBase, scrollbarBase)),
                 new Rect(barX, 0, ScrollbarWidth, termH));
 
             byte thumbAlpha = _isScrollbarDragging ? (byte)160 : (_scrollOffset > 0 ? (byte)100 : (byte)50);
-            context.FillRectangle(new SolidColorBrush(Color.FromArgb(thumbAlpha, 255, 255, 255)),
+            context.FillRectangle(new SolidColorBrush(Color.FromArgb(thumbAlpha, scrollbarBase, scrollbarBase, scrollbarBase)),
                 new Rect(barX + 2, thumbY, ScrollbarWidth - 4, thumbH));
         }
 
@@ -1359,39 +1749,83 @@ public class TerminalControl : Control, IDisposable
     private Color ResolveColor(int colorIndex, Color defaultColor, bool isFg)
     {
         if (colorIndex == -1) return defaultColor;
+        Color c;
         if ((colorIndex & 0x01000000) != 0)
         {
-            return Color.FromRgb(
+            c = Color.FromRgb(
                 (byte)((colorIndex >> 16) & 0xFF),
                 (byte)((colorIndex >> 8) & 0xFF),
                 (byte)(colorIndex & 0xFF));
         }
-        if (colorIndex >= 0 && colorIndex < 256)
-            return GetAnsiColor(colorIndex);
-        return defaultColor;
+        else if (colorIndex >= 0 && colorIndex < 256)
+        {
+            c = GetAnsiColor(colorIndex);
+        }
+        else
+        {
+            return defaultColor;
+        }
+
+        // In light mode, adjust colors for readability on white background
+        if (!_isDark && !isFg)
+        {
+            // Convert dark background colors to light pastel equivalents
+            double brightness = (c.R * 0.299 + c.G * 0.587 + c.B * 0.114) / 255.0;
+            if (brightness < 0.4)
+            {
+                // Lighten dark backgrounds: blend with white at 80%
+                c = Color.FromRgb(
+                    (byte)(c.R + (255 - c.R) * 0.80),
+                    (byte)(c.G + (255 - c.G) * 0.80),
+                    (byte)(c.B + (255 - c.B) * 0.80));
+            }
+        }
+        return c;
     }
 
-    private static Color GetAnsiColor(int index)
+    private static readonly Color[] DarkColors16 =
     {
-        Color[] colors16 =
-        {
-            Color.FromRgb(0, 0, 0),
-            Color.FromRgb(187, 0, 0),
-            Color.FromRgb(0, 187, 0),
-            Color.FromRgb(187, 187, 0),
-            Color.FromRgb(0, 0, 187),
-            Color.FromRgb(187, 0, 187),
-            Color.FromRgb(0, 187, 187),
-            Color.FromRgb(187, 187, 187),
-            Color.FromRgb(85, 85, 85),
-            Color.FromRgb(255, 85, 85),
-            Color.FromRgb(85, 255, 85),
-            Color.FromRgb(255, 255, 85),
-            Color.FromRgb(85, 85, 255),
-            Color.FromRgb(255, 85, 255),
-            Color.FromRgb(85, 255, 255),
-            Color.FromRgb(255, 255, 255),
-        };
+        Color.FromRgb(0, 0, 0),
+        Color.FromRgb(187, 0, 0),
+        Color.FromRgb(0, 187, 0),
+        Color.FromRgb(187, 187, 0),
+        Color.FromRgb(0, 0, 187),
+        Color.FromRgb(187, 0, 187),
+        Color.FromRgb(0, 187, 187),
+        Color.FromRgb(187, 187, 187),
+        Color.FromRgb(85, 85, 85),
+        Color.FromRgb(255, 85, 85),
+        Color.FromRgb(85, 255, 85),
+        Color.FromRgb(255, 255, 85),
+        Color.FromRgb(85, 85, 255),
+        Color.FromRgb(255, 85, 255),
+        Color.FromRgb(85, 255, 255),
+        Color.FromRgb(255, 255, 255),
+    };
+
+    private static readonly Color[] LightColors16 =
+    {
+        Color.FromRgb(0, 0, 0),
+        Color.FromRgb(194, 24, 7),
+        Color.FromRgb(38, 162, 38),
+        Color.FromRgb(163, 138, 0),
+        Color.FromRgb(18, 72, 202),
+        Color.FromRgb(163, 28, 175),
+        Color.FromRgb(17, 168, 168),
+        Color.FromRgb(100, 100, 100),
+        Color.FromRgb(85, 85, 85),
+        Color.FromRgb(222, 56, 43),
+        Color.FromRgb(57, 181, 74),
+        Color.FromRgb(195, 163, 0),
+        Color.FromRgb(50, 100, 230),
+        Color.FromRgb(200, 60, 200),
+        Color.FromRgb(30, 185, 185),
+        Color.FromRgb(60, 60, 60),
+    };
+
+    private Color GetAnsiColor(int index)
+    {
+        var colors16 = _isDark ? DarkColors16 : LightColors16;
 
         if (index < 16) return colors16[index];
 
@@ -1406,6 +1840,15 @@ public class TerminalControl : Control, IDisposable
 
         int gray = (index - 232) * 10 + 8;
         return Color.FromRgb((byte)gray, (byte)gray, (byte)gray);
+    }
+
+    public bool IsExpanded => _isExpanded;
+
+    public void AppendToExpandedInput(string text)
+    {
+        _expandedTextBox.Text = (_expandedTextBox.Text ?? "") + text;
+        _expandedTextBox.CaretIndex = _expandedTextBox.Text.Length;
+        _expandedTextBox.Focus();
     }
 
     public void SendText(string text) => _pty?.WriteInput(text);

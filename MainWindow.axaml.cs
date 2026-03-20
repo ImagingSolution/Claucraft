@@ -96,6 +96,7 @@ public partial class MainWindow : Window
         _usageTracker.Start();
         _usageTracker.Updated += OnUsageUpdated;
 
+
         _projectFolder = !string.IsNullOrEmpty(_settings.ProjectFolder) && Directory.Exists(_settings.ProjectFolder)
             ? _settings.ProjectFolder
             : Environment.CurrentDirectory;
@@ -109,13 +110,22 @@ public partial class MainWindow : Window
         // Global keyboard shortcuts
         KeyDown += OnGlobalKeyDown;
 
-        // Apply saved language
+        // Apply saved language and theme
         Loc.Language = _settings.Language;
         ApplyLocalization();
+
+        if (!_settings.IsDark)
+        {
+            _isDark = false;
+            if (Application.Current is App app)
+                app.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
+            UpdateThemeResources();
+        }
 
         RefreshGitInfo();
         RefreshSessionList();
         RefreshFileTree();
+        FileTree.SelectionChanged += OnFileTreeSelectionChanged;
 
         // Show welcome page or auto-launch
         if (_settings.ShowWelcomePage)
@@ -368,6 +378,29 @@ public partial class MainWindow : Window
         });
     }
 
+    private void OnFileTreeSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        var node = FileTree.SelectedItem as FileTreeNode;
+        if (node == null || node.IsDirectory)
+        {
+            FilePreviewBorder.IsVisible = false;
+            return;
+        }
+        try
+        {
+            var ext = System.IO.Path.GetExtension(node.FullPath).ToLowerInvariant();
+            var textExts = new HashSet<string> { ".cs", ".txt", ".md", ".json", ".xml", ".axaml", ".xaml",
+                ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".py", ".go", ".rs", ".java", ".yml", ".yaml",
+                ".toml", ".sh", ".bash", ".ps1", ".sql", ".gitignore", ".csproj", ".sln", ".config", ".log" };
+            if (!textExts.Contains(ext)) { FilePreviewBorder.IsVisible = false; return; }
+
+            var lines = System.IO.File.ReadLines(node.FullPath).Take(30);
+            FilePreviewText.Text = string.Join("\n", lines);
+            FilePreviewBorder.IsVisible = true;
+        }
+        catch { FilePreviewBorder.IsVisible = false; }
+    }
+
     private FileTreeNode? GetSelectedTreeNode()
     {
         return FileTree.SelectedItem as FileTreeNode;
@@ -521,6 +554,7 @@ public partial class MainWindow : Window
         };
 
         ChkShowWelcomePage.IsChecked = _settings.ShowWelcomePage;
+        ChkDarkMode.IsChecked = _settings.IsDark;
     }
 
     private bool _suppressWelcomeCheckChanged;
@@ -530,6 +564,57 @@ public partial class MainWindow : Window
         if (_suppressWelcomeCheckChanged) return;
         _settings.ShowWelcomePage = ChkShowWelcomePage.IsChecked == true;
         _settings.Save();
+    }
+
+    private void OnDarkModeChanged(object? sender, RoutedEventArgs e)
+    {
+        _isDark = ChkDarkMode.IsChecked == true;
+        _settings.IsDark = _isDark;
+        _settings.Save();
+        if (Application.Current is App app)
+            app.RequestedThemeVariant = _isDark ? Avalonia.Styling.ThemeVariant.Dark : Avalonia.Styling.ThemeVariant.Light;
+
+        // Update application-wide color resources
+        UpdateThemeResources();
+
+        var containerBg = _isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(255, 255, 255);
+        var titleBarBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(235, 235, 240);
+        var titleFg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(40, 40, 45);
+
+        foreach (var child in _children)
+        {
+            child.Terminal.IsDarkTheme = _isDark;
+            child.Container.Background = new SolidColorBrush(containerBg);
+            child.TitleBar.Background = new SolidColorBrush(titleBarBg);
+            child.TitleText.Foreground = new SolidColorBrush(titleFg);
+        }
+    }
+
+    private void UpdateThemeResources()
+    {
+        var res = Application.Current?.Resources;
+        if (res == null) return;
+
+        if (_isDark)
+        {
+            res["ToolBarBg"] = new SolidColorBrush(Color.FromRgb(44, 44, 46));
+            res["StatusBarBg"] = new SolidColorBrush(Color.FromRgb(28, 28, 30));
+            res["SurfaceBg"] = new SolidColorBrush(Color.FromRgb(0, 0, 0));
+            res["SubtleText"] = new SolidColorBrush(Color.FromRgb(152, 152, 157));
+            res["DividerColor"] = new SolidColorBrush(Color.FromRgb(56, 56, 58));
+            res["ActivityBarBg"] = new SolidColorBrush(Color.FromRgb(28, 28, 30));
+            res["SidePanelBg"] = new SolidColorBrush(Color.FromRgb(44, 44, 46));
+        }
+        else
+        {
+            res["ToolBarBg"] = new SolidColorBrush(Color.FromRgb(240, 240, 245));
+            res["StatusBarBg"] = new SolidColorBrush(Color.FromRgb(232, 232, 237));
+            res["SurfaceBg"] = new SolidColorBrush(Color.FromRgb(246, 246, 248));
+            res["SubtleText"] = new SolidColorBrush(Color.FromRgb(100, 100, 110));
+            res["DividerColor"] = new SolidColorBrush(Color.FromRgb(200, 200, 205));
+            res["ActivityBarBg"] = new SolidColorBrush(Color.FromRgb(232, 232, 237));
+            res["SidePanelBg"] = new SolidColorBrush(Color.FromRgb(240, 240, 245));
+        }
     }
 
     private void OnApplySettings(object? sender, RoutedEventArgs e)
@@ -609,6 +694,12 @@ public partial class MainWindow : Window
 
     private Border CreateSnippetEntry(SnippetItem item)
     {
+        var snBg = _isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(255, 255, 255);
+        var snFg = _isDark ? Color.FromRgb(255, 255, 255) : Color.FromRgb(28, 28, 30);
+        var snBorder = _isDark ? Color.FromRgb(58, 58, 60) : Color.FromRgb(200, 200, 205);
+        var snHandleBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(235, 235, 240);
+        var snGripFg = _isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(160, 160, 170);
+
         var textBox = new TextBox
         {
             Text = item.Text,
@@ -619,9 +710,9 @@ public partial class MainWindow : Window
             Padding = new Thickness(10, 6),
             CornerRadius = new CornerRadius(0),
             BorderThickness = new Thickness(0, 1, 0, 1),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 60)),
-            Background = new SolidColorBrush(Color.FromRgb(28, 28, 30)),
-            Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255)),
+            BorderBrush = new SolidColorBrush(snBorder),
+            Background = new SolidColorBrush(snBg),
+            Foreground = new SolidColorBrush(snFg),
             Watermark = Loc.Get("EnterSnippetText"),
             Classes = { "snippet-text" }
         };
@@ -630,8 +721,8 @@ public partial class MainWindow : Window
         var dragHandle = new Border
         {
             Width = 20,
-            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 60)),
+            Background = new SolidColorBrush(snHandleBg),
+            BorderBrush = new SolidColorBrush(snBorder),
             BorderThickness = new Thickness(1, 1, 0, 1),
             CornerRadius = new CornerRadius(8, 0, 0, 8),
             Cursor = new Cursor(StandardCursorType.SizeNorthSouth),
@@ -639,7 +730,7 @@ public partial class MainWindow : Window
             {
                 Text = "\u2847",  // braille dots as grip icon
                 FontSize = 14,
-                Foreground = new SolidColorBrush(Color.FromRgb(100, 100, 105)),
+                Foreground = new SolidColorBrush(snGripFg),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
             }
@@ -652,9 +743,9 @@ public partial class MainWindow : Window
                 Data = StreamGeometry.Parse("M8 5V19L19 12L8 5Z"),
                 Width = 10, Height = 10
             },
-            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),
+            Background = new SolidColorBrush(snHandleBg),
             Foreground = new SolidColorBrush(Color.FromRgb(48, 209, 88)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 60)),
+            BorderBrush = new SolidColorBrush(snBorder),
             BorderThickness = new Thickness(0, 1, 1, 1),
             CornerRadius = new CornerRadius(0, 8, 8, 0),
             Padding = new Thickness(4, 0),
@@ -668,9 +759,14 @@ public partial class MainWindow : Window
             if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
                 && !string.IsNullOrEmpty(textBox.Text))
             {
-                _children[_activeChildIndex].Terminal.SendText(textBox.Text.Replace("\\r", "\r"));
+                var terminal = _children[_activeChildIndex].Terminal;
+                var snippetText = textBox.Text.Replace("\\r", "\r");
+                if (terminal.IsExpanded)
+                    terminal.AppendToExpandedInput(snippetText);
+                else
+                    terminal.SendText(snippetText);
                 BringToFront(_activeChildIndex);
-                _children[_activeChildIndex].Terminal.FocusTerminal();
+                terminal.FocusTerminal();
             }
         };
 
@@ -767,7 +863,7 @@ public partial class MainWindow : Window
                     {
                         var ctb = cg.Children.OfType<TextBox>().FirstOrDefault();
                         if (ctb != null)
-                            ctb.Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255));
+                            ctb.Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(255, 255, 255) : Color.FromRgb(28, 28, 30));
                     }
                 }
             }
@@ -789,7 +885,7 @@ public partial class MainWindow : Window
                     {
                         var tb = g.Children.OfType<TextBox>().FirstOrDefault();
                         if (tb != null)
-                            tb.Foreground = new SolidColorBrush(Color.FromRgb(255, 255, 255));
+                            tb.Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(255, 255, 255) : Color.FromRgb(28, 28, 30));
                     }
                 }
                 e.Pointer.Capture(null);
@@ -988,6 +1084,24 @@ public partial class MainWindow : Window
 
             if (!string.IsNullOrEmpty(branch))
                 StatusBranchName.Text = branch;
+
+            // Get changed files count
+            var statusInfo = new ProcessStartInfo
+            {
+                FileName = "git",
+                Arguments = "status --porcelain",
+                WorkingDirectory = _projectFolder,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var statusProc = Process.Start(statusInfo);
+            var statusOutput = statusProc?.StandardOutput.ReadToEnd() ?? "";
+            statusProc?.WaitForExit();
+
+            var changedCount = statusOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
+            StatusGitChanges.Text = changedCount > 0 ? $"+{changedCount}" : "";
         }
         catch { }
     }
@@ -1069,6 +1183,13 @@ public partial class MainWindow : Window
             e.Handled = true;
             return;
         }
+        // Ctrl+Shift+P: Command palette
+        if (e.Key == Key.P && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift))
+        {
+            ShowCommandPalette();
+            e.Handled = true;
+            return;
+        }
         // Ctrl+Shift+E: Toggle explorer
         if (e.Key == Key.E && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift))
         {
@@ -1086,9 +1207,22 @@ public partial class MainWindow : Window
         {
             var today = _usageTracker.GetTodayActivity();
             if (today != null && today.TodayMessages > 0)
+            {
                 StatusUsageText.Text = $"{today.TodayMessages} {Loc.Get("Msgs")}";
+                // Update progress bar
+                double pct = today.Percentage / 100.0;
+                StatusUsageBarFill.Width = 60 * Math.Min(1.0, pct);
+                StatusUsageBarFill.Background = pct < 0.5
+                    ? new SolidColorBrush(Color.FromRgb(48, 209, 88))    // Green
+                    : pct < 0.8
+                        ? new SolidColorBrush(Color.FromRgb(255, 214, 10)) // Yellow
+                        : new SolidColorBrush(Color.FromRgb(255, 69, 58)); // Red
+            }
             else
+            {
                 StatusUsageText.Text = "";
+                StatusUsageBarFill.Width = 0;
+            }
         });
     }
 
@@ -1097,6 +1231,20 @@ public partial class MainWindow : Window
         var chart = new UsageChartWindow();
         chart.Show(this);
         e.Handled = true;
+    }
+
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool FlashWindow(IntPtr hWnd, bool invert);
+
+    private void FlashTaskbar()
+    {
+        try
+        {
+            if (TryGetPlatformHandle() is { } handle)
+                FlashWindow(handle.Handle, true);
+        }
+        catch { }
     }
 
     private void UpdateTerminalStatus()
@@ -1116,6 +1264,133 @@ public partial class MainWindow : Window
             StatusTerminalDot.Fill = new SolidColorBrush(Color.FromRgb(100, 100, 105));
             StatusTerminalState.Text = Loc.Get("Ready");
         }
+    }
+
+    // ── Command Palette ──
+
+    private void ShowCommandPalette()
+    {
+        var commands = new List<(string Name, string Shortcut, Action Execute)>
+        {
+            ("New Claude Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
+            ("Close Tab", "Ctrl+W", () => { if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count) CloseChild(_children[_activeChildIndex]); }),
+            ("Next Tab", "Ctrl+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex + 1) % _children.Count); }),
+            ("Previous Tab", "Ctrl+Shift+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex - 1 + _children.Count) % _children.Count); }),
+            ("Toggle Explorer", "Ctrl+Shift+E", () => ToggleSidePanel(SidebarPanel.Explorer)),
+            ("Toggle Snippets", "", () => ToggleSidePanel(SidebarPanel.Snippets)),
+            ("Toggle Settings", "", () => ToggleSidePanel(SidebarPanel.Settings)),
+            ("Tile Windows", "", () => { _layout = MdiLayout.Tile; ArrangeChildren(); }),
+            ("Cascade Windows", "", () => { _layout = MdiLayout.Cascade; ArrangeChildren(); }),
+            ("Full View", "", () => { _layout = MdiLayout.Maximize; ArrangeChildren(); }),
+            ("Compact (/compact)", "", () => OnActivityCompact(null, null!)),
+            ("Switch Mode (Shift+Tab)", "", () => OnActivityModeSwitch(null, null!)),
+            ("Save Workspace", "", SaveWorkspace),
+            ("Restore Workspace", "", RestoreWorkspace),
+            ("Command Palette", "Ctrl+Shift+P", ShowCommandPalette),
+        };
+
+        var dialog = new Window
+        {
+            Width = 450, Height = 350,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            SystemDecorations = SystemDecorations.BorderOnly,
+            Background = new SolidColorBrush(Color.FromRgb(30, 30, 32)),
+            Topmost = true,
+        };
+
+        var searchBox = new TextBox
+        {
+            Watermark = Loc.Get("TypeToSearch"),
+            FontSize = 14,
+            Padding = new Thickness(10, 8),
+            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),
+            Foreground = new SolidColorBrush(Color.FromRgb(220, 220, 225)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 70)),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            CornerRadius = new CornerRadius(0),
+        };
+
+        var listBox = new ListBox
+        {
+            Background = Brushes.Transparent,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+
+        void UpdateList(string filter)
+        {
+            listBox.Items.Clear();
+            foreach (var cmd in commands)
+            {
+                if (!string.IsNullOrEmpty(filter) &&
+                    !cmd.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var nameText = new TextBlock { Text = cmd.Name, FontSize = 13, Foreground = new SolidColorBrush(Color.FromRgb(220, 220, 225)) };
+                var shortcutText = new TextBlock { Text = cmd.Shortcut, FontSize = 11, Foreground = new SolidColorBrush(Color.FromRgb(120, 120, 125)), VerticalAlignment = VerticalAlignment.Center };
+                var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("*,Auto") };
+                Grid.SetColumn(nameText, 0);
+                Grid.SetColumn(shortcutText, 1);
+                grid.Children.Add(nameText);
+                grid.Children.Add(shortcutText);
+
+                var item = new ListBoxItem
+                {
+                    Content = grid,
+                    Tag = cmd.Execute,
+                    Padding = new Thickness(10, 6),
+                };
+                listBox.Items.Add(item);
+            }
+            if (listBox.Items.Count > 0)
+                listBox.SelectedIndex = 0;
+        }
+
+        searchBox.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBox.TextProperty)
+                UpdateList(searchBox.Text ?? "");
+        };
+
+        searchBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Escape) { dialog.Close(); e.Handled = true; }
+            else if (e.Key == Key.Down && listBox.Items.Count > 0)
+            {
+                listBox.SelectedIndex = Math.Min(listBox.SelectedIndex + 1, listBox.Items.Count - 1);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Up && listBox.Items.Count > 0)
+            {
+                listBox.SelectedIndex = Math.Max(listBox.SelectedIndex - 1, 0);
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Enter && listBox.SelectedItem is ListBoxItem sel && sel.Tag is Action action)
+            {
+                dialog.Close();
+                action();
+                e.Handled = true;
+            }
+        };
+
+        listBox.DoubleTapped += (_, _) =>
+        {
+            if (listBox.SelectedItem is ListBoxItem sel && sel.Tag is Action action)
+            {
+                dialog.Close();
+                action();
+            }
+        };
+
+        var dock = new DockPanel();
+        DockPanel.SetDock(searchBox, Dock.Top);
+        dock.Children.Add(searchBox);
+        dock.Children.Add(listBox);
+        dialog.Content = dock;
+
+        UpdateList("");
+        dialog.ShowDialog(this);
+        Dispatcher.UIThread.Post(() => searchBox.Focus());
     }
 
     // ── Tab Context Menu ──
@@ -1168,6 +1443,41 @@ public partial class MainWindow : Window
         {
             Items = { closeItem, closeOthersItem, closeRightItem, new Separator(), dupItem, exportItem }
         };
+    }
+
+    // ── Workspace ──
+
+    private void SaveWorkspace()
+    {
+        var ws = new WorkspaceInfo
+        {
+            Layout = _layout.ToString(),
+        };
+        foreach (var child in _children)
+        {
+            ws.Tabs.Add(new WorkspaceTab
+            {
+                ProjectFolder = child.ProjectFolder ?? "",
+                TabTitle = child.StripText.Text ?? "Claude",
+            });
+        }
+        WorkspaceService.Save(ws);
+    }
+
+    private void RestoreWorkspace()
+    {
+        var ws = WorkspaceService.Load();
+        if (ws == null || ws.Tabs.Count == 0) return;
+
+        if (Enum.TryParse<MdiLayout>(ws.Layout, out var layout))
+            _layout = layout;
+
+        foreach (var tab in ws.Tabs)
+        {
+            if (!string.IsNullOrEmpty(tab.ProjectFolder) && Directory.Exists(tab.ProjectFolder))
+                _projectFolder = tab.ProjectFolder;
+            LaunchClaudeWithInitialPrompt();
+        }
     }
 
     // ── Layout switching ──
@@ -1479,6 +1789,61 @@ public partial class MainWindow : Window
             if (idx >= 0) BringToFront(idx);
         };
 
+        // Double-click to rename tab
+        stripButton.DoubleTapped += (_, ev) =>
+        {
+            var renameBg = new SolidColorBrush(_isDark ? Color.FromRgb(50, 50, 52) : Color.FromRgb(255, 255, 255));
+            var renameFg = new SolidColorBrush(_isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30));
+            var renameBorder = new SolidColorBrush(_isDark ? Color.FromRgb(80, 80, 85) : Color.FromRgb(180, 180, 185));
+            var renameBox = new TextBox
+            {
+                Text = stripText.Text,
+                FontSize = 11,
+                MinWidth = 80,
+                Padding = new Thickness(4, 2),
+                Background = renameBg,
+                Foreground = renameFg,
+                BorderBrush = renameBorder,
+                CaretBrush = renameFg,
+                SelectionBrush = new SolidColorBrush(_isDark ? Color.FromArgb(90, 50, 120, 220) : Color.FromArgb(90, 0, 122, 255)),
+                SelectionForegroundBrush = renameFg,
+            };
+            renameBox.KeyDown += (_, ke) =>
+            {
+                if (ke.Key == Key.Enter)
+                {
+                    var newName = renameBox.Text?.Trim();
+                    if (!string.IsNullOrEmpty(newName))
+                    {
+                        stripText.Text = newName;
+                        titleText.Text = newName;
+                        terminal.IsManualTitle = true;
+                    }
+                    stripContent.Children.Remove(renameBox);
+                    stripText.IsVisible = true;
+                    ke.Handled = true;
+                }
+                else if (ke.Key == Key.Escape)
+                {
+                    stripContent.Children.Remove(renameBox);
+                    stripText.IsVisible = true;
+                    ke.Handled = true;
+                }
+            };
+            renameBox.LostFocus += (_, _) =>
+            {
+                if (stripContent.Children.Contains(renameBox))
+                {
+                    stripContent.Children.Remove(renameBox);
+                    stripText.IsVisible = true;
+                }
+            };
+            stripText.IsVisible = false;
+            stripContent.Children.Insert(1, renameBox);
+            Dispatcher.UIThread.Post(() => { renameBox.Focus(); renameBox.SelectAll(); });
+            ev.Handled = true;
+        };
+
         container.PointerPressed += (_, _) =>
         {
             int idx = _children.IndexOf(entry);
@@ -1535,6 +1900,7 @@ public partial class MainWindow : Window
 
         terminal.TitleChanged += title =>
         {
+            if (terminal.IsManualTitle) return; // Manual title takes priority
             var displayTitle = string.IsNullOrWhiteSpace(title) ? tabTitle : title;
             titleText.Text = displayTitle;
             stripText.Text = displayTitle;
@@ -1546,6 +1912,9 @@ public partial class MainWindow : Window
             stripDot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));
             RefreshSessionList();
             UpdateTerminalStatus();
+            // Flash taskbar if window is not focused
+            if (!IsActive)
+                FlashTaskbar();
         };
 
         // Sync font size from Ctrl+Scroll zoom
@@ -1554,6 +1923,7 @@ public partial class MainWindow : Window
             _settings.FontSize = newSize;
             NumSettingsFontSize.Value = (decimal)newSize;
         };
+
 
         _children.Add(entry);
         _activeChildIndex = _children.Count - 1;
@@ -1602,13 +1972,22 @@ public partial class MainWindow : Window
         // Get recent project folders
         var recentFolders = await SessionService.GetRecentProjectFoldersAsync();
 
+        // Theme-aware colors
+        var titleFg = _isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(30, 30, 35);
+        var headerFg = _isDark ? Color.FromRgb(180, 180, 185) : Color.FromRgb(80, 80, 90);
+        var pathFg = _isDark ? Color.FromArgb(140, 200, 200, 205) : Color.FromArgb(160, 80, 80, 90);
+        var emptyFg = _isDark ? Color.FromArgb(100, 200, 200, 205) : Color.FromArgb(120, 80, 80, 90);
+        var checkFg = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(100, 100, 110);
+        var pageBg = _isDark ? Color.FromRgb(30, 30, 32) : Color.FromRgb(246, 246, 248);
+        var hoverBg = _isDark ? Color.FromArgb(30, 255, 255, 255) : Color.FromArgb(30, 0, 0, 0);
+
         // --- Build Welcome UI ---
         var titleText = new TextBlock
         {
             Text = Loc.Get("WelcomeTitle"),
             FontSize = 28,
             FontWeight = FontWeight.Bold,
-            Foreground = new SolidColorBrush(Color.FromRgb(220, 220, 225)),
+            Foreground = new SolidColorBrush(titleFg),
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 0, 0, 24)
         };
@@ -1619,7 +1998,7 @@ public partial class MainWindow : Window
             Text = Loc.Get("Start"),
             FontSize = 16,
             FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
+            Foreground = new SolidColorBrush(headerFg),
             Margin = new Thickness(0, 0, 0, 8)
         };
 
@@ -1665,7 +2044,7 @@ public partial class MainWindow : Window
             Text = Loc.Get("Recent"),
             FontSize = 16,
             FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
+            Foreground = new SolidColorBrush(headerFg),
             Margin = new Thickness(0, 20, 0, 8)
         };
 
@@ -1692,7 +2071,7 @@ public partial class MainWindow : Window
             {
                 Text = folderPath,
                 FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromArgb(140, 200, 200, 205)),
+                Foreground = new SolidColorBrush(pathFg),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(10, 0, 0, 0),
                 TextTrimming = TextTrimming.CharacterEllipsis
@@ -1714,7 +2093,7 @@ public partial class MainWindow : Window
                 Cursor = new Cursor(StandardCursorType.Hand),
                 Background = Brushes.Transparent
             };
-            AttachHoverEffect(itemBorder);
+            AttachHoverEffect(itemBorder, hoverBg);
 
             var capturedPath = folder;
             itemBorder.PointerPressed += (_, _) => OpenProjectFromWelcome(capturedPath, true);
@@ -1729,7 +2108,7 @@ public partial class MainWindow : Window
             {
                 Text = "No recent projects",
                 FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromArgb(100, 200, 200, 205)),
+                Foreground = new SolidColorBrush(emptyFg),
                 Margin = new Thickness(8, 4)
             });
         }
@@ -1739,7 +2118,7 @@ public partial class MainWindow : Window
         {
             Content = Loc.Get("ShowWelcomeOnStartup"),
             IsChecked = _settings.ShowWelcomePage,
-            Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 165)),
+            Foreground = new SolidColorBrush(checkFg),
             FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 30, 0, 0)
@@ -1780,7 +2159,7 @@ public partial class MainWindow : Window
         _welcomeContainer = new Border
         {
             Child = scrollViewer,
-            Background = new SolidColorBrush(Color.FromRgb(30, 30, 32)),
+            Background = new SolidColorBrush(pageBg),
             ClipToBounds = true
         };
 
@@ -1803,8 +2182,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private static Border CreateWelcomeLink(string iconData, string text, Color iconColor)
+    private Border CreateWelcomeLink(string iconData, string text, Color iconColor)
     {
+        var linkFg = _isDark ? Color.FromRgb(75, 156, 255) : Color.FromRgb(0, 100, 220);
+        var hoverBg = _isDark ? Color.FromArgb(30, 255, 255, 255) : Color.FromArgb(30, 0, 0, 0);
         var icon = new PathIcon
         {
             Data = StreamGeometry.Parse(iconData),
@@ -1816,7 +2197,7 @@ public partial class MainWindow : Window
         {
             Text = text,
             FontSize = 14,
-            Foreground = new SolidColorBrush(Color.FromRgb(75, 156, 255)),
+            Foreground = new SolidColorBrush(linkFg),
             VerticalAlignment = VerticalAlignment.Center
         };
         var panel = new StackPanel
@@ -1835,7 +2216,7 @@ public partial class MainWindow : Window
             Cursor = new Cursor(StandardCursorType.Hand),
             Background = Brushes.Transparent
         };
-        AttachHoverEffect(border);
+        AttachHoverEffect(border, hoverBg);
 
         return border;
     }
@@ -1851,9 +2232,10 @@ public partial class MainWindow : Window
             LaunchClaudeWithInitialPrompt();
     }
 
-    private static void AttachHoverEffect(Border border)
+    private static void AttachHoverEffect(Border border, Color? hoverColor = null)
     {
-        border.PointerEntered += (s, _) => ((Border)s!).Background = new SolidColorBrush(Color.FromArgb(30, 255, 255, 255));
+        var hover = hoverColor ?? Color.FromArgb(30, 255, 255, 255);
+        border.PointerEntered += (s, _) => ((Border)s!).Background = new SolidColorBrush(hover);
         border.PointerExited += (s, _) => ((Border)s!).Background = Brushes.Transparent;
     }
 

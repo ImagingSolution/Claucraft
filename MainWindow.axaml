@@ -15,13 +15,13 @@
 
     <Window.Styles>
         <Style Selector="TextBox.snippet-text">
-            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Foreground" Value="{DynamicResource SubtleText}" />
         </Style>
         <Style Selector="TextBox.snippet-text:pointerover">
-            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Foreground" Value="{DynamicResource SubtleText}" />
         </Style>
         <Style Selector="TextBox.snippet-text:focus">
-            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Foreground" Value="{DynamicResource SubtleText}" />
         </Style>
     </Window.Styles>
 
@@ -139,12 +139,26 @@
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
-                <!-- Usage info -->
-                <TextBlock x:Name="StatusUsageText" Text=""
-                           Foreground="{DynamicResource SubtleText}" FontSize="11"
-                           VerticalAlignment="Center" Cursor="Hand"
-                           ToolTip.Tip="Click to show usage chart"
-                           DoubleTapped="OnUsageDoubleTapped" />
+                <!-- Git changes count -->
+                <TextBlock x:Name="StatusGitChanges" Text=""
+                           Foreground="#FFD60A" FontSize="11"
+                           VerticalAlignment="Center" />
+                <!-- Usage progress bar -->
+                <StackPanel Orientation="Horizontal" Spacing="5" Cursor="Hand"
+                            ToolTip.Tip="Click to show usage chart">
+                    <TextBlock x:Name="StatusUsageText" Text=""
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
+                               VerticalAlignment="Center"
+                               DoubleTapped="OnUsageDoubleTapped" />
+                    <Border x:Name="StatusUsageBarBg" Width="60" Height="6"
+                            CornerRadius="3" Background="#30FFFFFF"
+                            VerticalAlignment="Center"
+                            DoubleTapped="OnUsageDoubleTapped">
+                        <Border x:Name="StatusUsageBarFill" Height="6"
+                                CornerRadius="3" Background="#30D158"
+                                HorizontalAlignment="Left" Width="0" />
+                    </Border>
+                </StackPanel>
             </StackPanel>
         </Border>
 
@@ -287,6 +301,17 @@
                                     </TreeDataTemplate>
                                 </TreeView.ItemTemplate>
                             </TreeView>
+                            <Border DockPanel.Dock="Bottom" x:Name="FilePreviewBorder"
+                                    BorderBrush="{DynamicResource DividerColor}" BorderThickness="0,0.5,0,0"
+                                    MaxHeight="150" IsVisible="False">
+                                <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                              VerticalScrollBarVisibility="Auto">
+                                    <TextBlock x:Name="FilePreviewText" FontSize="11"
+                                               FontFamily="Cascadia Mono, Consolas, Courier New"
+                                               Foreground="{DynamicResource SubtleText}"
+                                               Padding="8,4" TextWrapping="NoWrap" />
+                                </ScrollViewer>
+                            </Border>
                         </DockPanel>
 
                         <!-- Settings Panel -->
@@ -319,6 +344,10 @@
                                                            FormatString="0"
                                                            HorizontalAlignment="Stretch" />
                                         </StackPanel>
+                                        <CheckBox x:Name="ChkDarkMode" Content="Dark Mode"
+                                                  Margin="0,4,0,4"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnDarkModeChanged" />
                                         <Button x:Name="BtnApplySettings" Classes="primary"
                                                 HorizontalAlignment="Stretch"
                                                 Click="OnApplySettings"
@@ -347,6 +376,7 @@
                                 </Button>
                                 <CheckBox x:Name="ChkShowWelcomePage" Content="Show Welcome Page"
                                           Margin="0,16,0,0"
+                                          Foreground="{DynamicResource SubtleText}"
                                           IsCheckedChanged="OnShowWelcomePageChanged" />
                             </StackPanel>
                         </ScrollViewer>
