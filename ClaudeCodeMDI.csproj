@@ -17,9 +17,9 @@
     <PropertyGroup>
       <CurrentBuildNumber>@(BuildNumberLines)</CurrentBuildNumber>
       <NextBuildNumber>$([MSBuild]::Add($(CurrentBuildNumber), 1))</NextBuildNumber>
-      <Version>0.1.5.$(NextBuildNumber)</Version>
-      <AssemblyVersion>0.1.5.$(NextBuildNumber)</AssemblyVersion>
-      <FileVersion>0.1.5.$(NextBuildNumber)</FileVersion>
+      <Version>0.1.6.$(NextBuildNumber)</Version>
+      <AssemblyVersion>0.1.6.$(NextBuildNumber)</AssemblyVersion>
+      <FileVersion>0.1.6.$(NextBuildNumber)</FileVersion>
     </PropertyGroup>
     <WriteLinesToFile File="build.number" Lines="$(NextBuildNumber)" Overwrite="true" />
   </Target>
