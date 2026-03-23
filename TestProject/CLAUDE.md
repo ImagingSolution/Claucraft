@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-This is a new/empty project (TestProject) under the ClaudeCodeMDI workspace. No source files, build system, or tests exist yet.
+This is a new/empty project (TestProject) under the Claucraft workspace. No source files, build system, or tests exist yet.
 
 ## Notes
 

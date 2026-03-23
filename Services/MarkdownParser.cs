@@ -7,7 +7,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 
-namespace ClaudeCodeMDI.Services;
+namespace Claucraft.Services;
 
 /// <summary>
 /// Lightweight Markdown to Avalonia controls parser.

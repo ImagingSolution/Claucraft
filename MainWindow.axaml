@@ -2,15 +2,15 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:svc="clr-namespace:ClaudeCodeMDI.Services"
-        xmlns:local="clr-namespace:ClaudeCodeMDI"
+        xmlns:svc="clr-namespace:Claucraft.Services"
+        xmlns:local="clr-namespace:Claucraft"
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
-        x:Class="ClaudeCodeMDI.MainWindow"
-        Title="Claude Code MDI"
+        x:Class="Claucraft.MainWindow"
+        Title="Claucraft"
         Width="1200" Height="800"
         MinWidth="600" MinHeight="400"
         WindowStartupLocation="CenterScreen"
-        Icon="avares://ClaudeCodeMDI/icon.ico"
+        Icon="avares://Claucraft/icon.ico"
         Background="{DynamicResource SurfaceBg}">
 
     <Window.Styles>
@@ -182,28 +182,28 @@
                             <PathIcon Data="M17.5 0H8.5L7 1.5V6H2.5L1 7.5V22.57L2.5 24H13.5L15 22.57V18H19.5L21 16.5V3.5L17.5 0ZM13.5 22.57H2.5V7.5H7V16.5L8.5 18H13.5V22.57ZM19.5 16.5H8.5V1.5H14.5V5.5H19.5V16.5ZM15.5 1.5L19.5 4.5H15.5V1.5Z"
                                       Width="20" Height="20" />
                         </Button>
-                        <Button x:Name="BtnActivitySnippets" Classes="activity-btn"
-                                ToolTip.Tip="Snippets"
-                                Click="OnActivitySnippets">
-                            <PathIcon Data="M4 2H14L20 8V22H4V2ZM6 4V20H18V9H13V4H6ZM7 12H17V14H7V12ZM7 16H14V18H7V16Z"
-                                      Width="20" Height="20" />
-                        </Button>
                         <Button x:Name="BtnActivityWindows" Classes="activity-btn"
                                 ToolTip.Tip="Windows"
                                 Click="OnActivityWindows">
                             <PathIcon Data="M3 3H21V10H3ZM3 14H21V21H3Z"
                                       Width="20" Height="20" />
                         </Button>
+                        <Button x:Name="BtnActivityDocView" Classes="activity-btn"
+                                ToolTip.Tip="Chat View"
+                                Click="OnActivityDocView">
+                            <PathIcon Data="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2ZM20 16H6L4 18V4H20V16ZM7 9H9V11H7V9ZM11 9H13V11H11V9ZM15 9H17V11H15V9Z"
+                                      Width="20" Height="20" />
+                        </Button>
+                        <Button x:Name="BtnActivitySnippets" Classes="activity-btn"
+                                ToolTip.Tip="Snippets"
+                                Click="OnActivitySnippets">
+                            <PathIcon Data="M4 2H14L20 8V22H4V2ZM6 4V20H18V9H13V4H6ZM7 12H17V14H7V12ZM7 16H14V18H7V16Z"
+                                      Width="20" Height="20" />
+                        </Button>
                         <Button x:Name="BtnActivityDiagram" Classes="activity-btn"
                                 ToolTip.Tip="Diagram Viewer"
                                 Click="OnActivityDiagram">
                             <PathIcon Data="M4 4H10V10H4ZM14 4H20V10H14ZM4 14H10V20H4ZM14 17L17 14L20 17L17 20Z"
-                                      Width="20" Height="20" />
-                        </Button>
-                        <Button x:Name="BtnActivityDocView" Classes="activity-btn"
-                                ToolTip.Tip="Document View"
-                                Click="OnActivityDocView">
-                            <PathIcon Data="M14 2H6C4.9 2 4 2.9 4 4V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V8L14 2ZM16 18H8V16H16V18ZM16 14H8V12H16V14ZM13 9V3.5L18.5 9H13Z"
                                       Width="20" Height="20" />
                         </Button>
                     </StackPanel>

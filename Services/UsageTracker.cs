@@ -3,7 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Threading;
 
-namespace ClaudeCodeMDI.Services;
+namespace Claucraft.Services;
 
 public class UsageInfo
 {

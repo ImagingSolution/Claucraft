@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace ClaudeCodeMDI.Services;
+namespace Claucraft.Services;
 
 public class WorkspaceInfo
 {
@@ -21,7 +21,7 @@ public static class WorkspaceService
 {
     private static readonly string WorkspaceFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "ClaudeCodeMDI", "workspace.json");
+        "Claucraft", "workspace.json");
 
     public static void Save(WorkspaceInfo workspace)
     {

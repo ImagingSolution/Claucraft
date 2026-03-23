@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="ClaudeCodeMDI.SettingsWindow"
+        x:Class="Claucraft.SettingsWindow"
         Title="Settings"
         Width="420" Height="320"
         WindowStartupLocation="CenterOwner"

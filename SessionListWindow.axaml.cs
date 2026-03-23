@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using ClaudeCodeMDI.Services;
+using Claucraft.Services;
 
-namespace ClaudeCodeMDI;
+namespace Claucraft;
 
 public partial class SessionListWindow : Window
 {

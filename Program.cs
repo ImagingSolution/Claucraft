@@ -1,7 +1,7 @@
 ﻿using Avalonia;
 using System;
 
-namespace ClaudeCodeMDI;
+namespace Claucraft;
 
 class Program
 {

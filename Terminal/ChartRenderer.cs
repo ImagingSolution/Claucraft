@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace ClaudeCodeMDI.Terminal;
+namespace Claucraft.Terminal;
 
 /// <summary>
 /// Generates self-contained HTML pages for rendering Mermaid diagrams and Chart.js charts.

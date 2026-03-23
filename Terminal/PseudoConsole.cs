@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
 
-namespace ClaudeCodeMDI.Terminal;
+namespace Claucraft.Terminal;
 
 public class PseudoConsole : IDisposable
 {

@@ -3,7 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 
-namespace ClaudeCodeMDI;
+namespace Claucraft;
 
 public partial class SettingsWindow : Window
 {

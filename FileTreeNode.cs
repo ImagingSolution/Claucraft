@@ -8,7 +8,7 @@ using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Avalonia.Media;
 
-namespace ClaudeCodeMDI;
+namespace Claucraft;
 
 public class FileTreeNode : INotifyPropertyChanged
 {

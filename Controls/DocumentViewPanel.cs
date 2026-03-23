@@ -5,9 +5,9 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
-using ClaudeCodeMDI.Services;
+using Claucraft.Services;
 
-namespace ClaudeCodeMDI.Controls;
+namespace Claucraft.Controls;
 
 /// <summary>
 /// Document View panel that renders Claude session conversations as formatted Markdown.

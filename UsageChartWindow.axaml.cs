@@ -9,7 +9,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Media;
 
-namespace ClaudeCodeMDI;
+namespace Claucraft;
 
 public partial class UsageChartWindow : Window
 {

@@ -9,9 +9,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
-using ClaudeCodeMDI.Services;
+using Claucraft.Services;
 
-namespace ClaudeCodeMDI.Terminal;
+namespace Claucraft.Terminal;
 
 /// <summary>
 /// Separate window for viewing Excalidraw diagrams with zoom/pan support.
@@ -259,7 +259,7 @@ public class DiagramWindow : Window
             var pngBytes = _canvas.RenderToPng(2400, 1200);
             if (pngBytes == null) return;
 
-            var tempPath = Path.Combine(Path.GetTempPath(), "ClaudeCodeMDI", $"diagram_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+            var tempPath = Path.Combine(Path.GetTempPath(), "Claucraft", $"diagram_{DateTime.Now:yyyyMMdd_HHmmss}.png");
             Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
             await File.WriteAllBytesAsync(tempPath, pngBytes);
 

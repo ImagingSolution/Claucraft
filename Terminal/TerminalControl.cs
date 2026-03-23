@@ -13,7 +13,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
-namespace ClaudeCodeMDI.Terminal;
+namespace Claucraft.Terminal;
 
 public class TerminalControl : Control, IDisposable
 {
@@ -688,7 +688,7 @@ public class TerminalControl : Control, IDisposable
     {
         try
         {
-            var tempDir = Path.Combine(Path.GetTempPath(), "ClaudeCodeMDI");
+            var tempDir = Path.Combine(Path.GetTempPath(), "Claucraft");
             Directory.CreateDirectory(tempDir);
             var fileName = $"clipboard_{DateTime.Now:yyyyMMdd_HHmmss}.png";
             var filePath = Path.Combine(tempDir, fileName);
@@ -2240,7 +2240,7 @@ public class TerminalControl : Control, IDisposable
                 var excalidrawDoc = $@"{{
   ""type"": ""excalidraw"",
   ""version"": 2,
-  ""source"": ""ClaudeCodeMDI"",
+  ""source"": ""Claucraft"",
   ""elements"": {cleanJson},
   ""appState"": {{
     ""viewBackgroundColor"": ""{(_isDark ? "#1e1e1e" : "#ffffff")}""
@@ -2447,7 +2447,7 @@ public class TerminalControl : Control, IDisposable
             var pngBytes = RenderDiagramToPng(block, 1200, 600);
             if (pngBytes == null) return;
 
-            var tempPath = Path.Combine(Path.GetTempPath(), "ClaudeCodeMDI", $"diagram_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+            var tempPath = Path.Combine(Path.GetTempPath(), "Claucraft", $"diagram_{DateTime.Now:yyyyMMdd_HHmmss}.png");
             Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
             await File.WriteAllBytesAsync(tempPath, pngBytes);
 

@@ -41,7 +41,7 @@ Switching active child triggers project context switching — the toolbar, explo
 
 ### Services
 
-- **AppSettings** / **SnippetStore**: JSON persistence to `%APPDATA%\ClaudeCodeMDI/`
+- **AppSettings** / **SnippetStore**: JSON persistence to `%APPDATA%\Claucraft/`
 - **SessionService**: Reads Claude Code JSONL session files from `~/.claude/projects/` (read-only)
 - **UsageTracker**: Reads `~/.claude/stats-cache.json` on a 30-second polling interval (read-only)
 - **Localization**: Static dictionary-based EN/JP localization via `Loc.Get("key")`

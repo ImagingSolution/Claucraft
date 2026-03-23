@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace ClaudeCodeMDI.Services;
+namespace Claucraft.Services;
 
 public static class Loc
 {
@@ -67,7 +67,7 @@ public static class Loc
         ["FullView"] = new() { ["English"] = "Full view", ["日本語"] = "最大表示" },
 
         // ── Window Title ──
-        ["AppTitle"] = new() { ["English"] = "Claude Code MDI", ["日本語"] = "Claude Code MDI" },
+        ["AppTitle"] = new() { ["English"] = "Claucraft", ["日本語"] = "Claucraft" },
 
         // ── Settings - Claude Folder ──
         ["OpenClaudeFolder"] = new() { ["English"] = "Open .claude Folder", ["日本語"] = ".claude フォルダを開く" },
@@ -76,7 +76,7 @@ public static class Loc
         ["ClickToShowUsage"] = new() { ["English"] = "Click to show usage chart", ["日本語"] = "クリックして使用状況チャートを表示" },
 
         // ── Welcome Page ──
-        ["WelcomeTitle"] = new() { ["English"] = "Claude Code MDI", ["日本語"] = "Claude Code MDI" },
+        ["WelcomeTitle"] = new() { ["English"] = "Claucraft", ["日本語"] = "Claucraft" },
         ["Start"] = new() { ["English"] = "Start", ["日本語"] = "開始" },
         ["NewProject"] = new() { ["English"] = "New Project", ["日本語"] = "新しいプロジェクト" },
         ["PreviousProject"] = new() { ["English"] = "Previous Project", ["日本語"] = "前回のプロジェクト" },
@@ -138,8 +138,8 @@ public static class Loc
         ["SaveAsArtifact"] = new() { ["English"] = "Save as Artifact", ["日本語"] = "アーティファクトとして保存" },
         ["OpenArtifact"] = new() { ["English"] = "Open File", ["日本語"] = "ファイルを開く" },
         ["DiagramTooltip"] = new() { ["English"] = "Diagram Viewer", ["日本語"] = "ダイアグラムビューア" },
-        ["DocViewTooltip"] = new() { ["English"] = "Document View", ["日本語"] = "ドキュメントビュー" },
-        ["DOCVIEW"] = new() { ["English"] = "DOCUMENT VIEW", ["日本語"] = "ドキュメントビュー" },
+        ["DocViewTooltip"] = new() { ["English"] = "Chat View", ["日本語"] = "チャットビュー" },
+        ["DOCVIEW"] = new() { ["English"] = "CHAT VIEW", ["日本語"] = "チャットビュー" },
         ["CopyCode"] = new() { ["English"] = "Copy", ["日本語"] = "コピー" },
         ["Thinking"] = new() { ["English"] = "Thinking...", ["日本語"] = "思考中..." },
         ["NoSession"] = new() { ["English"] = "No session loaded", ["日本語"] = "セッションが読み込まれていません" },
@@ -147,7 +147,7 @@ public static class Loc
         ["AllowAction"] = new() { ["English"] = "Yes, allow", ["日本語"] = "はい、許可" },
         ["AlwaysAllow"] = new() { ["English"] = "Always allow", ["日本語"] = "常に許可" },
         ["DenyAction"] = new() { ["English"] = "No, deny", ["日本語"] = "いいえ、拒否" },
-        ["ToggleDocView"] = new() { ["English"] = "Toggle Document View", ["日本語"] = "ドキュメントビュー切替" },
+        ["ToggleDocView"] = new() { ["English"] = "Toggle Chat View", ["日本語"] = "チャットビュー切替" },
     };
 
     public static string Get(string key)

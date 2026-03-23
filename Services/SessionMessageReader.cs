@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace ClaudeCodeMDI.Services;
+namespace Claucraft.Services;
 
 public enum MessageRole { User, Assistant, System }
 

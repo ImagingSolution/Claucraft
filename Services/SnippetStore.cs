@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace ClaudeCodeMDI.Services;
+namespace Claucraft.Services;
 
 public class SnippetItem
 {
@@ -18,7 +18,7 @@ public class SnippetStore
 
     private static readonly string StoreDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "ClaudeCodeMDI");
+        "Claucraft");
 
     private static readonly string StoreFile = Path.Combine(StoreDir, "snippets.json");
 

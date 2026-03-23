@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 
-namespace ClaudeCodeMDI.Services;
+namespace Claucraft.Services;
 
 public class AppSettings
 {
@@ -17,7 +17,7 @@ public class AppSettings
 
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "ClaudeCodeMDI");
+        "Claucraft");
 
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "appsettings.json");
 

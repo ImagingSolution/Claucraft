@@ -1,4 +1,4 @@
-# ClaudeCodeMDI
+# Claucraft
 
 A Windows MDI (Multiple Document Interface) terminal application for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) built with Avalonia UI.
 
@@ -57,7 +57,7 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 ## Project Structure
 
 ```
-ClaudeCodeMDI/
+Claucraft/
 ├── MainWindow.axaml / .cs          # Main MDI window and UI logic
 ├── App.axaml / .cs                 # Application root and theme management
 ├── Program.cs                      # Application entry point
@@ -105,9 +105,9 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 | Data | Path |
 |---|---|
-| Settings | `%APPDATA%\ClaudeCodeMDI\appsettings.json` |
-| Snippets | `%APPDATA%\ClaudeCodeMDI\snippets.json` |
-| Workspace | `%APPDATA%\ClaudeCodeMDI\workspace.json` |
+| Settings | `%APPDATA%\Claucraft\appsettings.json` |
+| Snippets | `%APPDATA%\Claucraft\snippets.json` |
+| Workspace | `%APPDATA%\Claucraft\workspace.json` |
 | Sessions (read/write) | `~/.claude/projects/*/sessions-index.json` |
 | Session JSONL (read-only) | `~/.claude/projects/*/*.jsonl` |
 | Usage stats (read-only) | `~/.claude/stats-cache.json` |
@@ -118,7 +118,7 @@ MIT
 
 ---
 
-# ClaudeCodeMDI (日本語)
+# Claucraft (日本語)
 
 Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/docs/claude-code) 用の Windows MDI（マルチドキュメントインターフェース）ターミナルアプリケーションです。
 
@@ -190,9 +190,9 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 | データ | パス |
 |---|---|
-| 設定 | `%APPDATA%\ClaudeCodeMDI\appsettings.json` |
-| スニペット | `%APPDATA%\ClaudeCodeMDI\snippets.json` |
-| ワークスペース | `%APPDATA%\ClaudeCodeMDI\workspace.json` |
+| 設定 | `%APPDATA%\Claucraft\appsettings.json` |
+| スニペット | `%APPDATA%\Claucraft\snippets.json` |
+| ワークスペース | `%APPDATA%\Claucraft\workspace.json` |
 | セッション（読み書き） | `~/.claude/projects/*/sessions-index.json` |
 | セッション JSONL（読み取り専用） | `~/.claude/projects/*/*.jsonl` |
 | 使用量統計（読み取り専用） | `~/.claude/stats-cache.json` |

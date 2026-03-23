@@ -4,7 +4,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Styling;
 
-namespace ClaudeCodeMDI;
+namespace Claucraft;
 
 public partial class App : Application
 {

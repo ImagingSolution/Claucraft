@@ -1,6 +1,6 @@
 using System;
 
-namespace ClaudeCodeMDI.Terminal;
+namespace Claucraft.Terminal;
 
 public struct TerminalCell
 {

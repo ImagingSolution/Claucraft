@@ -15,10 +15,10 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
-using ClaudeCodeMDI.Services;
-using ClaudeCodeMDI.Terminal;
+using Claucraft.Services;
+using Claucraft.Terminal;
 
-namespace ClaudeCodeMDI;
+namespace Claucraft;
 
 public partial class MainWindow : Window
 {

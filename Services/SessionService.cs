@@ -8,7 +8,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace ClaudeCodeMDI.Services;
+namespace Claucraft.Services;
 
 public record SessionInfo(string Id, string? Cwd, string? Summary, DateTime? Timestamp)
 {
