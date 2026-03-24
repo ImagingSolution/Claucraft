@@ -220,7 +220,7 @@ public static class MarkdownParser
                     tableRows.Add(lines[i]);
                     i++;
                 }
-                var table = CreateTable(tableRows, isDark, fg, codeBg, baseFontSize);
+                var table = CreateTable(tableRows, isDark, fg, codeBg, codeFg, linkColor, codeFont, baseFontSize);
                 if (table != null)
                     controls.Add(table);
                 continue;
@@ -421,7 +421,7 @@ public static class MarkdownParser
         };
     }
 
-    private static Control? CreateTable(List<string> rows, bool isDark, Color fg, Color codeBg, double baseFontSize = 13)
+    private static Control? CreateTable(List<string> rows, bool isDark, Color fg, Color codeBg, Color codeFg, Color linkColor, Typeface codeFont, double baseFontSize = 13)
     {
         if (rows.Count < 2) return null;
 
@@ -465,12 +465,12 @@ public static class MarkdownParser
                 };
                 var cellText = new SelectableTextBlock
                 {
-                    Text = parsedRows[r][c],
                     FontSize = baseFontSize * 0.92,
                     FontWeight = r == 0 ? FontWeight.SemiBold : FontWeight.Normal,
                     Foreground = new SolidColorBrush(fg),
                     TextWrapping = TextWrapping.Wrap,
                 };
+                SetInlineText(cellText, parsedRows[r][c], fg, codeBg, codeFg, linkColor, codeFont);
                 cellBorder.Child = cellText;
                 Grid.SetRow(cellBorder, r);
                 Grid.SetColumn(cellBorder, c);

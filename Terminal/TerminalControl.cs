@@ -625,6 +625,18 @@ public class TerminalControl : Control, IDisposable
             e.Handled = true;
             return;
         }
+
+        // Generic Ctrl+letter: send corresponding control character to PTY
+        // (Ctrl+A=0x01, Ctrl+B=0x02, ..., Ctrl+O=0x0F, ..., Ctrl+Z=0x1A)
+        // Only pure Ctrl (no Shift/Alt) to avoid hijacking Ctrl+Shift shortcuts
+        if ((e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift | KeyModifiers.Alt)) == KeyModifiers.Control
+            && e.Key >= Key.A && e.Key <= Key.Z)
+        {
+            char controlChar = (char)(e.Key - Key.A + 1);
+            _pty?.WriteInput(controlChar.ToString());
+            e.Handled = true;
+            return;
+        }
     }
 
     private async Task PasteFromClipboardAsync()
