@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Input.TextInput;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Interactivity;
@@ -46,24 +48,15 @@ public class TerminalControl : Control, IDisposable
     private const double ScrollbarWidth = 10;
     private const double ScrollbarThumbMinHeight = 20;
 
-    // Input TextBox at bottom
-    private readonly TextBox _inputTextBox;
-    private readonly Button _expandButton;
-    private const double InputBoxHeight = 28;
-    private const double InputBoxMargin = 2;
-    private const double ExpandButtonWidth = 32;
-
-    // Expanded input panel
-    private Border _expandedPanel = null!;
-    private TextBox _expandedTextBox = null!;
-    private Border _dragHandle = null!;
-    private Button _collapseButton = null!;
-    private Button _sendButton = null!;
-    private bool _isExpanded;
-    private double _expandedHeight; // absolute pixels
-    private bool _isDragResizing;
-    private double _dragResizeStartY;
-    private double _dragResizeStartHeight;
+    // Custom TextInputMethodClient: reports terminal cursor position directly to TSF
+    private TerminalImeClient _imeClient = null!;
+    // Cached cursor pixel position from last render pass
+    private double _cursorPixelX;
+    private double _cursorPixelY;
+    // IME position: tracks buffer cursor for inline IME composition
+    private double _imeX, _imeY;
+    // Preedit (IME composition) text for inline display
+    private string _preeditText = "";
 
     // Search bar state
     private Border? _searchBar;
@@ -127,30 +120,9 @@ public class TerminalControl : Control, IDisposable
 
     private void ApplyThemeColors()
     {
-        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(85, 87, 83);       // Light: Tango foreground
-        var bg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 242);      // Light: Tango input bg
-        var bgDeep = _isDark ? Color.FromRgb(34, 34, 36) : Color.FromRgb(255, 255, 255);  // Light: white
+        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(85, 87, 83);
+        var bg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 242);
         var border = _isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200);
-        var subtle = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(100, 100, 105);
-
-        _inputTextBox.Foreground = new SolidColorBrush(fg);
-        _inputTextBox.Background = new SolidColorBrush(bg);
-        _inputTextBox.BorderBrush = new SolidColorBrush(border);
-
-        _expandButton.Background = new SolidColorBrush(bg);
-        _expandButton.Foreground = new SolidColorBrush(subtle);
-        _expandButton.BorderBrush = new SolidColorBrush(border);
-
-        // Expanded panel
-        _expandedPanel.Background = new SolidColorBrush(bgDeep);
-        _expandedPanel.BorderBrush = new SolidColorBrush(border);
-        _expandedTextBox.Background = new SolidColorBrush(bgDeep);
-        _expandedTextBox.Foreground = new SolidColorBrush(fg);
-        _expandedTextBox.CaretBrush = new SolidColorBrush(fg);
-        _dragHandle.Background = new SolidColorBrush(border);
-        _collapseButton.Background = new SolidColorBrush(bg);
-        _collapseButton.Foreground = new SolidColorBrush(subtle);
-        _sendButton.Background = new SolidColorBrush(Color.FromRgb(0, 122, 255));
 
         // Search bar
         if (_searchBar != null)
@@ -168,25 +140,33 @@ public class TerminalControl : Control, IDisposable
         // Document view theme
         _docViewPanel?.UpdateTheme(_isDark);
 
+        // Document view input box
+        if (_docViewInputBox != null)
+        {
+            _docViewInputBox.Foreground = new SolidColorBrush(fg);
+            _docViewInputBox.Background = new SolidColorBrush(bg);
+            _docViewInputBox.BorderBrush = new SolidColorBrush(border);
+        }
+
         InvalidateVisual();
     }
 
-    // Terminal area height = total height - input area - expanded panel
-    private double ExpandedPanelHeight => _isExpanded ? _expandedHeight : 0;
-    private double InputAreaHeight => _isExpanded ? 0 : InputBoxHeight + InputBoxMargin;
-    private double TerminalAreaHeight => Math.Max(0, Bounds.Height - InputAreaHeight - ExpandedPanelHeight);
+    // Terminal area height = total height (no input box)
+    private double DocViewInputHeight => (_isDocumentView && _docViewInputBox != null) ? 30 : 0;
+    private double TerminalAreaHeight => Math.Max(0, Bounds.Height - DocViewInputHeight);
 
     public void SetFont(string fontFamily, double fontSize)
     {
         _typeface = new Typeface(fontFamily + ", Consolas, Courier New");
         _fontSize = fontSize;
-        _inputTextBox.FontFamily = new FontFamily(fontFamily + ", Consolas, Courier New");
-        _inputTextBox.FontSize = fontSize;
         _docViewPanel?.SetFont(fontFamily, fontSize);
         MeasureCellSize();
         RecalcTerminalSize();
         InvalidateVisual();
     }
+
+    // Document view input box (only visible in document view mode)
+    private TextBox? _docViewInputBox;
 
     public TerminalControl()
     {
@@ -201,58 +181,19 @@ public class TerminalControl : Control, IDisposable
 
         ClipToBounds = true;
 
-        // Create input TextBox at the bottom
-        _inputTextBox = new TextBox
-        {
-            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),   // Apple elevated surface
-            Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 215)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58)),  // Apple separator
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = new Thickness(6, 4),
-            FontSize = _fontSize,
-            FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
-            Watermark = "IME input here — auto-sent on commit",
-            Focusable = true,
-            AcceptsReturn = false,
-        };
+        // Direct input: TerminalControl itself receives keyboard/text input
+        Focusable = true;
+        AddHandler(TextInputEvent, OnTextInput, RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, OnTerminalKeyDown, RoutingStrategies.Tunnel);
 
-        // Handle Enter key to send text to PTY
-        _inputTextBox.AddHandler(KeyDownEvent, OnInputKeyDown, RoutingStrategies.Tunnel);
-
-        // Intercept TextInput: half-width chars go directly to PTY,
-        // full-width (IME committed) chars also go to PTY immediately
-        _inputTextBox.AddHandler(TextInputEvent, OnInputTextInput, RoutingStrategies.Tunnel);
-
-        // Forward click to activate MDI window
-        _inputTextBox.PointerPressed += (s, e) => Clicked?.Invoke();
-
-        // Expand button (▲)
-        _expandButton = new Button
-        {
-            Content = "\u25B2",
-            FontSize = 10,
-            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),
-            Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 165)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58)),
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            Padding = new Thickness(6, 0),
-            Width = ExpandButtonWidth,
-            CornerRadius = new CornerRadius(0),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Focusable = false,
-        };
-        ToolTip.SetTip(_expandButton, "Expand input (multi-line)");
-        _expandButton.Click += (_, _) => ToggleExpandedMode();
-
-        // Build expanded input panel
-        BuildExpandedPanel();
-
-        VisualChildren.Add(_inputTextBox);
-        LogicalChildren.Add(_inputTextBox);
-        VisualChildren.Add(_expandButton);
-        LogicalChildren.Add(_expandButton);
-        VisualChildren.Add(_expandedPanel);
-        LogicalChildren.Add(_expandedPanel);
+        // Custom IME client for preedit support
+        _imeClient = new TerminalImeClient(this);
+        AddHandler(InputElement.TextInputMethodClientRequestedEvent,
+            (object? _, TextInputMethodClientRequestedEventArgs e) =>
+            {
+                e.Client = _imeClient;
+                e.Handled = true;
+            }, RoutingStrategies.Tunnel);
 
         // Build search bar
         BuildSearchBar();
@@ -267,7 +208,18 @@ public class TerminalControl : Control, IDisposable
 
         _buffer.BufferChanged += () =>
         {
-            Dispatcher.UIThread.Post(InvalidateVisual);
+            Dispatcher.UIThread.Post(() =>
+            {
+                // Eagerly update IME position from buffer cursor (skip during active preedit)
+                if (string.IsNullOrEmpty(_preeditText))
+                {
+                    _imeX = _buffer.CursorCol * _cellWidth;
+                    _imeY = _buffer.CursorRow * _cellHeight;
+                }
+                InvalidateVisual();
+                _imeClient.NotifyCursorMoved();
+                ForceImmPosition();
+            });
             ScheduleCodeBlockScan();
         };
     }
@@ -297,44 +249,20 @@ public class TerminalControl : Control, IDisposable
         _codeBlockScanTimer.Start();
     }
 
-    private static bool IsHalfWidth(string text)
-    {
-        foreach (char c in text)
-        {
-            if (c > '\u007E') return false;
-        }
-        return true;
-    }
-
-    /// <summary>
-    /// Set to true when IME text is committed via TextInput.
-    /// On the next KeyDown, any TextBox remnants are force-cleared.
-    /// </summary>
-    private bool _imeJustCommitted;
-
-    private void OnInputTextInput(object? sender, TextInputEventArgs e)
+    private void OnTextInput(object? sender, TextInputEventArgs e)
     {
         if (string.IsNullOrEmpty(e.Text)) return;
 
-        // Filter out control characters (e.g., Backspace generates '\b' via TextInput
-        // which would double-send with the KeyDown handler's \x7f)
+        // Filter out control characters
         foreach (char c in e.Text)
         {
-            if (c >= ' ') // Only process printable characters (U+0020 and above)
-            {
-                goto hasPrintable;
-            }
+            if (c >= ' ') goto hasPrintable;
         }
-        return; // All control characters — ignore
+        return;
     hasPrintable:
 
-        // Document view mode: accumulate all text in the input box until Enter
-        if (_isDocumentView)
-        {
-            // Let the TextBox handle the input naturally (don't send to PTY)
-            // Text stays in the input box until Enter is pressed
-            return;
-        }
+        // Document view: let the doc view input box handle it
+        if (_isDocumentView) return;
 
         // Track input start on first text input after prompt
         if (_inputStartPending)
@@ -342,81 +270,45 @@ public class TerminalControl : Control, IDisposable
             _inputStartAbsRow = ScreenRowToAbsolute(_buffer.CursorRow);
             _inputStartCol = _buffer.CursorCol;
             _inputStartPending = false;
-            System.Diagnostics.Debug.WriteLine($"[InputStart] recorded at ({_inputStartAbsRow},{_inputStartCol})");
         }
 
         // Capture first user input for tab title
         if (!_firstInputCaptured)
             _firstInputBuffer.Append(e.Text);
 
-        // Printable text committed (half-width direct or IME confirmed) — send to PTY
         if (_hasSelection) ClearSelection();
         _pty?.WriteInput(e.Text);
         e.Handled = true;
-
-        // Mark that we just committed, so next KeyDown clears remnants
-        _imeJustCommitted = true;
-        _inputTextBox.Text = "";
     }
 
-    private async void OnInputKeyDown(object? sender, KeyEventArgs e)
+    private async void OnTerminalKeyDown(object? sender, KeyEventArgs e)
     {
-        // After IME commit, force-clear any preedit remnants that Avalonia
-        // may have re-inserted after our clear in OnInputTextInput
-        if (_imeJustCommitted && !_isDocumentView)
-        {
-            _imeJustCommitted = false;
-            _inputTextBox.Text = "";
-            _inputTextBox.CaretIndex = 0;
-        }
+        // Notify IME of current cursor position before handling key
+        _imeClient.NotifyCursorMoved();
+        ForceImmPosition();
 
-        // In document view: text stays in input box, allow editing freely
-        // Only intercept Enter, Escape, and Ctrl shortcuts
-        if (_isDocumentView && !string.IsNullOrEmpty(_inputTextBox.Text))
+        // Document view: forward to doc view input box handler
+        if (_isDocumentView && _docViewInputBox != null)
         {
-            if (e.Key == Key.Escape)
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
             {
-                _inputTextBox.Text = "";
-                e.Handled = true;
-                return;
+                if (e.Key == Key.C) { goto handleCtrlC; }
+                if (e.Key == Key.V) { _ = PasteToDocViewInputAsync(); e.Handled = true; return; }
+                if (e.Key == Key.F) { if (_searchVisible) HideSearchBar(); else ShowSearchBar(); e.Handled = true; return; }
             }
-            // Let Enter through to be handled below (sends accumulated text)
-            if (e.Key == Key.Enter)
-                goto handleKeys;
-            // Let Ctrl shortcuts through
-            bool isCtrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
-            if (!isCtrl)
-                return; // Let TextBox handle normal editing (Backspace, arrows, etc.)
+            return;
         }
 
-        // If TextBox has text, IME composition is in progress.
-        // Let TextBox handle keys (Backspace deletes preedit, etc.)
-        // Exception: Ctrl+C/V/F must always work regardless of IME state
-        if (!string.IsNullOrEmpty(_inputTextBox.Text))
-        {
-            if (e.Key == Key.Escape)
-            {
-                _inputTextBox.Text = "";
-                e.Handled = true;
-                return;
-            }
-            bool isCtrlShortcut = e.KeyModifiers.HasFlag(KeyModifiers.Control)
-                && e.Key is Key.C or Key.V or Key.F or Key.Up or Key.Down;
-            if (!isCtrlShortcut)
-                return;
-        }
-        handleKeys:
-
-        // Track input start: record cursor position on first interaction after prompt
+        // Track input start
         if (_inputStartPending)
         {
             _inputStartAbsRow = ScreenRowToAbsolute(_buffer.CursorRow);
             _inputStartCol = _buffer.CursorCol;
             _inputStartPending = false;
-            System.Diagnostics.Debug.WriteLine($"[InputStart] recorded at ({_inputStartAbsRow},{_inputStartCol})");
         }
 
         // Ctrl+C: copy selection or send SIGINT
+        handleCtrlC:
         if (e.Key == Key.C && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
             if (_hasSelection)
@@ -449,14 +341,12 @@ public class TerminalControl : Control, IDisposable
         {
             if (e.Key == Key.Up)
             {
-                System.Diagnostics.Debug.WriteLine($"[PromptNav] Ctrl+Up pressed. _userInputRows={_userInputRows.Count}, scrollback={_buffer.Scrollback.Count}");
                 NavigatePrompt(-1);
                 e.Handled = true;
                 return;
             }
             if (e.Key == Key.Down)
             {
-                System.Diagnostics.Debug.WriteLine($"[PromptNav] Ctrl+Down pressed. _userInputRows={_userInputRows.Count}, scrollback={_buffer.Scrollback.Count}");
                 NavigatePrompt(1);
                 e.Handled = true;
                 return;
@@ -475,21 +365,12 @@ public class TerminalControl : Control, IDisposable
         // Ctrl+V: paste
         if (e.Key == Key.V && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            if (_isDocumentView)
-            {
-                // Document view: paste into IME input box
-                _ = PasteToInputBoxAsync();
-            }
-            else
-            {
-                // Terminal mode: paste directly to PTY
-                _ = PasteFromClipboardAsync();
-            }
+            _ = PasteFromClipboardAsync();
             e.Handled = true;
             return;
         }
 
-        // Shift+Enter: send newline (line feed) for multi-line input
+        // Shift+Enter: send newline
         if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
             _pty?.WriteInput("\n");
@@ -497,39 +378,13 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
-        // Enter: send text to PTY
+        // Enter
         if (e.Key == Key.Enter)
         {
-            // Document view mode: send accumulated text from input box, then \r
-            if (_isDocumentView && !string.IsNullOrEmpty(_inputTextBox.Text))
-            {
-                var text = _inputTextBox.Text;
-                _pty?.WriteInput(text);
-                _pty?.WriteInput("\r");
-                _inputTextBox.Text = "";
-                _inputTextBox.CaretIndex = 0;
-
-                // Capture first input as tab title
-                if (!_firstInputCaptured)
-                {
-                    _firstInputCaptured = true;
-                    FirstUserInput = text.Trim();
-                    var summary = FirstUserInput;
-                    if (summary.Length > 30) summary = summary[..30] + "...";
-                    if (!string.IsNullOrWhiteSpace(summary))
-                        TitleChanged?.Invoke(summary);
-                }
-                e.Handled = true;
-                return;
-            }
-
-            // Record input position for prompt navigation
             int submitRow = ScreenRowToAbsolute(_buffer.CursorRow);
-            // Only record if it's a different position from the last recorded one
             if (_userInputRows.Count == 0 || Math.Abs(_userInputRows[^1] - _inputStartAbsRow) > 1)
                 _userInputRows.Add(_inputStartAbsRow);
 
-            // Capture first input as tab title
             if (!_firstInputCaptured && _firstInputBuffer.Length > 0)
             {
                 _firstInputCaptured = true;
@@ -545,18 +400,15 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
-        // Escape: collapse expanded panel if open, otherwise send to PTY
+        // Escape
         if (e.Key == Key.Escape)
         {
-            if (_isExpanded)
-                CollapseInputPanel();
-            else
-                _pty?.WriteInput("\x1b");
+            _pty?.WriteInput("\x1b");
             e.Handled = true;
             return;
         }
 
-        // Backspace / Delete with selection: delete all selected characters
+        // Backspace / Delete with selection
         if (_hasSelection && (e.Key == Key.Back || e.Key == Key.Delete))
         {
             DeleteSelectedChars();
@@ -627,8 +479,6 @@ public class TerminalControl : Control, IDisposable
         }
 
         // Generic Ctrl+letter: send corresponding control character to PTY
-        // (Ctrl+A=0x01, Ctrl+B=0x02, ..., Ctrl+O=0x0F, ..., Ctrl+Z=0x1A)
-        // Only pure Ctrl (no Shift/Alt) to avoid hijacking Ctrl+Shift shortcuts
         if ((e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift | KeyModifiers.Alt)) == KeyModifiers.Control
             && e.Key >= Key.A && e.Key <= Key.Z)
         {
@@ -756,7 +606,18 @@ public class TerminalControl : Control, IDisposable
         };
         _buffer.BufferChanged += () =>
         {
-            Dispatcher.UIThread.Post(InvalidateVisual);
+            Dispatcher.UIThread.Post(() =>
+            {
+                // Eagerly update IME position from buffer cursor (skip during active preedit)
+                if (string.IsNullOrEmpty(_preeditText))
+                {
+                    _imeX = _buffer.CursorCol * _cellWidth;
+                    _imeY = _buffer.CursorRow * _cellHeight;
+                }
+                InvalidateVisual();
+                _imeClient.NotifyCursorMoved();
+                ForceImmPosition();
+            });
             ScheduleCodeBlockScan();
         };
 
@@ -780,19 +641,79 @@ public class TerminalControl : Control, IDisposable
         _pty.Start(command, workingDirectory, cols, rows);
     }
 
+    private async Task PasteToDocViewInputAsync()
+    {
+        if (_docViewInputBox == null) return;
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard == null) return;
+        var text = await clipboard.GetTextAsync();
+        if (string.IsNullOrEmpty(text)) return;
+        var current = _docViewInputBox.Text ?? "";
+        var caretIndex = _docViewInputBox.CaretIndex;
+        _docViewInputBox.Text = current.Insert(caretIndex, text);
+        _docViewInputBox.CaretIndex = caretIndex + text.Length;
+    }
+
+    // ── IMM32 direct calls for IME candidate window positioning ──
+
+    [DllImport("imm32.dll")] private static extern IntPtr ImmGetContext(IntPtr hWnd);
+    [DllImport("imm32.dll")] private static extern bool ImmReleaseContext(IntPtr hWnd, IntPtr hIMC);
+    [DllImport("imm32.dll")] private static extern bool ImmSetCompositionWindow(IntPtr hIMC, ref COMPOSITIONFORM cf);
+    [DllImport("imm32.dll")] private static extern bool ImmSetCandidateWindow(IntPtr hIMC, ref CANDIDATEFORM cf);
+
+    [StructLayout(LayoutKind.Sequential)] private struct COMPOSITIONFORM { public int dwStyle; public POINT pt; public RECT rc; }
+    [StructLayout(LayoutKind.Sequential)] private struct CANDIDATEFORM { public int dwIndex; public int dwStyle; public POINT pt; public RECT rc; }
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int x, y; }
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int left, top, right, bottom; }
+
+    private void ForceImmPosition()
+    {
+        try
+        {
+            var topLevel = TopLevel.GetTopLevel(this);
+            if (topLevel?.TryGetPlatformHandle() is not { } handle) return;
+
+            double imeX = _imeX;
+            if (!string.IsNullOrEmpty(_preeditText))
+            {
+                foreach (char c in _preeditText)
+                    imeX += TerminalBuffer.IsWideChar(c) ? _cellWidth * 2 : _cellWidth;
+            }
+            var point = this.TranslatePoint(new Point(imeX, _imeY), topLevel);
+            if (point == null) return;
+
+            var hWnd = handle.Handle;
+            var hIMC = ImmGetContext(hWnd);
+            if (hIMC == IntPtr.Zero) return;
+
+            try
+            {
+                double s = topLevel.RenderScaling;
+                int px = (int)(point.Value.X * s);
+                int py = (int)(point.Value.Y * s);
+
+                var comp = new COMPOSITIONFORM { dwStyle = 2 /*CFS_POINT*/, pt = new POINT { x = px, y = py } };
+                ImmSetCompositionWindow(hIMC, ref comp);
+
+                for (int i = 0; i < 4; i++)
+                {
+                    var cand = new CANDIDATEFORM { dwIndex = i, dwStyle = 0x40 /*CFS_CANDIDATEPOS*/, pt = new POINT { x = px, y = py + (int)(_cellHeight * s) } };
+                    ImmSetCandidateWindow(hIMC, ref cand);
+                }
+            }
+            finally { ImmReleaseContext(hWnd, hIMC); }
+        }
+        catch { }
+    }
+
     protected override Size MeasureOverride(Size availableSize)
     {
-        double tbW = Math.Max(0, availableSize.Width - ExpandButtonWidth);
-        _inputTextBox.Measure(new Size(tbW, InputBoxHeight));
-        _expandButton.Measure(new Size(ExpandButtonWidth, InputBoxHeight));
-        if (_isExpanded)
-            _expandedPanel.Measure(new Size(availableSize.Width, _expandedHeight));
         _searchBar?.Measure(availableSize);
+        _docViewInputBox?.Measure(new Size(availableSize.Width, 30));
         if (_isDocumentView && _docViewPanel != null)
         {
-            // Use Bounds for actual size (availableSize may be Infinity)
             double actualH = Bounds.Height > 0 ? Bounds.Height : availableSize.Height;
-            double docH = Math.Max(0, actualH - InputAreaHeight - ExpandedPanelHeight);
+            double docH = Math.Max(0, actualH - DocViewInputHeight);
             _docViewPanel.Measure(new Size(
                 Bounds.Width > 0 ? Bounds.Width : availableSize.Width,
                 docH));
@@ -803,30 +724,12 @@ public class TerminalControl : Control, IDisposable
 
     protected override Size ArrangeOverride(Size finalSize)
     {
-        if (_isExpanded)
-        {
-            // Expanded: panel at bottom, hide input row
-            double epY = finalSize.Height - _expandedHeight;
-            _expandedPanel.Arrange(new Rect(0, epY, finalSize.Width, _expandedHeight));
-            // Move input row off-screen
-            _inputTextBox.Arrange(new Rect(0, finalSize.Height, 0, 0));
-            _expandButton.Arrange(new Rect(0, finalSize.Height, 0, 0));
-        }
-        else
-        {
-            // Normal: input row at bottom
-            double tbY = finalSize.Height - InputBoxHeight;
-            double tbW = Math.Max(0, finalSize.Width - ExpandButtonWidth);
-            _inputTextBox.Arrange(new Rect(0, tbY, tbW, InputBoxHeight));
-            _expandButton.Arrange(new Rect(tbW, tbY, ExpandButtonWidth, InputBoxHeight));
-        }
-
-        // Position document view panel (fills terminal area)
+        // Position document view panel
         if (_docViewPanel != null)
         {
             if (_isDocumentView)
             {
-                double docH = Math.Max(0, finalSize.Height - InputAreaHeight - ExpandedPanelHeight);
+                double docH = Math.Max(0, finalSize.Height - DocViewInputHeight);
                 _docViewPanel.Arrange(new Rect(0, 0, finalSize.Width, docH));
             }
             else
@@ -835,10 +738,20 @@ public class TerminalControl : Control, IDisposable
             }
         }
 
-        // Position permission overlay (centered, above input)
+        // Position doc view input box at bottom
+        if (_docViewInputBox != null && _isDocumentView)
+        {
+            _docViewInputBox.Arrange(new Rect(0, finalSize.Height - 30, finalSize.Width, 30));
+        }
+        else if (_docViewInputBox != null)
+        {
+            _docViewInputBox.Arrange(new Rect(0, finalSize.Height, 0, 0));
+        }
+
+        // Position permission overlay
         if (_permissionOverlay != null)
         {
-            double docH = Math.Max(0, finalSize.Height - InputAreaHeight - ExpandedPanelHeight);
+            double docH = Math.Max(0, finalSize.Height - DocViewInputHeight);
             _permissionOverlay.Arrange(new Rect(0, 0, finalSize.Width, docH));
         }
 
@@ -848,6 +761,8 @@ public class TerminalControl : Control, IDisposable
             double sbW = Math.Min(_searchBar.DesiredSize.Width, finalSize.Width);
             _searchBar.Arrange(new Rect(finalSize.Width - sbW, 0, sbW, _searchBar.DesiredSize.Height));
         }
+
+        _imeClient.NotifyCursorMoved();
 
         return finalSize;
     }
@@ -926,15 +841,8 @@ public class TerminalControl : Control, IDisposable
             Clicked?.Invoke();
             var pos = e.GetPosition(this);
 
-            // Click in input box area - let TextBox handle it
-            if (pos.Y >= TerminalAreaHeight)
-            {
-                _inputTextBox.Focus();
-                return;
-            }
-
-            // Focus the input TextBox for keyboard input
-            _inputTextBox.Focus();
+            // Focus the control for keyboard input
+            this.Focus();
 
             // Scrollbar hit test
             if (IsOnScrollbar(pos))
@@ -1229,226 +1137,6 @@ public class TerminalControl : Control, IDisposable
 
     // ── Expanded Input Panel ──
 
-    private void BuildExpandedPanel()
-    {
-        // Drag handle bar at top
-        _dragHandle = new Border
-        {
-            Height = 4,
-            Background = new SolidColorBrush(Color.FromRgb(65, 65, 70)),
-            Cursor = new Cursor(StandardCursorType.SizeNorthSouth),
-        };
-        _dragHandle.PointerPressed += OnDragHandlePressed;
-        _dragHandle.PointerMoved += OnDragHandleMoved;
-        _dragHandle.PointerReleased += OnDragHandleReleased;
-
-        // Multi-line text box
-        _expandedTextBox = new TextBox
-        {
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            Background = new SolidColorBrush(Color.FromRgb(34, 34, 36)),
-            Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 215)),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(8, 6),
-            FontSize = _fontSize,
-            FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
-            Watermark = "Multi-line input (Enter=newline, Ctrl+Enter=send)",
-            VerticalContentAlignment = VerticalAlignment.Top,
-        };
-        _expandedTextBox.AddHandler(KeyDownEvent, OnExpandedKeyDown, RoutingStrategies.Tunnel);
-
-        // Collapse button (▼)
-        _collapseButton = new Button
-        {
-            Content = "\u25BC", FontSize = 10,
-            Padding = new Thickness(8, 4),
-            Background = new SolidColorBrush(Color.FromRgb(50, 50, 52)),
-            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(4),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Margin = new Thickness(0, 0, 4, 0),
-            Focusable = false,
-        };
-        ToolTip.SetTip(_collapseButton, "Collapse input (Escape)");
-        _collapseButton.Click += (_, _) => CollapseInputPanel();
-
-        // Send button (▶)
-        _sendButton = new Button
-        {
-            Content = "\u25B6", FontSize = 10,
-            Padding = new Thickness(8, 4),
-            Background = new SolidColorBrush(Color.FromRgb(0, 122, 255)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(4),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Focusable = false,
-        };
-        ToolTip.SetTip(_sendButton, "Send message (Ctrl+Enter)");
-        _sendButton.Click += (_, _) => SendExpandedText();
-
-        var buttonPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 4, 8, 4),
-        };
-        buttonPanel.Children.Add(_collapseButton);
-        buttonPanel.Children.Add(_sendButton);
-
-        var dock = new DockPanel();
-        DockPanel.SetDock(_dragHandle, Dock.Top);
-        DockPanel.SetDock(buttonPanel, Dock.Bottom);
-        dock.Children.Add(_dragHandle);
-        dock.Children.Add(buttonPanel);
-        dock.Children.Add(_expandedTextBox);
-
-        _expandedPanel = new Border
-        {
-            Child = dock,
-            Background = new SolidColorBrush(Color.FromRgb(34, 34, 36)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58)),
-            BorderThickness = new Thickness(0, 1, 0, 0),
-            IsVisible = false,
-        };
-    }
-
-    private void ToggleExpandedMode()
-    {
-        if (_isExpanded)
-            CollapseInputPanel();
-        else
-            ExpandInputPanel();
-    }
-
-    private void ExpandInputPanel()
-    {
-        _isExpanded = true;
-        _expandedHeight = Math.Max(80, Bounds.Height * 0.3);
-        _expandedPanel.IsVisible = true;
-
-        // Transfer text from IME input to expanded input (useful in document view mode)
-        if (_isDocumentView && !string.IsNullOrEmpty(_inputTextBox.Text))
-        {
-            _expandedTextBox.Text = _inputTextBox.Text;
-            _expandedTextBox.CaretIndex = _expandedTextBox.Text.Length;
-            _inputTextBox.Text = "";
-        }
-
-        _inputTextBox.IsVisible = false;
-        _expandButton.IsVisible = false;
-        _expandedTextBox.Focus();
-        RecalcTerminalSize();
-        InvalidateMeasure();
-        InvalidateVisual();
-    }
-
-    private void CollapseInputPanel()
-    {
-        // Move text to normal input (send to PTY without submitting)
-        var text = _expandedTextBox.Text;
-        if (!string.IsNullOrEmpty(text))
-        {
-            // Normalize to single \n, then remove consecutive blank lines
-            var normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
-            while (normalized.Contains("\n\n"))
-                normalized = normalized.Replace("\n\n", "\n");
-            _pty?.WriteInput(normalized);
-            _expandedTextBox.Text = "";
-        }
-
-        _isExpanded = false;
-        _expandedPanel.IsVisible = false;
-        _inputTextBox.IsVisible = true;
-        _expandButton.IsVisible = true;
-        _inputTextBox.Focus();
-        RecalcTerminalSize();
-        InvalidateMeasure();
-        InvalidateVisual();
-    }
-
-    private void SendExpandedText()
-    {
-        var text = _expandedTextBox.Text;
-        if (!string.IsNullOrEmpty(text))
-        {
-            // Record input position for prompt navigation
-            int submitRow = _inputStartAbsRow;
-            if (_userInputRows.Count == 0 || Math.Abs(_userInputRows[^1] - submitRow) > 1)
-                _userInputRows.Add(submitRow);
-
-            // Capture first input as tab title
-            if (!_firstInputCaptured)
-            {
-                _firstInputCaptured = true;
-                FirstUserInput = text.Replace("\r", " ").Replace("\n", " ").Trim();
-                var summary = FirstUserInput;
-                if (summary.Length > 30) summary = summary[..30] + "...";
-                if (!string.IsNullOrWhiteSpace(summary))
-                    TitleChanged?.Invoke(summary);
-            }
-            _pty?.WriteInput(text + "\r");
-            _expandedTextBox.Text = "";
-        }
-        _expandedTextBox.Focus();
-    }
-
-    private void OnExpandedKeyDown(object? sender, KeyEventArgs e)
-    {
-        // Ctrl+Enter: send
-        if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
-        {
-            SendExpandedText();
-            e.Handled = true;
-            return;
-        }
-        // Escape: collapse
-        if (e.Key == Key.Escape)
-        {
-            CollapseInputPanel();
-            e.Handled = true;
-            return;
-        }
-        // Enter without modifiers: just newline (AcceptsReturn handles it)
-    }
-
-    private void OnDragHandlePressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (e.GetCurrentPoint(_dragHandle).Properties.IsLeftButtonPressed)
-        {
-            _isDragResizing = true;
-            _dragResizeStartY = e.GetPosition(this).Y;
-            _dragResizeStartHeight = _expandedHeight;
-            e.Pointer.Capture(_dragHandle);
-            e.Handled = true;
-        }
-    }
-
-    private void OnDragHandleMoved(object? sender, PointerEventArgs e)
-    {
-        if (!_isDragResizing) return;
-        double currentY = e.GetPosition(this).Y;
-        double delta = _dragResizeStartY - currentY;
-        double newHeight = Math.Clamp(_dragResizeStartHeight + delta, 80, Bounds.Height * 0.7);
-        _expandedHeight = newHeight;
-        RecalcTerminalSize();
-        InvalidateMeasure();
-        InvalidateVisual();
-        e.Handled = true;
-    }
-
-    private void OnDragHandleReleased(object? sender, PointerReleasedEventArgs e)
-    {
-        if (_isDragResizing)
-        {
-            _isDragResizing = false;
-            e.Pointer.Capture(null);
-            e.Handled = true;
-        }
-    }
-
     // ── Search Bar ──
 
     private void BuildSearchBar()
@@ -1588,7 +1276,7 @@ public class TerminalControl : Control, IDisposable
         _searchMatches.Clear();
         _searchCurrentIndex = -1;
         _searchTerm = "";
-        _inputTextBox.Focus();
+        this.Focus();
         InvalidateVisual();
     }
 
@@ -1973,6 +1661,28 @@ public class TerminalControl : Control, IDisposable
 
             _docViewPanel.IsVisible = true;
 
+            // Create document view input box
+            if (_docViewInputBox == null)
+            {
+                _docViewInputBox = new TextBox
+                {
+                    Background = new SolidColorBrush(_isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 242)),
+                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(85, 87, 83)),
+                    BorderBrush = new SolidColorBrush(_isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200)),
+                    BorderThickness = new Thickness(0, 1, 0, 0),
+                    Padding = new Thickness(6, 4),
+                    FontSize = _fontSize,
+                    FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
+                    Watermark = "Type message and press Enter...",
+                    Focusable = true,
+                    AcceptsReturn = false,
+                };
+                _docViewInputBox.AddHandler(KeyDownEvent, OnDocViewInputKeyDown, RoutingStrategies.Tunnel);
+                VisualChildren.Add(_docViewInputBox);
+                LogicalChildren.Add(_docViewInputBox);
+            }
+            _docViewInputBox.IsVisible = true;
+
             if (_docViewSessionPath != null)
             {
                 _docViewPanel.LoadSession(_docViewSessionPath);
@@ -1983,6 +1693,8 @@ public class TerminalControl : Control, IDisposable
             _permissionCheckTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _permissionCheckTimer.Tick += OnPermissionCheckTick;
             _permissionCheckTimer.Start();
+
+            _docViewInputBox.Focus();
         }
         else
         {
@@ -1991,14 +1703,45 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.IsVisible = false;
                 _docViewPanel.StopPolling();
             }
+            if (_docViewInputBox != null)
+                _docViewInputBox.IsVisible = false;
             _permissionCheckTimer?.Stop();
             HidePermissionOverlay();
+            this.Focus();
         }
 
         InvalidateMeasure();
         InvalidateArrange();
         InvalidateVisual();
         DocumentViewChanged?.Invoke(_isDocumentView);
+    }
+
+    private void OnDocViewInputKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && _docViewInputBox != null && !string.IsNullOrEmpty(_docViewInputBox.Text))
+        {
+            var text = _docViewInputBox.Text;
+            _pty?.WriteInput(text);
+            _pty?.WriteInput("\r");
+            _docViewInputBox.Text = "";
+            _docViewInputBox.CaretIndex = 0;
+
+            if (!_firstInputCaptured)
+            {
+                _firstInputCaptured = true;
+                FirstUserInput = text.Trim();
+                var summary = FirstUserInput;
+                if (summary.Length > 30) summary = summary[..30] + "...";
+                if (!string.IsNullOrWhiteSpace(summary))
+                    TitleChanged?.Invoke(summary);
+            }
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && _docViewInputBox != null)
+        {
+            _docViewInputBox.Text = "";
+            e.Handled = true;
+        }
     }
 
     private void OnPermissionCheckTick(object? sender, EventArgs e)
@@ -2775,14 +2518,9 @@ public class TerminalControl : Control, IDisposable
         var fgDefault = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(85, 87, 83);
         double termH = TerminalAreaHeight;
 
-        // Draw entire control background
-        var inputBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 242);
-        context.FillRectangle(new SolidColorBrush(inputBg), new Rect(0, 0, Bounds.Width, Bounds.Height));
-
         // Document view mode: skip all terminal cell rendering
         if (_isDocumentView)
         {
-            // Draw background for document view area
             var docBg = _isDark ? Color.FromRgb(30, 30, 34) : Color.FromRgb(250, 250, 252);
             context.FillRectangle(new SolidColorBrush(docBg), new Rect(0, 0, Bounds.Width, termH));
             return;
@@ -2790,10 +2528,6 @@ public class TerminalControl : Control, IDisposable
 
         // Draw terminal background
         context.FillRectangle(new SolidColorBrush(bgDefault), new Rect(0, 0, Bounds.Width, termH));
-
-        // Draw separator line above input box
-        var sepPen = new Pen(new SolidColorBrush(_isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200)), 0.5);
-        context.DrawLine(sepPen, new Point(0, termH), new Point(Bounds.Width, termH));
 
         // Draw scrollbar
         if (_buffer.Scrollback.Count > 0)
@@ -2810,7 +2544,7 @@ public class TerminalControl : Control, IDisposable
                 new Rect(barX + 2, thumbY, ScrollbarWidth - 4, thumbH));
         }
 
-        bool focused = _inputTextBox.IsFocused;
+        bool focused = this.IsFocused;
 
         // Pre-compute screen rows covered by Excalidraw diagrams (to skip cell drawing there)
         var diagramRowRanges = new List<(int start, int end)>();
@@ -2879,12 +2613,18 @@ public class TerminalControl : Control, IDisposable
                 if (bg != bgDefault)
                     context.FillRectangle(new SolidColorBrush(bg), new Rect(x, y, cellW, _cellHeight));
 
-                // Draw cursor
-                if (_scrollOffset == 0 && row == _buffer.CursorRow && col == _buffer.CursorCol && _buffer.CursorVisible && focused)
+                // Draw cursor and cache its pixel position for IME
+                if (_scrollOffset == 0 && row == _buffer.CursorRow && col == _buffer.CursorCol)
                 {
-                    context.FillRectangle(new SolidColorBrush(Color.FromArgb(180, fg.R, fg.G, fg.B)),
-                        new Rect(x, y, cellW, _cellHeight));
-                    fg = bgDefault;
+                    _cursorPixelX = x;
+                    _cursorPixelY = y;
+                    if (string.IsNullOrEmpty(_preeditText)) { _imeX = x; _imeY = y; }
+                    if (_buffer.CursorVisible && focused)
+                    {
+                        context.FillRectangle(new SolidColorBrush(Color.FromArgb(180, fg.R, fg.G, fg.B)),
+                            new Rect(x, y, cellW, _cellHeight));
+                        fg = bgDefault;
+                    }
                 }
 
                 // Draw selection highlight
@@ -2932,6 +2672,37 @@ public class TerminalControl : Control, IDisposable
 
                 x += cellW;
             }
+        }
+
+        // Draw preedit (IME composition) text at input position
+        if (!string.IsNullOrEmpty(_preeditText) && _scrollOffset == 0 && focused)
+        {
+            double preeditX = _imeX;
+            double preeditY = _imeY;
+            double preeditW = 0;
+            foreach (char c in _preeditText)
+                preeditW += TerminalBuffer.IsWideChar(c) ? _cellWidth * 2 : _cellWidth;
+
+            // Opaque background + semi-transparent highlight
+            context.FillRectangle(new SolidColorBrush(bgDefault),
+                new Rect(preeditX, preeditY, preeditW + _cellWidth, _cellHeight));
+            var preeditBg = _isDark ? Color.FromArgb(80, 80, 130, 220) : Color.FromArgb(80, 60, 100, 200);
+            context.FillRectangle(new SolidColorBrush(preeditBg),
+                new Rect(preeditX, preeditY, preeditW, _cellHeight));
+
+            // Preedit text
+            var preeditFt = new FormattedText(_preeditText, CultureInfo.CurrentCulture,
+                FlowDirection.LeftToRight, _typeface, _fontSize,
+                new SolidColorBrush(fgDefault));
+            context.DrawText(preeditFt, new Point(preeditX, preeditY));
+
+            // Dotted underline + caret
+            var pen = new Pen(new SolidColorBrush(fgDefault), 1, new DashStyle(new double[] { 2, 2 }, 0));
+            context.DrawLine(pen,
+                new Point(preeditX, preeditY + _cellHeight - 1),
+                new Point(preeditX + preeditW, preeditY + _cellHeight - 1));
+            context.FillRectangle(new SolidColorBrush(fgDefault),
+                new Rect(preeditX + preeditW, preeditY, 2, _cellHeight));
         }
 
         // Draw code block cards (overlay on detected renderable blocks)
@@ -3403,39 +3174,23 @@ public class TerminalControl : Control, IDisposable
         return Color.FromRgb((byte)gray, (byte)gray, (byte)gray);
     }
 
-    public bool IsExpanded => _isExpanded;
-
-    public void AppendToExpandedInput(string text)
-    {
-        _expandedTextBox.Text = (_expandedTextBox.Text ?? "") + text;
-        _expandedTextBox.CaretIndex = _expandedTextBox.Text.Length;
-        _expandedTextBox.Focus();
-    }
-
     public void SendText(string text) => _pty?.WriteInput(text);
 
-    private async Task PasteToInputBoxAsync()
-    {
-        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
-        if (clipboard == null) return;
-        var text = await clipboard.GetTextAsync();
-        if (string.IsNullOrEmpty(text)) return;
-
-        // Insert at caret position
-        var current = _inputTextBox.Text ?? "";
-        var caretIndex = _inputTextBox.CaretIndex;
-        _inputTextBox.Text = current.Insert(caretIndex, text);
-        _inputTextBox.CaretIndex = caretIndex + text.Length;
-    }
-
     /// <summary>
-    /// Set text in the IME input box (for document view mode where direct PTY send is hidden).
+    /// Set text in the document view input box.
     /// </summary>
     public void SetInputText(string text)
     {
-        _inputTextBox.Text = text;
-        _inputTextBox.CaretIndex = text.Length;
-        _inputTextBox.Focus();
+        if (_docViewInputBox != null)
+        {
+            _docViewInputBox.Text = text;
+            _docViewInputBox.CaretIndex = text.Length;
+            _docViewInputBox.Focus();
+        }
+        else
+        {
+            _pty?.WriteInput(text);
+        }
     }
 
     private void OnFileDragOver(object? sender, DragEventArgs e)
@@ -3463,7 +3218,6 @@ public class TerminalControl : Control, IDisposable
             if (paths.Length > 0)
                 paths.Append(' ');
 
-            // Quote paths containing spaces
             if (path.Contains(' '))
                 paths.Append('"').Append(path).Append('"');
             else
@@ -3473,7 +3227,7 @@ public class TerminalControl : Control, IDisposable
         if (paths.Length > 0)
         {
             _pty?.WriteInput(paths.ToString());
-            _inputTextBox.Focus();
+            this.Focus();
         }
 
         e.Handled = true;
@@ -3481,13 +3235,12 @@ public class TerminalControl : Control, IDisposable
 
     public void FocusTerminal()
     {
-        _inputTextBox.Focus();
+        if (_isDocumentView && _docViewInputBox != null)
+            _docViewInputBox.Focus();
+        else
+            this.Focus();
     }
 
-    /// <summary>
-    /// Send /exit command and wait for the process to exit gracefully.
-    /// Returns true if process exited within timeout.
-    /// </summary>
     public async Task<bool> SendExitAndWaitAsync(int timeoutMs = 3000)
     {
         if (_pty == null || !_pty.IsRunning) return true;
@@ -3495,10 +3248,79 @@ public class TerminalControl : Control, IDisposable
         return await Task.Run(() => _pty.WaitForExitTimeout(timeoutMs));
     }
 
+    protected override void OnGotFocus(GotFocusEventArgs e)
+    {
+        base.OnGotFocus(e);
+        // _cursorPixelX/Y are set by the Render pass — do not overwrite here,
+        // as _buffer.CursorCol may point to the TUI status bar (far right).
+        _imeClient.NotifyCursorMoved();
+        ForceImmPosition();
+        InvalidateVisual();
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         _pty?.Dispose();
+    }
+
+    /// <summary>
+    /// Custom TextInputMethodClient that reports the terminal's buffer cursor position
+    /// directly to TSF/IME for preedit support.
+    /// </summary>
+    private sealed class TerminalImeClient : TextInputMethodClient
+    {
+        private readonly TerminalControl _owner;
+        public TerminalImeClient(TerminalControl owner) => _owner = owner;
+
+        public override Visual TextViewVisual => _owner;
+
+        public override Rect CursorRectangle
+        {
+            get
+            {
+                double x = _owner._imeX;
+                double y = _owner._imeY;
+                if (!string.IsNullOrEmpty(_owner._preeditText))
+                {
+                    foreach (char c in _owner._preeditText)
+                        x += TerminalBuffer.IsWideChar(c) ? _owner._cellWidth * 2 : _owner._cellWidth;
+                }
+                double h = _owner._cellHeight > 0 ? _owner._cellHeight : 16;
+                return new Rect(x, y, 1, h);
+            }
+        }
+
+        public override bool SupportsPreedit => true;
+        public override bool SupportsSurroundingText => false;
+
+        public override string SurroundingText => "";
+
+        public override TextSelection Selection
+        {
+            get => new(0, 0);
+            set { }
+        }
+
+        public override void SetPreeditText(string? preeditText)
+        {
+            string newText = preeditText ?? "";
+            bool wasEmpty = string.IsNullOrEmpty(_owner._preeditText);
+            _owner._preeditText = newText;
+
+            // Capture IME position from buffer cursor when preedit starts
+            if (newText.Length > 0 && wasEmpty)
+            {
+                _owner._imeX = _owner._buffer.CursorCol * _owner._cellWidth;
+                _owner._imeY = _owner._buffer.CursorRow * _owner._cellHeight;
+            }
+
+            RaiseCursorRectangleChanged();
+            _owner.ForceImmPosition();
+            _owner.InvalidateVisual();
+        }
+
+        public void NotifyCursorMoved() => RaiseCursorRectangleChanged();
     }
 }

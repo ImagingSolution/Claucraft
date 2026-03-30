@@ -941,12 +941,8 @@ public partial class MainWindow : Window
             {
                 var terminal = _children[_activeChildIndex].Terminal;
                 var snippetText = textBox.Text.Replace("\\r", "\r");
-                if (terminal.IsDocumentView && terminal.IsExpanded)
-                    terminal.AppendToExpandedInput(snippetText);
-                else if (terminal.IsDocumentView)
+                if (terminal.IsDocumentView)
                     terminal.SetInputText(snippetText);
-                else if (terminal.IsExpanded)
-                    terminal.AppendToExpandedInput(snippetText);
                 else
                     terminal.SendText(snippetText);
                 BringToFront(_activeChildIndex);

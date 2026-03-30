@@ -23,34 +23,148 @@ public partial class UsageChartWindow : Window
 
     private List<DailyData> LoadData()
     {
-        var data = new List<DailyData>();
+        var lookup = new Dictionary<string, (int messages, int toolCalls, HashSet<string> sessions)>();
+        var today = DateTime.Today;
+        var startDate = today.AddDays(-13);
+
+        // Initialize 14-day slots
+        for (int i = 0; i < 14; i++)
+        {
+            string dateStr = startDate.AddDays(i).ToString("yyyy-MM-dd");
+            lookup[dateStr] = (0, 0, new HashSet<string>());
+        }
+
+        // First try stats-cache.json for dates it covers
+        string? lastComputedDate = null;
         try
         {
-            string path = System.IO.Path.Combine(
+            string cachePath = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 ".claude", "stats-cache.json");
-            if (!System.IO.File.Exists(path)) return data;
-
-            string json = System.IO.File.ReadAllText(path);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("dailyActivity", out var arr)) return data;
-
-            foreach (var item in arr.EnumerateArray())
+            if (File.Exists(cachePath))
             {
-                data.Add(new DailyData(
-                    item.GetProperty("date").GetString() ?? "",
-                    item.TryGetProperty("messageCount", out var mc) ? mc.GetInt32() : 0,
-                    item.TryGetProperty("toolCallCount", out var tc) ? tc.GetInt32() : 0,
-                    item.TryGetProperty("sessionCount", out var sc) ? sc.GetInt32() : 0
-                ));
+                string json = File.ReadAllText(cachePath);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                if (root.TryGetProperty("lastComputedDate", out var lcd))
+                    lastComputedDate = lcd.GetString();
+
+                if (root.TryGetProperty("dailyActivity", out var arr))
+                {
+                    foreach (var item in arr.EnumerateArray())
+                    {
+                        string date = item.GetProperty("date").GetString() ?? "";
+                        if (lookup.ContainsKey(date))
+                        {
+                            int mc = item.TryGetProperty("messageCount", out var mcv) ? mcv.GetInt32() : 0;
+                            int tc = item.TryGetProperty("toolCallCount", out var tcv) ? tcv.GetInt32() : 0;
+                            int sc = item.TryGetProperty("sessionCount", out var scv) ? scv.GetInt32() : 0;
+                            var sessions = new HashSet<string>();
+                            for (int s = 0; s < sc; s++) sessions.Add($"cache_{date}_{s}");
+                            lookup[date] = (mc, tc, sessions);
+                        }
+                    }
+                }
             }
         }
         catch { }
 
-        // Last 14 days
-        return data.TakeLast(14).ToList();
+        // Determine which dates need to be filled from session JSONL files
+        DateTime scanFrom = startDate;
+        if (lastComputedDate != null &&
+            DateTime.TryParseExact(lastComputedDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var lcd2))
+        {
+            // Only scan dates after lastComputedDate (cache covers earlier dates)
+            if (lcd2 >= startDate)
+                scanFrom = lcd2.AddDays(1);
+        }
+
+        // Scan session JSONL files for dates not covered by cache
+        if (scanFrom <= today)
+        {
+            try
+            {
+                string projectsDir = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".claude", "projects");
+                if (Directory.Exists(projectsDir))
+                {
+                    foreach (var projDir in Directory.GetDirectories(projectsDir))
+                    {
+                        foreach (var jsonlFile in Directory.GetFiles(projDir, "*.jsonl"))
+                        {
+                            // Skip files older than our scan range
+                            var fileInfo = new FileInfo(jsonlFile);
+                            if (fileInfo.LastWriteTime.Date < scanFrom) continue;
+
+                            string sessionId = System.IO.Path.GetFileNameWithoutExtension(jsonlFile);
+                            try
+                            {
+                                using var reader = new StreamReader(jsonlFile, System.Text.Encoding.UTF8);
+                                string? line;
+                                while ((line = reader.ReadLine()) != null)
+                                {
+                                    if (line.Length < 10) continue;
+
+                                    using var lineDoc = JsonDocument.Parse(line);
+                                    var obj = lineDoc.RootElement;
+
+                                    if (!obj.TryGetProperty("type", out var typeProp)) continue;
+                                    string? type = typeProp.GetString();
+                                    if (type != "user" && type != "assistant") continue;
+
+                                    if (!obj.TryGetProperty("timestamp", out var tsProp)) continue;
+                                    string? ts = tsProp.GetString();
+                                    if (ts == null || ts.Length < 10) continue;
+
+                                    string dateKey = ts[..10]; // yyyy-MM-dd
+                                    if (!lookup.ContainsKey(dateKey)) continue;
+                                    if (DateTime.TryParseExact(dateKey, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt) && dt < scanFrom)
+                                        continue;
+
+                                    var entry = lookup[dateKey];
+
+                                    if (type == "user")
+                                    {
+                                        entry.messages++;
+                                        entry.sessions.Add(sessionId);
+                                    }
+                                    else if (type == "assistant")
+                                    {
+                                        // Count tool_use in content array
+                                        if (obj.TryGetProperty("message", out var msg) &&
+                                            msg.TryGetProperty("content", out var content) &&
+                                            content.ValueKind == JsonValueKind.Array)
+                                        {
+                                            foreach (var c in content.EnumerateArray())
+                                            {
+                                                if (c.TryGetProperty("type", out var ct) && ct.GetString() == "tool_use")
+                                                    entry.toolCalls++;
+                                            }
+                                        }
+                                    }
+
+                                    lookup[dateKey] = entry;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // Build result
+        var result = new List<DailyData>();
+        for (int i = 0; i < 14; i++)
+        {
+            string dateStr = startDate.AddDays(i).ToString("yyyy-MM-dd");
+            var entry = lookup[dateStr];
+            result.Add(new DailyData(dateStr, entry.messages, entry.toolCalls, entry.sessions.Count));
+        }
+        return result;
     }
 
     private void DrawChart()
