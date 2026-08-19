@@ -26,8 +26,9 @@ public static class SessionService
 {
     /// <summary>
     /// Get the sessions of a project folder, listing what Claude Code's /resume picker lists:
-    /// every non-sidechain transcript in ~/.claude/projects/{folder}/ that holds at least one
-    /// message, most recently modified first. Transcripts are only ever read, never written.
+    /// every transcript in ~/.claude/projects/{folder}/ that holds at least one message and that
+    /// /resume does not hide (see <see cref="IsHiddenFromResume"/>), most recently modified first.
+    /// Transcripts are only ever read, never written.
     /// </summary>
     public static Task<List<SessionInfo>> GetSessionsForProjectAsync(string projectFolder)
     {
@@ -93,10 +94,26 @@ public static class SessionService
         public bool IsSidechain;
         public bool SeenFirstMessage;
         public bool HasMessages;
+
+        // What /resume hides a session for. Everything but TailEntrypoint is read from the head.
+        public string? HeadEntrypoint;
+        public string? TailEntrypoint;      // only consulted when the head carries no entrypoint
+        public string? TeamName;
+        public string? SessionKind;
+        public bool SessionKindResolved;    // taken from the first entry carrying a parentUuid
+        public bool IsLoopSession;
+        public bool LoopChecked;
     }
+
+    /// <summary>Entrypoints of transcripts a program drove, not someone typing into the CLI.</summary>
+    private static readonly HashSet<string> ProgrammaticEntrypoints =
+        new(StringComparer.Ordinal) { "sdk-cli", "sdk-ts", "sdk-py" };
 
     /// <summary>Lines read from the head of a transcript before giving up on finding the first prompt.</summary>
     private const int HeadScanLines = 200;
+
+    /// <summary>Bytes at the head of a transcript that /resume inspects when deciding to hide it.</summary>
+    private const long HeadScanBytes = 64 * 1024;
 
     /// <summary>Bytes read from the tail of a transcript to pick up the newest title entries.</summary>
     private const long TailScanBytes = 256 * 1024;
@@ -109,15 +126,23 @@ public static class SessionService
         using (var reader = new StreamReader(stream, Encoding.UTF8))
         {
             int lineCount = 0;
+            long headBytes = 0;
             while (!reader.EndOfStream && lineCount < HeadScanLines)
             {
                 string? line = reader.ReadLine();
+                if (line == null) break;
+
+                // The hide-from-/resume fields only count inside the window /resume itself reads.
+                bool inHead = headBytes < HeadScanBytes;
+                headBytes += Encoding.UTF8.GetByteCount(line) + 1;
+
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 lineCount++;
 
-                ScanLine(line, scan, captureFirstPrompt: true);
+                ScanLine(line, scan, inHead, captureFirstPrompt: true);
 
-                if (scan.Cwd != null && scan.FirstPrompt != null && scan.SeenFirstMessage)
+                // Past the head window there is nothing left to learn once the first prompt is in hand.
+                if (!inHead && scan.Cwd != null && scan.FirstPrompt != null && scan.SeenFirstMessage)
                     break;
             }
         }
@@ -129,6 +154,9 @@ public static class SessionService
         if (scan.IsSidechain || !scan.HasMessages)
             return null;
 
+        if (IsHiddenFromResume(scan))
+            return null;
+
         string? title = scan.CustomTitle ?? scan.AiTitle ?? scan.SummaryRecord;
 
         return new SessionInfo(sessionId, scan.Cwd, CleanupPromptText(scan.FirstPrompt),
@@ -136,6 +164,26 @@ public static class SessionService
         {
             Title = CleanupPromptText(title)
         };
+    }
+
+    /// <summary>
+    /// The rest of what /resume keeps out of its picker: transcripts an SDK entrypoint wrote
+    /// (hooks, skills and other headless runs the user never started), team sessions, daemon
+    /// sessions, and sessions opened by /loop.
+    /// </summary>
+    private static bool IsHiddenFromResume(SessionScan scan)
+    {
+        if (!string.IsNullOrEmpty(scan.TeamName))
+            return true;
+
+        if (scan.SessionKind == "daemon" || scan.SessionKind == "daemon-worker")
+            return true;
+
+        string? entrypoint = scan.HeadEntrypoint ?? scan.TailEntrypoint;
+        if (entrypoint != null && ProgrammaticEntrypoints.Contains(entrypoint))
+            return true;
+
+        return scan.IsLoopSession;
     }
 
     /// <summary>Open a transcript in a way that tolerates the CLI writing to it at the same time.</summary>
@@ -161,7 +209,7 @@ public static class SessionService
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 // Only a scan that started at byte 0 can tell which user message came first.
-                ScanLine(line, scan, captureFirstPrompt: !startsMidFile);
+                ScanLine(line, scan, inHead: false, captureFirstPrompt: !startsMidFile);
             }
         }
         catch (Exception ex)
@@ -170,7 +218,7 @@ public static class SessionService
         }
     }
 
-    private static void ScanLine(string line, SessionScan scan, bool captureFirstPrompt)
+    private static void ScanLine(string line, SessionScan scan, bool inHead, bool captureFirstPrompt)
     {
         try
         {
@@ -180,6 +228,26 @@ public static class SessionService
 
             if (scan.Cwd == null && root.TryGetProperty("cwd", out var cwdProp))
                 scan.Cwd = cwdProp.GetString();
+
+            if (inHead)
+            {
+                scan.HeadEntrypoint ??= ReadString(root, "entrypoint");
+                scan.TeamName ??= ReadString(root, "teamName");
+
+                if (!scan.SessionKindResolved && root.TryGetProperty("parentUuid", out _))
+                {
+                    scan.SessionKindResolved = true;
+                    scan.SessionKind = ReadString(root, "sessionKind");
+                }
+
+                // Any sidechain entry in the head marks the whole transcript as a subagent one.
+                if (!scan.IsSidechain && IsTrue(root, "isSidechain"))
+                    scan.IsSidechain = true;
+            }
+            else
+            {
+                scan.TailEntrypoint = ReadString(root, "entrypoint") ?? scan.TailEntrypoint;
+            }
 
             string? type = root.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;
 
@@ -206,13 +274,15 @@ public static class SessionService
             }
 
             scan.HasMessages = true;
+            scan.SeenFirstMessage = true;
 
-            // A transcript counts as a subagent one when its very first message is a sidechain message.
-            if (!scan.SeenFirstMessage)
+            // /resume hides sessions opened by /loop, judged from the first real user message.
+            if (inHead && !scan.LoopChecked && type == "user"
+                && !IsTrue(root, "isMeta") && !IsTrue(root, "isCompactSummary")
+                && !line.Contains("\"tool_result\"", StringComparison.Ordinal))
             {
-                scan.SeenFirstMessage = true;
-                scan.IsSidechain = root.TryGetProperty("isSidechain", out var sideProp)
-                                   && sideProp.ValueKind == JsonValueKind.True;
+                scan.LoopChecked = true;
+                scan.IsLoopSession = line.Contains("<command-name>/loop</command-name>", StringComparison.Ordinal);
             }
 
             if (!captureFirstPrompt || scan.FirstPrompt != null || type != "user") return;
@@ -240,6 +310,9 @@ public static class SessionService
         }
         catch { }
     }
+
+    private static bool IsTrue(JsonElement root, string name)
+        => root.TryGetProperty(name, out var prop) && prop.ValueKind == JsonValueKind.True;
 
     private static string? ReadString(JsonElement root, string name)
     {
