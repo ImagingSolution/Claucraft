@@ -16,6 +16,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Claucraft.Services;
 using Claucraft.Terminal;
 
@@ -147,6 +148,7 @@ public partial class MainWindow : Window
         RefreshSessionList();
         RefreshFileTree();
         FileTree.SelectionChanged += OnFileTreeSelectionChanged;
+        HookFileTreeDrag();
 
         // Probe `--version` off the UI thread; labels fill in as results arrive
         _ = DetectProviderVersionsAsync();
@@ -903,6 +905,97 @@ public partial class MainWindow : Window
             FilePreviewBorder.IsVisible = true;
         }
         catch { FilePreviewBorder.IsVisible = false; }
+    }
+
+
+    // ── Explorer → terminal drag & drop ──
+
+    private Point _treeDragOrigin;
+    private FileTreeNode? _treeDragCandidate;
+    private bool _treeDragActive;
+
+    private void HookFileTreeDrag()
+    {
+        // Tunnel: TreeViewItem handles pointer events for selection, so bubbling never reaches us
+        FileTree.AddHandler(InputElement.PointerPressedEvent, OnFileTreePointerPressed, RoutingStrategies.Tunnel);
+        FileTree.AddHandler(InputElement.PointerMovedEvent, OnFileTreePointerMoved, RoutingStrategies.Tunnel);
+        FileTree.AddHandler(InputElement.PointerReleasedEvent, OnFileTreePointerReleased, RoutingStrategies.Tunnel);
+    }
+
+    private void OnFileTreePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _treeDragCandidate = null;
+        if (!e.GetCurrentPoint(FileTree).Properties.IsLeftButtonPressed) return;
+
+        var node = FindTreeNode(e.Source);
+        if (node == null || string.IsNullOrEmpty(node.FullPath)) return;
+
+        _treeDragOrigin = e.GetPosition(FileTree);
+        _treeDragCandidate = node;
+    }
+
+    private async void OnFileTreePointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_treeDragCandidate == null || _treeDragActive) return;
+
+        if (!e.GetCurrentPoint(FileTree).Properties.IsLeftButtonPressed)
+        {
+            _treeDragCandidate = null;
+            return;
+        }
+
+        var pos = e.GetPosition(FileTree);
+        if (Math.Abs(pos.X - _treeDragOrigin.X) < 4 && Math.Abs(pos.Y - _treeDragOrigin.Y) < 4)
+            return;
+
+        var node = _treeDragCandidate;
+        _treeDragCandidate = null;
+        _treeDragActive = true;
+        try
+        {
+            var data = await BuildTreeDragDataAsync(node);
+            await DragDrop.DoDragDrop(e, data, DragDropEffects.Copy | DragDropEffects.Link);
+        }
+        catch { /* drag aborted */ }
+        finally { _treeDragActive = false; }
+    }
+
+    private void OnFileTreePointerReleased(object? sender, PointerReleasedEventArgs e)
+        => _treeDragCandidate = null;
+
+    private async Task<DataObject> BuildTreeDragDataAsync(FileTreeNode node)
+    {
+        var data = new DataObject();
+        var path = node.FullPath;
+
+        // Own format + plain text keep the drop working even when the storage
+        // lookup below fails (UNC paths, permission issues, …)
+        data.Set(TerminalControl.ExplorerPathFormat, path);
+        data.Set(DataFormats.Text, path.Contains(' ') ? "\"" + path + "\"" : path);
+
+        try
+        {
+            IStorageItem? item = node.IsDirectory
+                ? await StorageProvider.TryGetFolderFromPathAsync(path)
+                : await StorageProvider.TryGetFileFromPathAsync(path);
+            if (item != null)
+                data.Set(DataFormats.Files, new[] { item });
+        }
+        catch { /* keep the text-only payload */ }
+
+        return data;
+    }
+
+    private static FileTreeNode? FindTreeNode(object? source)
+    {
+        var visual = source as Visual;
+        while (visual != null)
+        {
+            if (visual is Control { DataContext: FileTreeNode node })
+                return node;
+            visual = visual.GetVisualParent();
+        }
+        return null;
     }
 
     private FileTreeNode? GetSelectedTreeNode()

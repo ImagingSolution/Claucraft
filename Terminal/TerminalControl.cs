@@ -3457,45 +3457,111 @@ public class TerminalControl : Control, IDisposable
         _inputTextBox.Focus();
     }
 
+    /// <summary>
+    /// Drag payload format used by the in-app Explorer tree: one full path per line.
+    /// </summary>
+    public const string ExplorerPathFormat = "Claucraft.FilePaths";
+
+    private static bool HasDroppablePaths(IDataObject data)
+        => data.Contains(DataFormats.Files)
+        || data.Contains(ExplorerPathFormat)
+        || data.Contains(DataFormats.Text);
+
     private void OnFileDragOver(object? sender, DragEventArgs e)
     {
-        if (e.Data.Contains(DataFormats.Files))
-            e.DragEffects = DragDropEffects.Copy;
-        else
-            e.DragEffects = DragDropEffects.None;
+        e.DragEffects = HasDroppablePaths(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void OnFileDrop(object? sender, DragEventArgs e)
     {
-        if (!e.Data.Contains(DataFormats.Files)) return;
+        var text = BuildDroppedText(e.Data);
+        if (string.IsNullOrEmpty(text)) return;
 
-        var files = e.Data.GetFiles();
-        if (files == null) return;
+        // Dropping onto an inactive MDI child should bring it to the front
+        Clicked?.Invoke();
+        ShowInInputArea(text);
+        e.Handled = true;
+    }
 
-        var paths = new System.Text.StringBuilder();
-        foreach (var file in files)
+    private static string BuildDroppedText(IDataObject data)
+    {
+        var paths = new List<string>();
+
+        if (data.Contains(DataFormats.Files))
         {
-            var path = file.Path?.LocalPath;
-            if (string.IsNullOrEmpty(path)) continue;
+            var files = data.GetFiles();
+            if (files != null)
+            {
+                foreach (var file in files)
+                {
+                    var path = file.Path?.LocalPath;
+                    if (!string.IsNullOrEmpty(path))
+                        paths.Add(TrimTrailingSeparator(path));
+                }
+            }
+        }
 
-            if (paths.Length > 0)
-                paths.Append(' ');
+        // Explorer-tree payload (also the fallback when the storage lookup failed)
+        if (paths.Count == 0 && data.Contains(ExplorerPathFormat)
+            && data.Get(ExplorerPathFormat) is string raw)
+        {
+            foreach (var line in raw.Split('\n'))
+            {
+                var path = line.Trim();
+                if (path.Length > 0)
+                    paths.Add(TrimTrailingSeparator(path));
+            }
+        }
+
+        if (paths.Count == 0)
+            return data.Contains(DataFormats.Text) ? (data.GetText() ?? "").Trim() : "";
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var path in paths)
+        {
+            if (sb.Length > 0)
+                sb.Append(' ');
 
             // Quote paths containing spaces
             if (path.Contains(' '))
-                paths.Append('"').Append(path).Append('"');
+                sb.Append('"').Append(path).Append('"');
             else
-                paths.Append(path);
+                sb.Append(path);
         }
+        return sb.ToString();
+    }
 
-        if (paths.Length > 0)
+    /// <summary>
+    /// Drop sources report folders with a trailing separator; it would escape
+    /// the closing quote once the path gets quoted. Roots keep theirs.
+    /// </summary>
+    private static string TrimTrailingSeparator(string path)
+        => path.Length > 3 && (path[^1] == '\\' || path[^1] == '/')
+            ? path.TrimEnd('\\', '/')
+            : path;
+
+    /// <summary>
+    /// Put dropped text into whichever input area is live: the IME box in
+    /// document view, the CLI prompt itself otherwise.
+    /// </summary>
+    private void ShowInInputArea(string text)
+    {
+        if (_isDocumentView)
         {
-            _pty?.WriteInput(paths.ToString());
-            _inputTextBox.Focus();
+            var current = _inputTextBox.Text ?? "";
+            var caret = Math.Clamp(_inputTextBox.CaretIndex, 0, current.Length);
+            var insert = (caret > 0 && current[caret - 1] != ' ' ? " " + text : text) + " ";
+            _inputTextBox.Text = current.Insert(caret, insert);
+            _inputTextBox.CaretIndex = caret + insert.Length;
+        }
+        else
+        {
+            // Trailing space keeps back-to-back drops from gluing together
+            _pty?.WriteInput(text + " ");
         }
 
-        e.Handled = true;
+        _inputTextBox.Focus();
     }
 
     public void FocusTerminal()
