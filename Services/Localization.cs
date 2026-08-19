@@ -148,6 +148,31 @@ public static class Loc
         ["AlwaysAllow"] = new() { ["English"] = "Always allow", ["日本語"] = "常に許可" },
         ["DenyAction"] = new() { ["English"] = "No, deny", ["日本語"] = "いいえ、拒否" },
         ["ToggleDocView"] = new() { ["English"] = "Toggle Chat View", ["日本語"] = "チャットビュー切替" },
+
+        // ── AI Provider ──
+        ["AiProvider"] = new() { ["English"] = "AI Provider", ["日本語"] = "AI プロバイダ" },
+        ["ExecutableFile"] = new() { ["English"] = "Executable", ["日本語"] = "実行ファイル" },
+        ["NewArgs"] = new() { ["English"] = "New Session Args", ["日本語"] = "新規起動引数" },
+        ["ContinueArgs"] = new() { ["English"] = "Continue Args", ["日本語"] = "継続起動引数" },
+        ["ResumeArgs"] = new() { ["English"] = "Resume Args", ["日本語"] = "再開引数" },
+        ["RestoreDefaults"] = new() { ["English"] = "Restore Defaults", ["日本語"] = "既定に戻す" },
+        ["OpenConfigFolder"] = new() { ["English"] = "Open Config Folder", ["日本語"] = "設定フォルダを開く" },
+        ["NotInstalled"] = new() { ["English"] = "not found", ["日本語"] = "未検出" },
+        ["CannotSwitchWhileRunning"] = new()
+        {
+            ["English"] = "Cannot switch AI while sessions are running. Close all windows and try again.",
+            ["日本語"] = "稼働中のセッションがあるため AI を切り替えられません。すべてのウィンドウを閉じてから再度お試しください。",
+        },
+        ["CannotSwitchTitle"] = new() { ["English"] = "Cannot Switch AI", ["日本語"] = "AI を切り替えできません" },
+        ["ContinueSession"] = new() { ["English"] = "Continue", ["日本語"] = "継続起動" },
+        ["ContinueSessionTooltip"] = new() { ["English"] = "Continue the most recent session", ["日本語"] = "直前のセッションを継続" },
+        ["SwitchAiTooltip"] = new() { ["English"] = "Switch AI provider", ["日本語"] = "AI プロバイダを切り替え" },
+        ["OK"] = new() { ["English"] = "OK", ["日本語"] = "OK" },
+        // {0} = provider name
+        ["NewSessionFmt"] = new() { ["English"] = "New {0}", ["日本語"] = "新規 {0}" },
+        ["NewSessionTooltipFmt"] = new() { ["English"] = "Open new {0} session", ["日本語"] = "新しい {0} セッションを開く" },
+        // {0} = config directory name, e.g. ".claude"
+        ["OpenConfigDirFmt"] = new() { ["English"] = "Open {0} Folder", ["日本語"] = "{0} フォルダを開く" },
     };
 
     public static string Get(string key)

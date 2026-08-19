@@ -36,7 +36,15 @@ public class UsageTracker : IDisposable
 
     public void Start()
     {
+        if (_timer != null) return;
         _timer = new Timer(_ => UpdateUsage(), null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+    }
+
+    /// <summary>Stops polling. Used when the active CLI has no stats-cache.json to read.</summary>
+    public void Stop()
+    {
+        _timer?.Dispose();
+        _timer = null;
     }
 
     private void UpdateUsage()

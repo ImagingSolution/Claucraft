@@ -9,13 +9,19 @@ namespace Claucraft.Services;
 
 public enum MessageRole { User, Assistant, System }
 
+public record AskUserOption(string Label, string Description);
+public record AskUserQuestionItem(string Question, string Header, List<AskUserOption> Options, bool MultiSelect);
+public record AskUserData(List<AskUserQuestionItem> Questions, Dictionary<string, string> Answers, Dictionary<string, string>? Notes);
+
 public record ConversationMessage(
     MessageRole Role,
     string Text,
     DateTime? Timestamp,
     string? ToolName,
     bool IsToolUse,
-    bool IsThinking
+    bool IsThinking,
+    AskUserData? AskUser = null,
+    bool IsToolRejection = false
 );
 
 /// <summary>
@@ -33,6 +39,7 @@ public static class SessionMessageReader
 
         try
         {
+            var toolUseIdToName = new Dictionary<string, string>();
             using var stream = new FileStream(jsonlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream, Encoding.UTF8);
 
@@ -41,7 +48,7 @@ public static class SessionMessageReader
                 var line = reader.ReadLine();
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                var msg = ParseLine(line);
+                var msg = ParseLine(line, toolUseIdToName);
                 if (msg != null)
                     messages.Add(msg);
             }
@@ -74,6 +81,22 @@ public static class SessionMessageReader
                 continue;
             }
 
+            // AskUser messages: keep as-is (don't consolidate)
+            if (msg.AskUser != null)
+            {
+                result.Add(msg);
+                i++;
+                continue;
+            }
+
+            // Tool rejection messages: keep as-is
+            if (msg.IsToolRejection)
+            {
+                result.Add(msg);
+                i++;
+                continue;
+            }
+
             // Consolidate consecutive assistant text messages into one
             if (msg.Role == MessageRole.Assistant && !msg.IsToolUse && !msg.IsThinking)
             {
@@ -82,7 +105,7 @@ public static class SessionMessageReader
                 i++;
 
                 while (i < messages.Count && messages[i].Role == MessageRole.Assistant
-                    && !messages[i].IsThinking)
+                    && !messages[i].IsThinking && messages[i].AskUser == null)
                 {
                     if (messages[i].IsToolUse && !messages[i].Text.Contains('\n'))
                     {
@@ -131,6 +154,7 @@ public static class SessionMessageReader
 
         try
         {
+            var toolUseIdToName = new Dictionary<string, string>();
             using var stream = new FileStream(jsonlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream, Encoding.UTF8);
 
@@ -143,7 +167,7 @@ public static class SessionMessageReader
                 if (currentLine <= lastLineCount) continue;
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                var msg = ParseLine(line);
+                var msg = ParseLine(line, toolUseIdToName);
                 if (msg != null)
                     newMessages.Add(msg);
             }
@@ -234,7 +258,7 @@ public static class SessionMessageReader
         return null;
     }
 
-    private static ConversationMessage? ParseLine(string line)
+    private static ConversationMessage? ParseLine(string line, Dictionary<string, string> toolUseIdToName)
     {
         try
         {
@@ -261,11 +285,25 @@ public static class SessionMessageReader
 
             if (type == "user")
             {
+                // Check for toolUseResult (AskUserQuestion answer or tool rejection)
+                if (root.TryGetProperty("toolUseResult", out var toolUseResultProp))
+                {
+                    if (toolUseResultProp.ValueKind == JsonValueKind.Object
+                        && toolUseResultProp.TryGetProperty("questions", out _))
+                    {
+                        return ParseAskUserAnswer(toolUseResultProp, timestamp);
+                    }
+                    else if (toolUseResultProp.ValueKind == JsonValueKind.String
+                        && toolUseResultProp.GetString() == "User rejected tool use")
+                    {
+                        return ParseToolRejection(root, timestamp, toolUseIdToName);
+                    }
+                }
                 return ParseUserMessage(root, timestamp);
             }
             else if (type == "assistant")
             {
-                return ParseAssistantMessage(root, timestamp);
+                return ParseAssistantMessage(root, timestamp, toolUseIdToName);
             }
             else if (type == "progress")
             {
@@ -308,7 +346,7 @@ public static class SessionMessageReader
         return new ConversationMessage(MessageRole.User, text, timestamp, null, false, false);
     }
 
-    private static ConversationMessage? ParseAssistantMessage(JsonElement root, DateTime? timestamp)
+    private static ConversationMessage? ParseAssistantMessage(JsonElement root, DateTime? timestamp, Dictionary<string, string> toolUseIdToName)
     {
         if (!root.TryGetProperty("message", out var msgProp)) return null;
         if (!msgProp.TryGetProperty("content", out var contentProp)) return null;
@@ -355,14 +393,22 @@ public static class SessionMessageReader
                 isToolUse = true;
                 if (item.TryGetProperty("name", out var nameEl))
                     toolName = nameEl.GetString();
+
+                // Populate tool_use_id → name mapping for rejection lookup
+                if (item.TryGetProperty("id", out var idEl))
+                {
+                    var id = idEl.GetString();
+                    if (id != null && toolName != null)
+                        toolUseIdToName[id] = toolName;
+                }
             }
         }
 
         // If only thinking content, mark as thinking
         if (textParts.Count == 0 && !isToolUse) return null;
 
-        // For tool use without text, create a compact message
-        if (textParts.Count == 0 && isToolUse)
+        // Suppress text accompanying tool_use (narration like "Now modify...", etc.)
+        if (isToolUse)
         {
             return new ConversationMessage(MessageRole.Assistant, $"[Tool: {toolName}]", timestamp, toolName, true, false);
         }
@@ -398,6 +444,93 @@ public static class SessionMessageReader
             progressText = progressText[..200] + "...";
 
         return new ConversationMessage(MessageRole.System, progressText, timestamp, null, true, false);
+    }
+
+    private static ConversationMessage? ParseAskUserAnswer(JsonElement toolUseResult, DateTime? timestamp)
+    {
+        try
+        {
+            var questions = new List<AskUserQuestionItem>();
+            var answers = new Dictionary<string, string>();
+            Dictionary<string, string>? notes = null;
+
+            if (toolUseResult.TryGetProperty("questions", out var questionsProp) && questionsProp.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var q in questionsProp.EnumerateArray())
+                {
+                    var question = q.TryGetProperty("question", out var qProp) ? qProp.GetString() ?? "" : "";
+                    var header = q.TryGetProperty("header", out var hProp) ? hProp.GetString() ?? "" : "";
+                    var multiSelect = q.TryGetProperty("multiSelect", out var msProp) && msProp.GetBoolean();
+
+                    var options = new List<AskUserOption>();
+                    if (q.TryGetProperty("options", out var optsProp) && optsProp.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var opt in optsProp.EnumerateArray())
+                        {
+                            var label = opt.TryGetProperty("label", out var lProp) ? lProp.GetString() ?? "" : "";
+                            var desc = opt.TryGetProperty("description", out var dProp) ? dProp.GetString() ?? "" : "";
+                            options.Add(new AskUserOption(label, desc));
+                        }
+                    }
+                    questions.Add(new AskUserQuestionItem(question, header, options, multiSelect));
+                }
+            }
+
+            if (toolUseResult.TryGetProperty("answers", out var answersProp) && answersProp.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in answersProp.EnumerateObject())
+                    answers[prop.Name] = prop.Value.GetString() ?? "";
+            }
+
+            if (toolUseResult.TryGetProperty("annotations", out var annotProp) && annotProp.ValueKind == JsonValueKind.Object)
+            {
+                notes = new Dictionary<string, string>();
+                foreach (var prop in annotProp.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind == JsonValueKind.Object
+                        && prop.Value.TryGetProperty("notes", out var notesProp))
+                    {
+                        notes[prop.Name] = notesProp.GetString() ?? "";
+                    }
+                }
+            }
+
+            if (questions.Count == 0) return null;
+
+            var askUserData = new AskUserData(questions, answers, notes);
+            return new ConversationMessage(
+                MessageRole.Assistant, "", timestamp, "AskUserQuestion", false, false, askUserData);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static ConversationMessage? ParseToolRejection(JsonElement root, DateTime? timestamp, Dictionary<string, string> toolUseIdToName)
+    {
+        string? toolName = null;
+        if (root.TryGetProperty("message", out var msgProp)
+            && msgProp.TryGetProperty("content", out var contentProp)
+            && contentProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in contentProp.EnumerateArray())
+            {
+                if (item.TryGetProperty("tool_use_id", out var idProp))
+                {
+                    var id = idProp.GetString();
+                    if (id != null && toolUseIdToName.TryGetValue(id, out var name))
+                        toolName = name;
+                }
+            }
+        }
+
+        var rejectionText = toolName != null
+            ? $"Tool rejected: {toolName}"
+            : "Tool execution rejected";
+
+        return new ConversationMessage(
+            MessageRole.System, rejectionText, timestamp, toolName, false, false, null, true);
     }
 
     private static string? ExtractAllTextContent(JsonElement element, bool skipToolResults = false)

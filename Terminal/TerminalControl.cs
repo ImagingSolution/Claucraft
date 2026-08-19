@@ -95,6 +95,19 @@ public class TerminalControl : Control, IDisposable
     private double _excalidrawCacheMinX, _excalidrawCacheMinY, _excalidrawCacheMaxX, _excalidrawCacheMaxY;
     public bool EnableChartRendering { get; set; } = true;
 
+    /// <summary>
+    /// Whether to watch for the CLI's permission prompt and offer the Yes/Always/No overlay.
+    /// The detection strings and the 1/2/3 replies are Claude Code specific, so other CLIs
+    /// turn this off.
+    /// </summary>
+    public bool EnablePermissionOverlay { get; set; } = true;
+
+    /// <summary>
+    /// Command written to the PTY on shutdown, e.g. "/exit\r". Empty means terminate the
+    /// process directly instead.
+    /// </summary>
+    public string ExitCommand { get; set; } = "/exit\r";
+
     // Document view mode state
     private bool _isDocumentView;
     private Controls.DocumentViewPanel? _docViewPanel;
@@ -1979,10 +1992,16 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.StartPolling();
             }
 
-            // Start permission check timer
-            _permissionCheckTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-            _permissionCheckTimer.Tick += OnPermissionCheckTick;
-            _permissionCheckTimer.Start();
+            // Start permission check timer (Claude Code only — other CLIs prompt differently)
+            if (EnablePermissionOverlay)
+            {
+                if (_permissionCheckTimer == null)
+                {
+                    _permissionCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+                    _permissionCheckTimer.Tick += OnPermissionCheckTick;
+                }
+                _permissionCheckTimer.Start();
+            }
         }
         else
         {
@@ -2003,7 +2022,7 @@ public class TerminalControl : Control, IDisposable
 
     private void OnPermissionCheckTick(object? sender, EventArgs e)
     {
-        if (!_isDocumentView) return;
+        if (!_isDocumentView || !EnablePermissionOverlay) return;
 
         // Scan last 10 rows of terminal buffer for permission prompts
         int totalRows = _buffer.Scrollback.Count + _buffer.Rows;
@@ -3491,7 +3510,11 @@ public class TerminalControl : Control, IDisposable
     public async Task<bool> SendExitAndWaitAsync(int timeoutMs = 3000)
     {
         if (_pty == null || !_pty.IsRunning) return true;
-        _pty.WriteInput("/exit\r");
+
+        // CLIs without a quit command are torn down by disposing the pseudo console
+        if (string.IsNullOrEmpty(ExitCommand)) return false;
+
+        _pty.WriteInput(ExitCommand);
         return await Task.Run(() => _pty.WaitForExitTimeout(timeoutMs));
     }
 

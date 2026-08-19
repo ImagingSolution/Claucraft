@@ -11,6 +11,7 @@ using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
@@ -35,9 +36,14 @@ public partial class MainWindow : Window
     private int _activeChildIndex = -1;
     private readonly List<MdiChildInfo> _children = new();
     private readonly AppSettings _settings;
+    private readonly CliProviderService _cli;
     // DocView is now embedded in TerminalControl, not in MainWindow
 
     private bool _suppressFolderSelectionChanged;
+    private bool _suppressProviderChanged;
+    private readonly List<ProviderRadioRow> _providerRadioRows = new();
+
+    private record ProviderRadioRow(RadioButton Radio, TextBlock Label, TextBlock Hint, CliProvider Provider);
 
     // Sidebar state
     private SidebarPanel _activeSidePanel = SidebarPanel.None;
@@ -85,6 +91,9 @@ public partial class MainWindow : Window
     {
         public string? ProjectFolder { get; set; }
         public string? FirstInput { get; set; }
+
+        /// <summary>Session this window resumed, so the Session box can show it as selected.</summary>
+        public string? SessionId { get; set; }
     };
 
     public MainWindow()
@@ -95,7 +104,17 @@ public partial class MainWindow : Window
         _snippetStore = SnippetStore.Load();
         _isDark = _settings.IsDark;
 
-        _usageTracker.Start();
+        _cli = new CliProviderService { ActiveId = _settings.CliProviderId };
+        // A retired CLI (e.g. gemini -> antigravity) is remapped on assignment; persist it
+        // so the old id does not sit in appsettings.json forever.
+        if (_settings.CliProviderId != _cli.ActiveId)
+        {
+            _settings.CliProviderId = _cli.ActiveId;
+            _settings.Save();
+        }
+        BuildProviderRadios();
+        InitializeProviderFieldHandlers();
+
         _usageTracker.Updated += OnUsageUpdated;
 
 
@@ -129,6 +148,9 @@ public partial class MainWindow : Window
         RefreshFileTree();
         FileTree.SelectionChanged += OnFileTreeSelectionChanged;
 
+        // Probe `--version` off the UI thread; labels fill in as results arrive
+        _ = DetectProviderVersionsAsync();
+
         // Show welcome page or auto-launch
         if (_settings.ShowWelcomePage)
         {
@@ -147,10 +169,9 @@ public partial class MainWindow : Window
         // Toolbar
         LblProject.Text = Loc.Get("Project");
         CmbProjectFolder.PlaceholderText = Loc.Get("SelectProjectFolder");
-        LblNewClaude.Text = Loc.Get("NewClaude");
         LblSession.Text = Loc.Get("Session");
         CmbSessions.PlaceholderText = Loc.Get("SelectSession");
-        LblResume.Text = Loc.Get("Resume");
+        // LblNewClaude / LblResume depend on the active provider — set by ApplyProviderUi()
 
         // Status Bar - git info updated via RefreshGitInfo()
 
@@ -184,9 +205,18 @@ public partial class MainWindow : Window
         LblFontSize.Text = Loc.Get("FontSize");
         LblInitialPrompt.Text = Loc.Get("InitialPrompt");
         LblApplySettings.Text = Loc.Get("Apply");
-        LblOpenClaudeFolder.Text = Loc.Get("OpenClaudeFolder");
         ChkShowWelcomePage.Content = Loc.Get("ShowWelcomePage");
         ChkEnableCharts.Content = Loc.Get("EnableCharts");
+
+        // AI provider panel (LblOpenClaudeFolder is provider-dependent — ApplyProviderUi)
+        LblAiProvider.Text = Loc.Get("AiProvider");
+        LblProviderExe.Text = Loc.Get("ExecutableFile");
+        LblProviderNewArgs.Text = Loc.Get("NewArgs");
+        LblProviderContinueArgs.Text = Loc.Get("ContinueArgs");
+        LblProviderResumeArgs.Text = Loc.Get("ResumeArgs");
+        LblRestoreDefaults.Text = Loc.Get("RestoreDefaults");
+        LblOpenConfigFolder.Text = Loc.Get("OpenConfigFolder");
+        ToolTip.SetTip(BtnAiSelector, Loc.Get("SwitchAiTooltip"));
 
         // Snippets panel
         LblAddSnippet.Text = Loc.Get("AddSnippet");
@@ -202,6 +232,310 @@ public partial class MainWindow : Window
         var ver = Assembly.GetExecutingAssembly().GetName().Version;
         var verStr = ver != null ? $"Ver.{ver.Major}.{ver.Minor}.{ver.Build}.{ver.Revision}" : "";
         Title = $"{Loc.Get("AppTitle")}  {verStr}";
+
+        // Labels that embed the AI name, plus feature gating
+        ApplyProviderUi();
+    }
+
+    // ── AI Provider ──
+
+    private void BuildProviderRadios()
+    {
+        PnlProviderRadios.Children.Clear();
+        _providerRadioRows.Clear();
+
+        foreach (var provider in _cli.Providers)
+        {
+            var label = new TextBlock
+            {
+                Text = provider.Name,
+                FontSize = 13,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var hint = new TextBlock
+            {
+                FontSize = 11,
+                Opacity = 0.7,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsVisible = false,
+            };
+
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            content.Children.Add(label);
+            content.Children.Add(hint);
+
+            var radio = new RadioButton
+            {
+                GroupName = "CliProvider",
+                Content = content,
+                Tag = provider.Id,
+                Margin = new Thickness(0, 1),
+            };
+            radio[!RadioButton.ForegroundProperty] = new DynamicResourceExtension("SubtleText");
+            radio.IsCheckedChanged += OnProviderRadioChanged;
+
+            PnlProviderRadios.Children.Add(radio);
+            _providerRadioRows.Add(new ProviderRadioRow(radio, label, hint, provider));
+        }
+    }
+
+    private void OnProviderRadioChanged(object? sender, RoutedEventArgs e)
+    {
+        if (_suppressProviderChanged) return;
+        if (sender is not RadioButton radio || radio.IsChecked != true) return;
+
+        var id = radio.Tag as string ?? "";
+        if (TrySwitchProvider(id)) return;
+
+        // Rejected — put the selection back. Avalonia unchecks the sibling radios after this
+        // event returns, so the restore has to run once that bookkeeping is done.
+        Dispatcher.UIThread.Post(RefreshProviderRadios, DispatcherPriority.Background);
+    }
+
+    /// <summary>Refreshes radio labels, install state and selection without rebuilding controls.</summary>
+    private void RefreshProviderRadios()
+    {
+        _suppressProviderChanged = true;
+        foreach (var row in _providerRadioRows)
+        {
+            row.Label.Text = row.Provider.DisplayName;
+            row.Radio.IsEnabled = row.Provider.IsInstalled;
+            row.Radio.Opacity = row.Provider.IsInstalled ? 1.0 : 0.45;
+            row.Radio.IsChecked = row.Provider.Id == _cli.ActiveId;
+
+            row.Hint.IsVisible = !row.Provider.IsInstalled;
+            row.Hint.Text = $"— {Loc.Get("NotInstalled")}";
+
+            ToolTip.SetTip(row.Radio, row.Provider.IsInstalled
+                ? row.Provider.ResolvedPath
+                : row.Provider.InstallHint);
+        }
+        _suppressProviderChanged = false;
+    }
+
+    private void InitializeProviderFieldHandlers()
+    {
+        TxtProviderExe.LostFocus += (_, _) => SaveProviderField(p => p.Exe = TxtProviderExe.Text?.Trim() ?? "");
+        TxtProviderNewArgs.LostFocus += (_, _) => SaveProviderField(p => p.NewArgs = TxtProviderNewArgs.Text?.Trim() ?? "");
+        TxtProviderContinueArgs.LostFocus += (_, _) => SaveProviderField(p => p.ContinueArgs = TxtProviderContinueArgs.Text?.Trim() ?? "");
+        TxtProviderResumeArgs.LostFocus += (_, _) => SaveProviderField(p => p.ResumeArgs = TxtProviderResumeArgs.Text?.Trim() ?? "");
+    }
+
+    private void SaveProviderField(Action<CliProvider> apply)
+    {
+        var provider = _cli.Active;
+        apply(provider);
+        _cli.Save();
+        // The executable may now point somewhere else — re-detect and refresh the UI.
+        _cli.ResolveExecutables();
+        RefreshProviderRadios();
+        UpdateAiSelector();
+        _ = DetectProviderVersionsAsync();
+    }
+
+    private void LoadProviderFieldsIntoUi()
+    {
+        var p = _cli.Active;
+        TxtProviderExe.Text = p.Exe;
+        TxtProviderNewArgs.Text = p.NewArgs;
+        TxtProviderContinueArgs.Text = p.ContinueArgs;
+        TxtProviderResumeArgs.Text = p.ResumeArgs;
+    }
+
+    private void OnRestoreProviderDefaults(object? sender, RoutedEventArgs e)
+    {
+        if (!_cli.RestoreDefaults(_cli.ActiveId)) return;
+        ApplyProviderUi();
+        _ = DetectProviderVersionsAsync();
+    }
+
+    private void OnOpenProviderConfigFolder(object? sender, RoutedEventArgs e)
+    {
+        var dir = CliProviderService.ConfigFolderPath;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo { FileName = dir, UseShellExecute = true });
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Applies the active provider everywhere: labels, feature gating and live terminals.
+    /// Safe to call repeatedly; it never rebuilds controls.
+    /// </summary>
+    private void ApplyProviderUi()
+    {
+        var provider = _cli.Active;
+        var features = provider.Features;
+
+        // Toolbar
+        LblNewClaude.Text = string.Format(Loc.Get("NewSessionFmt"), provider.Name);
+        ToolTip.SetTip(BtnNewClaude, string.Format(Loc.Get("NewSessionTooltipFmt"), provider.Name));
+
+        // Session row — only Claude-style CLIs expose a session index Claucraft can read.
+        LblSession.IsVisible = features.SessionList;
+        CmbSessions.IsVisible = features.SessionList;
+        if (features.SessionList)
+        {
+            LblResume.Text = Loc.Get("Resume");
+            ToolTip.SetTip(BtnResumeSession, Loc.Get("Resume"));
+            BtnResumeSession.IsEnabled = CmbSessions.SelectedItem is SessionInfo;
+        }
+        else
+        {
+            LblResume.Text = Loc.Get("ContinueSession");
+            ToolTip.SetTip(BtnResumeSession, Loc.Get("ContinueSessionTooltip"));
+            BtnResumeSession.IsEnabled = !string.IsNullOrWhiteSpace(provider.ContinueArgs);
+        }
+
+        // Activity bar — hide what this CLI does not implement
+        BtnActivityDocView.IsVisible = features.ChatView;
+        BtnActivityDiagram.IsVisible = features.DiagramViewer;
+        BtnActivityModeSwitch.IsVisible = features.ModeSwitchButton;
+        BtnActivityCompact.IsVisible = features.CompactButton;
+
+        // Usage tracking reads Claude's stats-cache.json, so it only runs for Claude
+        StatusUsagePanel.IsVisible = features.UsageTracker;
+        if (features.UsageTracker)
+        {
+            _usageTracker.Start();
+        }
+        else
+        {
+            _usageTracker.Stop();
+            StatusUsageText.Text = "";
+            StatusUsageBarFill.Width = 0;
+        }
+
+        // Settings panel
+        var configDir = string.IsNullOrWhiteSpace(provider.ConfigDir) ? "" : provider.ConfigDir;
+        BtnOpenClaudeFolder.IsVisible = configDir.Length > 0;
+        LblOpenClaudeFolder.Text = string.Format(Loc.Get("OpenConfigDirFmt"), configDir);
+        LoadProviderFieldsIntoUi();
+        RefreshProviderRadios();
+
+        UpdateAiSelector();
+
+        foreach (var child in _children)
+            ApplyProviderToTerminal(child.Terminal);
+    }
+
+    private void ApplyProviderToTerminal(TerminalControl terminal)
+    {
+        var features = _cli.Features;
+        terminal.EnablePermissionOverlay = features.PermissionOverlay;
+        terminal.ExitCommand = features.ExitCommand;
+        terminal.EnableChartRendering = _settings.EnableChartRendering && features.DiagramViewer;
+    }
+
+    /// <summary>
+    /// Switches the active AI. Rejected while any terminal is running, because those
+    /// child processes belong to the previous CLI.
+    /// </summary>
+    private bool TrySwitchProvider(string id)
+    {
+        if (string.IsNullOrEmpty(id) || id == _cli.ActiveId) return true;
+
+        if (_children.Count > 0)
+        {
+            ShowMessageDialog(Loc.Get("CannotSwitchTitle"), Loc.Get("CannotSwitchWhileRunning"));
+            return false;
+        }
+
+        _cli.ActiveId = id;
+        _settings.CliProviderId = _cli.ActiveId;
+        _settings.Save();
+
+        ApplyProviderUi();
+        RefreshSessionList();
+        return true;
+    }
+
+    private void UpdateAiSelector()
+    {
+        var provider = _cli.Active;
+        LblAiSelector.Text = provider.DisplayName;
+
+        var installed = _cli.InstalledProviders.ToList();
+        BtnAiSelector.IsEnabled = installed.Count > 0;
+
+        var flyout = new MenuFlyout { Placement = PlacementMode.Top };
+        foreach (var candidate in installed)
+        {
+            var item = new MenuItem { Header = candidate.DisplayName };
+            if (candidate.Id == provider.Id)
+            {
+                item.Icon = new PathIcon
+                {
+                    Data = Geometry.Parse("M9 16.17L4.83 12L3.41 13.41L9 19L21 7L19.59 5.59Z"),
+                    Width = 12,
+                    Height = 12,
+                };
+            }
+            var capturedId = candidate.Id;
+            item.Click += (_, _) => TrySwitchProvider(capturedId);
+            flyout.Items.Add(item);
+        }
+        BtnAiSelector.Flyout = flyout;
+
+        ToolTip.SetTip(BtnAiSelector, provider.IsInstalled
+            ? provider.ResolvedPath
+            : Loc.Get("SwitchAiTooltip"));
+    }
+
+    private async Task DetectProviderVersionsAsync()
+    {
+        try
+        {
+            await _cli.DetectVersionsAsync();
+        }
+        catch { }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            RefreshProviderRadios();
+            UpdateAiSelector();
+        });
+    }
+
+    private void ShowMessageDialog(string title, string message)
+    {
+        var panelBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(240, 240, 245);
+        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(40, 40, 45);
+
+        var text = new TextBlock
+        {
+            Text = message,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 13,
+            Foreground = new SolidColorBrush(fg),
+        };
+        var ok = new Button
+        {
+            Content = Loc.Get("OK"),
+            MinWidth = 88,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+
+        var panel = new StackPanel { Spacing = 18, Margin = new Thickness(22, 20) };
+        panel.Children.Add(text);
+        panel.Children.Add(ok);
+
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 430,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(panelBg),
+            Content = panel,
+        };
+        ok.Click += (_, _) => dialog.Close();
+        _ = dialog.ShowDialog(this);
     }
 
     // ── Sidebar Panel ──
@@ -741,8 +1075,9 @@ public partial class MainWindow : Window
     {
         _settings.EnableChartRendering = ChkEnableCharts.IsChecked == true;
         _settings.Save();
+        var enabled = _settings.EnableChartRendering && _cli.Features.DiagramViewer;
         foreach (var child in _children)
-            child.Terminal.EnableChartRendering = _settings.EnableChartRendering;
+            child.Terminal.EnableChartRendering = enabled;
     }
 
     private void OnDarkModeChanged(object? sender, RoutedEventArgs e)
@@ -818,10 +1153,10 @@ public partial class MainWindow : Window
 
     private void OnOpenClaudeFolder(object? sender, RoutedEventArgs e)
     {
-        var claudeDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
-        if (Directory.Exists(claudeDir))
+        var configDir = _cli.ActiveConfigDirPath;
+        if (!string.IsNullOrEmpty(configDir) && Directory.Exists(configDir))
         {
-            Process.Start(new ProcessStartInfo { FileName = claudeDir, UseShellExecute = true });
+            Process.Start(new ProcessStartInfo { FileName = configDir, UseShellExecute = true });
         }
     }
 
@@ -1292,6 +1627,13 @@ public partial class MainWindow : Window
 
     private async void RefreshSessionList()
     {
+        // Non-Claude CLIs have no readable session index; the button acts as "continue" instead.
+        if (!_cli.Features.SessionList)
+        {
+            CmbSessions.ItemsSource = null;
+            return;
+        }
+
         if (string.IsNullOrEmpty(_projectFolder) || !Directory.Exists(_projectFolder))
         {
             CmbSessions.ItemsSource = null;
@@ -1299,27 +1641,54 @@ public partial class MainWindow : Window
             return;
         }
 
-        var sessions = await SessionService.GetSessionsForProjectAsync(_projectFolder);
-        CmbSessions.ItemsSource = sessions;
-        CmbSessions.SelectedIndex = -1;
-        BtnResumeSession.IsEnabled = false;
+        CmbSessions.ItemsSource = await SessionService.GetSessionsForProjectAsync(_projectFolder);
+        SyncSessionSelection();
+    }
+
+    /// <summary>
+    /// Point the Session box at the session the active window is running, so a resumed session
+    /// stays selected there instead of the box coming up empty.
+    /// </summary>
+    private void SyncSessionSelection()
+    {
+        // The button means "continue" for CLIs without a session index; leave its state alone.
+        if (!_cli.Features.SessionList) return;
+
+        string? sessionId = _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+            ? _children[_activeChildIndex].SessionId
+            : null;
+
+        int index = -1;
+        if (!string.IsNullOrEmpty(sessionId) && CmbSessions.ItemsSource is List<SessionInfo> sessions)
+            index = sessions.FindIndex(s => s.Id.Equals(sessionId, StringComparison.OrdinalIgnoreCase));
+
+        CmbSessions.SelectedIndex = index;
+        BtnResumeSession.IsEnabled = CmbSessions.SelectedItem is SessionInfo;
     }
 
     private void OnSessionSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
+        if (!_cli.Features.SessionList) return;
         BtnResumeSession.IsEnabled = CmbSessions.SelectedItem is SessionInfo;
     }
 
     private void OnResumeSession(object? sender, RoutedEventArgs e)
     {
+        // CLIs without a readable session index fall back to "continue most recent"
+        if (!_cli.Features.SessionList)
+        {
+            CreateNewChild(_cli.BuildContinueCommand(), _cli.Active.Name);
+            return;
+        }
+
         if (CmbSessions.SelectedItem is SessionInfo session)
         {
-            string cmd = SessionService.BuildResumeCommand(session.Id);
+            string cmd = _cli.BuildResumeCommand(session.Id);
             var displayTitle = session.DisplayTitle ?? session.Summary;
             string tabLabel = !string.IsNullOrEmpty(displayTitle)
                 ? (displayTitle.Length > 30 ? displayTitle[..30] + "..." : displayTitle)
                 : $"Session: {session.Id[..Math.Min(8, session.Id.Length)]}";
-            CreateNewChild(cmd, tabLabel, displayTitle);
+            CreateNewChild(cmd, tabLabel, displayTitle, session.Id);
 
             // Load cached diagrams for this project
             if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
@@ -1649,7 +2018,7 @@ public partial class MainWindow : Window
             ws.Tabs.Add(new WorkspaceTab
             {
                 ProjectFolder = child.ProjectFolder ?? "",
-                TabTitle = child.StripText.Text ?? "Claude",
+                TabTitle = child.StripText.Text ?? _cli.Active.Name,
             });
         }
         WorkspaceService.Save(ws);
@@ -1887,9 +2256,10 @@ public partial class MainWindow : Window
 
     // ── MDI Child management ──
 
-    private void CreateNewChild(string command, string tabTitle, string? firstInput = null)
+    private void CreateNewChild(string command, string tabTitle, string? firstInput = null, string? sessionId = null)
     {
-        var terminal = new TerminalControl { IsDarkTheme = _isDark, EnableChartRendering = _settings.EnableChartRendering };
+        var terminal = new TerminalControl { IsDarkTheme = _isDark };
+        ApplyProviderToTerminal(terminal);
         terminal.SetFont(_settings.FontFamily, _settings.FontSize);
 
         // --- Title bar ---
@@ -2016,7 +2386,8 @@ public partial class MainWindow : Window
         )
         {
             ProjectFolder = _projectFolder,
-            FirstInput = firstInput
+            FirstInput = firstInput,
+            SessionId = sessionId
         };
 
         // Set FirstUserInput on terminal if provided (e.g. from resumed session)
@@ -2181,6 +2552,7 @@ public partial class MainWindow : Window
         MdiContainer.Children.Add(container);
         WindowStrip.Children.Add(stripButton);
         ArrangeChildren();
+        SyncSessionSelection();
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -2479,12 +2851,15 @@ public partial class MainWindow : Window
         LoadRecentProjectFolders();
         if (continueSession)
         {
-            // Get latest session summary for the project
-            string? summary = null;
-            var sessions = await SessionService.GetSessionsForProjectAsync(folderPath);
-            if (sessions.Count > 0)
-                summary = sessions[0].DisplayTitle;
-            CreateNewChild("claude -c", "Claude", summary);
+            // Session summaries only exist for CLIs whose history Claucraft can read
+            SessionInfo? resumed = null;
+            if (_cli.Features.SessionList)
+            {
+                // "continue" picks up the most recently modified session: the top of the list
+                var sessions = await SessionService.GetSessionsForProjectAsync(folderPath);
+                resumed = sessions.FirstOrDefault();
+            }
+            CreateNewChild(_cli.BuildContinueCommand(), _cli.Active.Name, resumed?.DisplayTitle, resumed?.Id);
         }
         else
             LaunchClaudeWithInitialPrompt();
@@ -2509,9 +2884,7 @@ public partial class MainWindow : Window
 
     private void LaunchClaudeWithInitialPrompt()
     {
-        var prompt = _settings.InitialPrompt.Trim();
-        var cmd = string.IsNullOrEmpty(prompt) ? "claude" : $"claude {prompt}";
-        CreateNewChild(cmd, "Claude");
+        CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt), _cli.Active.Name);
     }
 
     protected override async void OnClosed(EventArgs e)

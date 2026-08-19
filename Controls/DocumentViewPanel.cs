@@ -281,6 +281,18 @@ public class DocumentViewPanel : Panel
             return toolLabel;
         }
 
+        // AskUser question cards
+        if (msg.AskUser != null)
+        {
+            return CreateAskUserBubble(msg);
+        }
+
+        // Tool rejection indicator
+        if (msg.IsToolRejection)
+        {
+            return CreateToolRejectionIndicator(msg);
+        }
+
         if (msg.IsThinking)
         {
             // Thinking block: collapsed by default
@@ -342,6 +354,270 @@ public class DocumentViewPanel : Panel
             container.Children.Add(bubble);
             return container;
         }
+    }
+
+    private Control? CreateAskUserBubble(ConversationMessage msg)
+    {
+        if (msg.AskUser == null) return null;
+
+        var container = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(0, 2, 0, 2),
+            Spacing = 4,
+        };
+
+        // Timestamp
+        if (msg.Timestamp.HasValue)
+        {
+            container.Children.Add(new TextBlock
+            {
+                Text = msg.Timestamp.Value.ToString("HH:mm"),
+                FontSize = 10,
+                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(160, 160, 165)),
+                Margin = new Thickness(4, 0, 0, 2),
+            });
+        }
+
+        // Create Q&A pair for each question
+        foreach (var question in msg.AskUser.Questions)
+        {
+            // Q) Question card - left aligned (assistant style)
+            var card = CreateQuestionCard(question, msg.AskUser.Answers, msg.AskUser.Notes);
+            container.Children.Add(card);
+
+            // A) Answer bubble - right aligned (user style)
+            string? selectedAnswer = null;
+            msg.AskUser.Answers.TryGetValue(question.Question, out selectedAnswer);
+            if (selectedAnswer != null)
+            {
+                var answerBubble = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromRgb(0, 122, 255)),
+                    CornerRadius = new CornerRadius(12, 12, 2, 12),
+                    Padding = new Thickness(12, 8),
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    MaxWidth = 640,
+                    Margin = new Thickness(40, 0, 0, 4),
+                    Child = new SelectableTextBlock
+                    {
+                        Text = selectedAnswer,
+                        FontSize = _baseFontSize,
+                        Foreground = Brushes.White,
+                        TextWrapping = TextWrapping.Wrap,
+                        MaxWidth = 600,
+                    },
+                };
+                container.Children.Add(answerBubble);
+            }
+        }
+
+        return container;
+    }
+
+    private Control CreateQuestionCard(
+        Services.AskUserQuestionItem question,
+        Dictionary<string, string> answers,
+        Dictionary<string, string>? notes)
+    {
+        var accentColor = _isDark ? Color.FromRgb(100, 180, 255) : Color.FromRgb(0, 122, 255);
+        var cardBg = _isDark ? Color.FromRgb(38, 38, 44) : Color.FromRgb(245, 245, 252);
+        var selectedBg = _isDark ? Color.FromRgb(30, 50, 70) : Color.FromRgb(225, 238, 255);
+        var fg = _isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30);
+        var subtleFg = _isDark ? Color.FromRgb(140, 140, 150) : Color.FromRgb(100, 100, 110);
+
+        var contentStack = new StackPanel { Spacing = 6 };
+
+        // Header
+        var headerPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        headerPanel.Children.Add(new TextBlock
+        {
+            Text = "?",
+            FontSize = _baseFontSize,
+            Foreground = new SolidColorBrush(accentColor),
+            FontWeight = FontWeight.Bold,
+        });
+        headerPanel.Children.Add(new TextBlock
+        {
+            Text = question.Header,
+            FontSize = _baseFontSize,
+            Foreground = new SolidColorBrush(accentColor),
+            FontWeight = FontWeight.Bold,
+        });
+        contentStack.Children.Add(headerPanel);
+
+        // Question text
+        contentStack.Children.Add(new SelectableTextBlock
+        {
+            Text = question.Question,
+            FontSize = _baseFontSize - 1,
+            Foreground = new SolidColorBrush(fg),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 2, 0, 4),
+        });
+
+        // Get selected answer for this question
+        string? selectedAnswer = null;
+        answers.TryGetValue(question.Question, out selectedAnswer);
+
+        // Check if answer matches any option label
+        bool answerMatchesOption = false;
+        foreach (var opt in question.Options)
+        {
+            if (opt.Label == selectedAnswer)
+            {
+                answerMatchesOption = true;
+                break;
+            }
+        }
+
+        // Options
+        foreach (var option in question.Options)
+        {
+            var isSelected = selectedAnswer != null && selectedAnswer == option.Label;
+
+            var optionPanel = new StackPanel { Spacing = 1 };
+            var labelPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+
+            // Radio button indicator
+            labelPanel.Children.Add(new TextBlock
+            {
+                Text = isSelected ? "\u25CF" : "\u25CB",
+                FontSize = _baseFontSize - 2,
+                Foreground = new SolidColorBrush(isSelected ? accentColor : subtleFg),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+            // Option label
+            labelPanel.Children.Add(new TextBlock
+            {
+                Text = option.Label,
+                FontSize = _baseFontSize - 1,
+                Foreground = new SolidColorBrush(isSelected ? accentColor : fg),
+                FontWeight = isSelected ? FontWeight.SemiBold : FontWeight.Normal,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+            // Checkmark for selected
+            if (isSelected)
+            {
+                labelPanel.Children.Add(new TextBlock
+                {
+                    Text = "\u2713",
+                    FontSize = _baseFontSize - 2,
+                    Foreground = new SolidColorBrush(accentColor),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(4, 0, 0, 0),
+                });
+            }
+
+            optionPanel.Children.Add(labelPanel);
+
+            // Option description
+            optionPanel.Children.Add(new TextBlock
+            {
+                Text = option.Description,
+                FontSize = _baseFontSize - 2,
+                Foreground = new SolidColorBrush(subtleFg),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(20, 0, 0, 0),
+            });
+
+            var optionBorder = new Border
+            {
+                Background = isSelected ? new SolidColorBrush(selectedBg) : Brushes.Transparent,
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 4),
+                Child = optionPanel,
+            };
+            contentStack.Children.Add(optionBorder);
+        }
+
+        // Custom answer (when user selected "Other" or typed custom text)
+        if (selectedAnswer != null && !answerMatchesOption)
+        {
+            var customPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            customPanel.Children.Add(new TextBlock
+            {
+                Text = "\u270E",
+                FontSize = _baseFontSize - 2,
+                Foreground = new SolidColorBrush(accentColor),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            customPanel.Children.Add(new SelectableTextBlock
+            {
+                Text = selectedAnswer,
+                FontSize = _baseFontSize - 1,
+                Foreground = new SolidColorBrush(accentColor),
+                FontWeight = FontWeight.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            contentStack.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(selectedBg),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 4),
+                Margin = new Thickness(0, 2),
+                Child = customPanel,
+            });
+        }
+
+        // User notes
+        if (notes != null && notes.TryGetValue(question.Question, out var userNotes)
+            && !string.IsNullOrWhiteSpace(userNotes))
+        {
+            var notesPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            notesPanel.Children.Add(new TextBlock
+            {
+                Text = "Note:",
+                FontSize = _baseFontSize - 2,
+                Foreground = new SolidColorBrush(subtleFg),
+                FontStyle = FontStyle.Italic,
+            });
+            notesPanel.Children.Add(new TextBlock
+            {
+                Text = userNotes,
+                FontSize = _baseFontSize - 2,
+                Foreground = new SolidColorBrush(fg),
+                FontStyle = FontStyle.Italic,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            contentStack.Children.Add(new Border
+            {
+                BorderBrush = new SolidColorBrush(subtleFg),
+                BorderThickness = new Thickness(0, 0.5, 0, 0),
+                Padding = new Thickness(0, 4, 0, 0),
+                Margin = new Thickness(0, 2, 0, 0),
+                Child = notesPanel,
+            });
+        }
+
+        // Card with left accent border - left aligned (assistant style)
+        return new Border
+        {
+            Background = new SolidColorBrush(cardBg),
+            BorderBrush = new SolidColorBrush(accentColor),
+            BorderThickness = new Thickness(3, 0, 0, 0),
+            CornerRadius = new CornerRadius(2, 8, 8, 2),
+            Padding = new Thickness(12, 8),
+            Margin = new Thickness(0, 2, 40, 2),
+            MaxWidth = 640,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Child = contentStack,
+        };
+    }
+
+    private Control CreateToolRejectionIndicator(ConversationMessage msg)
+    {
+        var rejectionColor = _isDark ? Color.FromRgb(255, 100, 100) : Color.FromRgb(200, 50, 50);
+        return new TextBlock
+        {
+            Text = $"\u2298 {msg.Text}",
+            FontSize = 11,
+            Foreground = new SolidColorBrush(rejectionColor),
+            FontStyle = FontStyle.Italic,
+            Margin = new Thickness(4, 1),
+        };
     }
 
     private void ScrollToBottom()

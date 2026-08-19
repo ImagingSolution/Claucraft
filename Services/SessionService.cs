@@ -12,17 +12,22 @@ namespace Claucraft.Services;
 
 public record SessionInfo(string Id, string? Cwd, string? Summary, DateTime? Timestamp)
 {
-    /// <summary>AI-generated title from sessions-index.json (like Claude Desktop)</summary>
+    /// <summary>Session title: a name set with /rename, otherwise the generated one.</summary>
     public string? Title { get; init; }
 
-    /// <summary>Returns Title if available, otherwise Summary (first user message)</summary>
-    public string? DisplayTitle => !string.IsNullOrWhiteSpace(Title) ? Title : Summary;
+    /// <summary>What the /resume picker shows for the session, down to its "No prompt" fallback.</summary>
+    public string? DisplayTitle =>
+        !string.IsNullOrWhiteSpace(Title) ? Title
+        : !string.IsNullOrWhiteSpace(Summary) ? Summary
+        : "No prompt";
 }
 
 public static class SessionService
 {
     /// <summary>
-    /// Get sessions for a specific project folder by reading sessions-index.json and JSONL files.
+    /// Get the sessions of a project folder, listing what Claude Code's /resume picker lists:
+    /// every non-sidechain transcript in ~/.claude/projects/{folder}/ that holds at least one
+    /// message, most recently modified first. Transcripts are only ever read, never written.
     /// </summary>
     public static Task<List<SessionInfo>> GetSessionsForProjectAsync(string projectFolder)
     {
@@ -50,43 +55,21 @@ public static class SessionService
 
                 foreach (var dir in matchingDirs)
                 {
-                    // Load sessions-index.json for AI-generated titles
-                    var indexTitles = LoadSessionsIndex(dir);
-
-                    var jsonlFiles = Directory.GetFiles(dir, "*.jsonl");
-                    foreach (var file in jsonlFiles)
+                    // Top level only - subagent transcripts live under subagents/ and /resume skips them.
+                    foreach (var file in Directory.GetFiles(dir, "*.jsonl"))
                     {
                         try
                         {
-                            string sessionId = Path.GetFileNameWithoutExtension(file);
-                            var info = ParseSessionFile(file, sessionId);
-                            if (info != null && !string.IsNullOrWhiteSpace(info.Summary))
-                            {
-                                // Attach AI title from index if available
-                                if (indexTitles.TryGetValue(sessionId, out var titleInfo))
-                                {
-                                    info = info with { Title = titleInfo.title };
-                                    if (info.Timestamp == null && titleInfo.modified != null)
-                                        info = info with { Timestamp = titleInfo.modified };
-                                }
+                            var info = ParseSessionFile(file, Path.GetFileNameWithoutExtension(file));
+                            if (info != null)
                                 sessions.Add(info);
-                            }
-                            else
-                            {
-                                try { File.Delete(file); }
-                                catch { }
-                            }
                         }
-                        catch
+                        catch (Exception ex)
                         {
-                            try { File.Delete(file); }
-                            catch { }
+                            // A transcript we cannot read is skipped, never deleted.
+                            Debug.WriteLine($"Failed to read session {file}: {ex.Message}");
                         }
                     }
-
-                    // Create or update sessions-index.json so CLI can populate AI summaries later
-                    if (sessions.Count > 0)
-                        WriteSessionsIndex(dir, sessions, projectFolder, indexTitles);
                 }
 
                 sessions.Sort((a, b) => (b.Timestamp ?? DateTime.MinValue).CompareTo(a.Timestamp ?? DateTime.MinValue));
@@ -99,250 +82,171 @@ public static class SessionService
         });
     }
 
-    /// <summary>Load AI-generated titles from sessions-index.json</summary>
-    private static Dictionary<string, (string? title, DateTime? modified)> LoadSessionsIndex(string projectDir)
+    /// <summary>What a single pass over a transcript collects.</summary>
+    private sealed class SessionScan
     {
-        var result = new Dictionary<string, (string?, DateTime?)>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            var indexPath = Path.Combine(projectDir, "sessions-index.json");
-            if (!File.Exists(indexPath)) return result;
-
-            var json = File.ReadAllText(indexPath);
-            using var doc = JsonDocument.Parse(json);
-
-            if (doc.RootElement.TryGetProperty("entries", out var entries)
-                && entries.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var entry in entries.EnumerateArray())
-                {
-                    string? sessionId = null;
-                    string? title = null;
-                    DateTime? modified = null;
-
-                    if (entry.TryGetProperty("sessionId", out var sidProp))
-                        sessionId = sidProp.GetString();
-
-                    // "summary" field = AI-generated title (like Claude Desktop)
-                    if (entry.TryGetProperty("summary", out var sumProp))
-                        title = sumProp.GetString();
-
-                    // Fall back to firstPrompt if no summary
-                    if (string.IsNullOrWhiteSpace(title) && entry.TryGetProperty("firstPrompt", out var fpProp))
-                    {
-                        title = CleanupPromptText(fpProp.GetString());
-                    }
-
-                    if (entry.TryGetProperty("modified", out var modProp))
-                    {
-                        var modStr = modProp.GetString();
-                        if (modStr != null && DateTime.TryParse(modStr, out var dt))
-                            modified = dt;
-                    }
-
-                    if (sessionId != null)
-                        result[sessionId] = (title, modified);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Failed to load sessions-index.json: {ex.Message}");
-        }
-        return result;
+        public string? Cwd;
+        public string? FirstPrompt;
+        public string? CustomTitle;    // set by /rename or --name
+        public string? AiTitle;        // generated title, re-emitted as the session grows
+        public string? SummaryRecord;  // older {"type":"summary"} entry
+        public bool IsSidechain;
+        public bool SeenFirstMessage;
+        public bool HasMessages;
     }
 
-    /// <summary>
-    /// Create or update sessions-index.json with current session data.
-    /// Preserves existing AI-generated summary fields so CLI can populate them later.
-    /// </summary>
-    private static void WriteSessionsIndex(
-        string projectDir,
-        List<SessionInfo> sessions,
-        string projectFolder,
-        Dictionary<string, (string? title, DateTime? modified)> existingIndex)
-    {
-        try
-        {
-            var indexPath = Path.Combine(projectDir, "sessions-index.json");
+    /// <summary>Lines read from the head of a transcript before giving up on finding the first prompt.</summary>
+    private const int HeadScanLines = 200;
 
-            // Also load raw summaries from existing file to preserve them verbatim
-            var existingSummaries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            if (File.Exists(indexPath))
-            {
-                try
-                {
-                    var existingJson = File.ReadAllText(indexPath);
-                    using var existingDoc = JsonDocument.Parse(existingJson);
-                    if (existingDoc.RootElement.TryGetProperty("entries", out var entries)
-                        && entries.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var entry in entries.EnumerateArray())
-                        {
-                            if (entry.TryGetProperty("sessionId", out var sid))
-                            {
-                                var sidStr = sid.GetString();
-                                if (sidStr == null) continue;
-                                if (entry.TryGetProperty("summary", out var sum)
-                                    && sum.ValueKind == JsonValueKind.String
-                                    && !string.IsNullOrWhiteSpace(sum.GetString()))
-                                {
-                                    existingSummaries[sidStr] = sum.GetString()!;
-                                }
-                            }
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            using var ms = new MemoryStream();
-            using var writer = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true });
-
-            writer.WriteStartObject();
-            writer.WriteNumber("version", 1);
-            writer.WriteStartArray("entries");
-
-            foreach (var session in sessions)
-            {
-                var jsonlPath = Path.Combine(projectDir, session.Id + ".jsonl");
-                var fileMtime = File.Exists(jsonlPath)
-                    ? new DateTimeOffset(File.GetLastWriteTimeUtc(jsonlPath)).ToUnixTimeMilliseconds()
-                    : new DateTimeOffset(session.Timestamp ?? DateTime.UtcNow).ToUnixTimeMilliseconds();
-
-                writer.WriteStartObject();
-                writer.WriteString("sessionId", session.Id);
-                writer.WriteString("fullPath", jsonlPath.Replace('/', '\\'));
-                writer.WriteNumber("fileMtime", fileMtime);
-                writer.WriteString("firstPrompt", session.Summary ?? "No prompt");
-
-                // Preserve existing AI-generated summary
-                if (existingSummaries.TryGetValue(session.Id, out var summary))
-                    writer.WriteString("summary", summary);
-
-                writer.WriteString("created", (session.Timestamp ?? DateTime.UtcNow).ToUniversalTime().ToString("o"));
-                writer.WriteString("modified", (session.Timestamp ?? DateTime.UtcNow).ToUniversalTime().ToString("o"));
-                writer.WriteString("projectPath", projectFolder);
-                writer.WriteBoolean("isSidechain", false);
-                writer.WriteEndObject();
-            }
-
-            writer.WriteEndArray();
-            writer.WriteString("originalPath", projectFolder);
-            writer.WriteEndObject();
-
-            writer.Flush();
-            File.WriteAllBytes(indexPath, ms.ToArray());
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"Failed to write sessions-index.json: {ex.Message}");
-        }
-    }
+    /// <summary>Bytes read from the tail of a transcript to pick up the newest title entries.</summary>
+    private const long TailScanBytes = 256 * 1024;
 
     private static SessionInfo? ParseSessionFile(string filePath, string sessionId)
     {
-        string? cwd = null;
-        string? summary = null;
-        DateTime? timestamp = null;
-        string? queueContent = null;
+        var scan = new SessionScan();
 
-        // Read lines to get metadata (scan more lines to skip file-history-snapshot entries)
-        using var reader = new StreamReader(filePath, Encoding.UTF8);
-        int lineCount = 0;
-        while (!reader.EndOfStream && lineCount < 50)
+        using (var stream = OpenShared(filePath))
+        using (var reader = new StreamReader(stream, Encoding.UTF8))
         {
-            string? line = reader.ReadLine();
-            if (string.IsNullOrWhiteSpace(line)) continue;
-            lineCount++;
-
-            try
+            int lineCount = 0;
+            while (!reader.EndOfStream && lineCount < HeadScanLines)
             {
-                using var doc = JsonDocument.Parse(line);
-                var root = doc.RootElement;
+                string? line = reader.ReadLine();
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                lineCount++;
 
-                // Get cwd from message entries
-                if (cwd == null && root.TryGetProperty("cwd", out var cwdProp))
-                {
-                    cwd = cwdProp.GetString();
-                }
+                ScanLine(line, scan, captureFirstPrompt: true);
 
-                // Get timestamp
-                if (root.TryGetProperty("timestamp", out var tsProp))
-                {
-                    var tsStr = tsProp.GetString();
-                    if (tsStr != null && DateTime.TryParse(tsStr, out var dt))
-                        timestamp = dt;
-                }
-
-                if (root.TryGetProperty("type", out var typeProp))
-                {
-                    string? type = typeProp.GetString();
-
-                    // Extract from queue-operation as fallback
-                    if (queueContent == null && type == "queue-operation"
-                        && root.TryGetProperty("content", out var qcProp))
-                    {
-                        queueContent = qcProp.GetString();
-                    }
-
-                    // Try to get first real user message as summary
-                    if (summary == null && type == "user")
-                    {
-                        // Skip metadata-only messages (isMeta: true)
-                        bool isMeta = root.TryGetProperty("isMeta", out var metaProp)
-                                      && metaProp.ValueKind == JsonValueKind.True;
-                        if (!isMeta)
-                        {
-                            string? candidate = null;
-                            if (root.TryGetProperty("message", out var msgProp))
-                            {
-                                if (msgProp.ValueKind == JsonValueKind.String)
-                                    candidate = msgProp.GetString();
-                                else if (msgProp.ValueKind == JsonValueKind.Object
-                                         && msgProp.TryGetProperty("content", out var contentProp))
-                                    candidate = ExtractTextContent(contentProp);
-                            }
-
-                            // Only accept as summary if it has meaningful text after cleanup
-                            var cleaned = CleanupPromptText(candidate);
-                            if (!string.IsNullOrWhiteSpace(cleaned))
-                                summary = candidate; // Store original, cleanup at the end
-                        }
-                    }
-                }
-
-                // Also check for role-based messages
-                if (summary == null && root.TryGetProperty("role", out var roleProp)
-                    && roleProp.GetString() == "user"
-                    && root.TryGetProperty("content", out var contentProp2))
-                {
-                    var candidate2 = ExtractTextContent(contentProp2);
-                    var cleaned2 = CleanupPromptText(candidate2);
-                    if (!string.IsNullOrWhiteSpace(cleaned2))
-                        summary = candidate2;
-                }
-
-                // Stop scanning once we have both cwd and summary
-                if (cwd != null && summary != null) break;
+                if (scan.Cwd != null && scan.FirstPrompt != null && scan.SeenFirstMessage)
+                    break;
             }
-            catch { }
         }
 
-        // Use queue-operation content as fallback
-        if (string.IsNullOrWhiteSpace(summary) && !string.IsNullOrWhiteSpace(queueContent))
-            summary = queueContent;
+        // Titles are appended as the session grows, so the current one sits at the end of the file.
+        ScanTail(filePath, scan);
 
-        // Get file modification time as fallback timestamp
-        if (timestamp == null)
+        // /resume lists neither subagent transcripts nor sessions that never received a message.
+        if (scan.IsSidechain || !scan.HasMessages)
+            return null;
+
+        string? title = scan.CustomTitle ?? scan.AiTitle ?? scan.SummaryRecord;
+
+        return new SessionInfo(sessionId, scan.Cwd, CleanupPromptText(scan.FirstPrompt),
+                               File.GetLastWriteTime(filePath))
         {
-            timestamp = File.GetLastWriteTime(filePath);
+            Title = CleanupPromptText(title)
+        };
+    }
+
+    /// <summary>Open a transcript in a way that tolerates the CLI writing to it at the same time.</summary>
+    private static FileStream OpenShared(string filePath)
+        => new FileStream(filePath, FileMode.Open, FileAccess.Read,
+                          FileShare.ReadWrite | FileShare.Delete);
+
+    private static void ScanTail(string filePath, SessionScan scan)
+    {
+        try
+        {
+            using var stream = OpenShared(filePath);
+            bool startsMidFile = stream.Length > TailScanBytes;
+            if (startsMidFile)
+                stream.Seek(stream.Length - TailScanBytes, SeekOrigin.Begin);
+
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            if (startsMidFile)
+                reader.ReadLine(); // the window opens mid-line; drop the fragment
+
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                // Only a scan that started at byte 0 can tell which user message came first.
+                ScanLine(line, scan, captureFirstPrompt: !startsMidFile);
+            }
         }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to scan tail of {filePath}: {ex.Message}");
+        }
+    }
 
-        // Clean up summary (strip IDE tags, whitespace, truncate)
-        summary = CleanupPromptText(summary);
+    private static void ScanLine(string line, SessionScan scan, bool captureFirstPrompt)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return;
 
-        return new SessionInfo(sessionId, cwd, summary, timestamp);
+            if (scan.Cwd == null && root.TryGetProperty("cwd", out var cwdProp))
+                scan.Cwd = cwdProp.GetString();
+
+            string? type = root.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;
+
+            // Older transcripts write bare {"role":"user","content":...} entries.
+            if (type == null && root.TryGetProperty("role", out var roleProp) && roleProp.GetString() == "user")
+                type = "user";
+
+            switch (type)
+            {
+                case "custom-title":
+                    scan.CustomTitle = ReadString(root, "customTitle") ?? ReadString(root, "title") ?? scan.CustomTitle;
+                    return;
+                case "ai-title":
+                    scan.AiTitle = ReadString(root, "aiTitle") ?? scan.AiTitle;
+                    return;
+                case "summary":
+                    scan.SummaryRecord = ReadString(root, "summary") ?? scan.SummaryRecord;
+                    return;
+                case "user":
+                case "assistant":
+                    break;
+                default:
+                    return;
+            }
+
+            scan.HasMessages = true;
+
+            // A transcript counts as a subagent one when its very first message is a sidechain message.
+            if (!scan.SeenFirstMessage)
+            {
+                scan.SeenFirstMessage = true;
+                scan.IsSidechain = root.TryGetProperty("isSidechain", out var sideProp)
+                                   && sideProp.ValueKind == JsonValueKind.True;
+            }
+
+            if (!captureFirstPrompt || scan.FirstPrompt != null || type != "user") return;
+
+            // Skip metadata-only messages (isMeta: true)
+            if (root.TryGetProperty("isMeta", out var metaProp) && metaProp.ValueKind == JsonValueKind.True) return;
+
+            string? candidate = null;
+            if (root.TryGetProperty("message", out var msgProp))
+            {
+                if (msgProp.ValueKind == JsonValueKind.String)
+                    candidate = msgProp.GetString();
+                else if (msgProp.ValueKind == JsonValueKind.Object
+                         && msgProp.TryGetProperty("content", out var contentProp))
+                    candidate = ExtractTextContent(contentProp);
+            }
+            else if (root.TryGetProperty("content", out var contentProp2))
+            {
+                candidate = ExtractTextContent(contentProp2);
+            }
+
+            // Only accept as the first prompt if meaningful text survives cleanup
+            if (!string.IsNullOrWhiteSpace(CleanupPromptText(candidate)))
+                scan.FirstPrompt = candidate; // store original, cleanup happens once at the end
+        }
+        catch { }
+    }
+
+    private static string? ReadString(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var prop) || prop.ValueKind != JsonValueKind.String)
+            return null;
+        var value = prop.GetString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static string? ExtractTextContent(JsonElement element)
@@ -422,6 +326,21 @@ public static class SessionService
     }
 
     /// <summary>
+    /// Tool-generated working folders (e.g. ~/.claude, ~/.claude-mem/observer-sessions) also
+    /// appear under ~/.claude/projects, but they are not projects the user created.
+    /// Treat any path containing a dot-prefixed segment as one of those and hide it.
+    /// </summary>
+    private static bool IsUserProjectFolder(string path)
+    {
+        foreach (var segment in path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        {
+            if (segment.Length > 1 && segment[0] == '.' && segment != "..")
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
     /// Get the most recent project folders (up to 10) from ~/.claude/projects/ JSONL files.
     /// Returns actual folder paths extracted from session cwd fields, sorted by most recent first.
     /// </summary>
@@ -494,6 +413,7 @@ public static class SessionService
             }
 
             return folderTimestamps
+                .Where(kv => IsUserProjectFolder(kv.Key))
                 .OrderByDescending(kv => kv.Value)
                 .Take(10)
                 .Select(kv => kv.Key)
@@ -501,8 +421,4 @@ public static class SessionService
         });
     }
 
-    public static string BuildResumeCommand(string sessionId)
-    {
-        return $"claude -r {sessionId}";
-    }
 }

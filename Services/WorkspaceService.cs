@@ -14,7 +14,7 @@ public class WorkspaceInfo
 public class WorkspaceTab
 {
     public string ProjectFolder { get; set; } = "";
-    public string TabTitle { get; set; } = "Claude";
+    public string TabTitle { get; set; } = "";
 }
 
 public static class WorkspaceService

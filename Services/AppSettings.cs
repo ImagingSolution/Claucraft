@@ -14,6 +14,7 @@ public class AppSettings
     public string InitialPrompt { get; set; } = "";
     public bool ShowWelcomePage { get; set; } = true;
     public bool EnableChartRendering { get; set; } = true;
+    public string CliProviderId { get; set; } = CliProviderService.ClaudeId;
 
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
