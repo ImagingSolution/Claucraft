@@ -12,7 +12,7 @@ public static class Loc
         ["Project"] = new() { ["English"] = "Project", ["日本語"] = "プロジェクト" },
         ["SelectProjectFolder"] = new() { ["English"] = "Select project folder...", ["日本語"] = "プロジェクトフォルダを選択..." },
         ["OpenInExplorer"] = new() { ["English"] = "Open in Explorer", ["日本語"] = "エクスプローラーで開く" },
-        ["NewClaude"] = new() { ["English"] = "New Claude", ["日本語"] = "新規 Claude" },
+        ["NewSession"] = new() { ["English"] = "New Session", ["日本語"] = "新規セッション" },
         ["Session"] = new() { ["English"] = "Session", ["日本語"] = "セッション" },
         ["SelectSession"] = new() { ["English"] = "Select a session to resume...", ["日本語"] = "再開するセッションを選択..." },
         ["Resume"] = new() { ["English"] = "Resume", ["日本語"] = "再開" },
@@ -169,7 +169,6 @@ public static class Loc
         ["SwitchAiTooltip"] = new() { ["English"] = "Switch AI provider", ["日本語"] = "AI プロバイダを切り替え" },
         ["OK"] = new() { ["English"] = "OK", ["日本語"] = "OK" },
         // {0} = provider name
-        ["NewSessionFmt"] = new() { ["English"] = "New {0}", ["日本語"] = "新規 {0}" },
         ["NewSessionTooltipFmt"] = new() { ["English"] = "Open new {0} session", ["日本語"] = "新しい {0} セッションを開く" },
         // {0} = config directory name, e.g. ".claude"
         ["OpenConfigDirFmt"] = new() { ["English"] = "Open {0} Folder", ["日本語"] = "{0} フォルダを開く" },

@@ -230,12 +230,7 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnLayoutCascade, Loc.Get("CascadeWindows"));
         ToolTip.SetTip(BtnLayoutMaximize, Loc.Get("FullView"));
 
-        // Window title
-        var ver = Assembly.GetExecutingAssembly().GetName().Version;
-        var verStr = ver != null ? $"Ver.{ver.Major}.{ver.Minor}.{ver.Build}.{ver.Revision}" : "";
-        Title = $"{Loc.Get("AppTitle")}  {verStr}";
-
-        // Labels that embed the AI name, plus feature gating
+        // Window title, the labels that embed the AI name, plus feature gating
         ApplyProviderUi();
     }
 
@@ -372,7 +367,7 @@ public partial class MainWindow : Window
         var features = provider.Features;
 
         // Toolbar
-        LblNewClaude.Text = string.Format(Loc.Get("NewSessionFmt"), provider.Name);
+        LblNewClaude.Text = Loc.Get("NewSession");
         ToolTip.SetTip(BtnNewClaude, string.Format(Loc.Get("NewSessionTooltipFmt"), provider.Name));
 
         // Session row — only Claude-style CLIs expose a session index Claucraft can read.
@@ -418,6 +413,7 @@ public partial class MainWindow : Window
         RefreshProviderRadios();
 
         UpdateAiSelector();
+        UpdateWindowTitle();
 
         foreach (var child in _children)
             ApplyProviderToTerminal(child.Terminal);
@@ -429,6 +425,17 @@ public partial class MainWindow : Window
         terminal.EnablePermissionOverlay = features.PermissionOverlay;
         terminal.ExitCommand = features.ExitCommand;
         terminal.EnableChartRendering = _settings.EnableChartRendering && features.DiagramViewer;
+    }
+
+    /// <summary>
+    /// Window title, e.g. "[Claude Code] Claucraft Ver.0.1.12.244". Called from
+    /// ApplyProviderUi() so it follows both a language change and an AI switch.
+    /// </summary>
+    private void UpdateWindowTitle()
+    {
+        var ver = Assembly.GetExecutingAssembly().GetName().Version;
+        var verStr = ver != null ? $"Ver.{ver.Major}.{ver.Minor}.{ver.Build}.{ver.Revision}" : "";
+        Title = $"[{_cli.Active.Name}] {Loc.Get("AppTitle")} {verStr}";
     }
 
     /// <summary>
@@ -742,7 +749,7 @@ public partial class MainWindow : Window
             // Show summary (FirstUserInput) if available, otherwise fall back to tab title
             var displayText = !string.IsNullOrEmpty(child.Terminal.FirstUserInput)
                 ? child.Terminal.FirstUserInput
-                : child.StripText.Text ?? "Claude";
+                : child.StripText.Text ?? _cli.Active.Name;
 
             var title = new TextBlock
             {
@@ -1806,7 +1813,7 @@ public partial class MainWindow : Window
 
     private void OnGlobalKeyDown(object? sender, KeyEventArgs e)
     {
-        // Ctrl+N: New Claude session
+        // Ctrl+N: New session
         if (e.Key == Key.N && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
             LaunchClaudeWithInitialPrompt();
@@ -1923,7 +1930,7 @@ public partial class MainWindow : Window
     {
         var commands = new List<(string Name, string Shortcut, Action Execute)>
         {
-            ("New Claude Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
+            ("New Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
             ("Close Tab", "Ctrl+W", () => { if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count) CloseChild(_children[_activeChildIndex]); }),
             ("Next Tab", "Ctrl+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex + 1) % _children.Count); }),
             ("Previous Tab", "Ctrl+Shift+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex - 1 + _children.Count) % _children.Count); }),

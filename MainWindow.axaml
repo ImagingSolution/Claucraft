@@ -51,11 +51,11 @@
 
                     <Button x:Name="BtnNewClaude" Grid.Row="0" Grid.Column="2"
                             Classes="primary"
-                            ToolTip.Tip="Open new Claude Code session"
+                            ToolTip.Tip="Open a new session"
                             Click="OnNewClaude"
                             HorizontalAlignment="Stretch"
                             HorizontalContentAlignment="Center">
-                        <TextBlock x:Name="LblNewClaude" Text="New Claude"
+                        <TextBlock x:Name="LblNewClaude" Text="New Session"
                                    VerticalAlignment="Center" HorizontalAlignment="Center" />
                     </Button>
 
