@@ -566,7 +566,12 @@ public static class SessionMessageReader
         return null;
     }
 
-    private static string CleanMetadataTags(string text)
+    /// <summary>
+    /// Strips the wrapper tags Claude Code injects around prompts (system reminders, IDE
+    /// selection, slash-command scaffolding) so only what the user actually typed remains.
+    /// Shared with <see cref="HandoffBuilder"/> so both agree on what counts as user text.
+    /// </summary>
+    internal static string CleanMetadataTags(string text)
     {
         // Strip known metadata XML tags and their content
         text = Regex.Replace(text,

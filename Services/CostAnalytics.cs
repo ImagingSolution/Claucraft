@@ -19,15 +19,27 @@ public sealed class TokenTotals
     public long CacheRead;
     public long CacheCreation;
     public double CostUsd;
+
+    /// <summary>Assistant messages counted into this bucket - one per billed API turn.</summary>
+    public long Turns;
+
+    /// <summary>tool_use blocks emitted across those turns.</summary>
+    public long ToolCalls;
+
     public long Total => Input + Output + CacheRead + CacheCreation;
 
-    internal void Add(long input, long output, long cacheRead, long cacheCreation, double costUsd)
+    /// <summary>Average context re-read per turn: the number that drives the bill.</summary>
+    public long AvgContextPerTurn => Turns == 0 ? 0 : (CacheRead + CacheCreation + Input) / Turns;
+
+    internal void Add(long input, long output, long cacheRead, long cacheCreation, double costUsd, long toolCalls)
     {
         Input += input;
         Output += output;
         CacheRead += cacheRead;
         CacheCreation += cacheCreation;
         CostUsd += costUsd;
+        Turns++;
+        ToolCalls += toolCalls;
     }
 }
 
@@ -47,6 +59,13 @@ public sealed class CostReport
     public List<CostBucket> ByModel { get; init; } = new();   // descending by cost
     public List<CostBucket> ByProject { get; init; } = new(); // descending by cost
     public List<CostBucket> BySession { get; init; } = new(); // descending by cost, top 50
+
+    /// <summary>Distinct sessions in the window, before BySession is truncated to the top rows.</summary>
+    public int SessionCount { get; init; }
+
+    /// <summary>Distinct sessions active on each day, keyed "yyyy-MM-dd".</summary>
+    public Dictionary<string, int> SessionsByDay { get; init; } = new();
+
     public int Days { get; init; }
     public bool ProjectScoped { get; init; }
 }
@@ -108,6 +127,14 @@ public static class CostAnalytics
         return Compute(FallbackPrice.InputPerMTok, FallbackPrice.OutputPerMTok, input, output, cacheRead, cacheCreation);
     }
 
+    /// <summary>
+    /// What one more turn costs just to re-read the conversation, before any new output.
+    /// The whole prefix is billed at the cache-read rate on every turn, which is why context
+    /// length - not output length - drives a session's bill.
+    /// </summary>
+    public static double EstimateNextTurnCostUsd(string model, long contextTokens)
+        => EstimateCostUsd(model, 0, 0, contextTokens, 0);
+
     private static double Compute(double inPrice, double outPrice, long input, long output, long cacheRead, long cacheCreation)
     {
         const double perTok = 1.0 / 1_000_000.0;
@@ -138,6 +165,7 @@ public static class CostAnalytics
         var projectLabels = new Dictionary<string, string>();
         var sessionTotals = new Dictionary<string, TokenTotals>();
         var sessionProject = new Dictionary<string, string>();
+        var daySessions = new Dictionary<string, HashSet<string>>();
 
         int dayCount = Math.Max(1, days);
         DateTime todayLocal = DateTime.Now.Date;
@@ -158,7 +186,7 @@ public static class CostAnalytics
 
             if (!Directory.Exists(claudeProjectsDir))
             {
-                return MakeReport(grand, dayTotals, modelTotals, projectTotals, projectLabels, sessionTotals, sessionProject, dayCount, projectScoped);
+                return MakeReport(grand, dayTotals, modelTotals, projectTotals, projectLabels, sessionTotals, sessionProject, daySessions, dayCount, projectScoped);
             }
 
             var allDirs = Directory.GetDirectories(claudeProjectsDir);
@@ -191,9 +219,22 @@ public static class CostAnalytics
                 foreach (var file in files)
                 {
                     ct.ThrowIfCancellationRequested();
+
+                    // A transcript last written before the window opened cannot hold a line
+                    // inside it. Skipping on mtime keeps the 30s usage poll from re-parsing
+                    // every historical session on every tick.
+                    try
+                    {
+                        if (File.GetLastWriteTime(file) < cutoffLocal) continue;
+                    }
+                    catch
+                    {
+                        // stat failed - fall through and parse it rather than lose the data.
+                    }
+
                     ProcessFile(file, dirKey, requireCwdMatch ? normalizedTarget : null,
                         cutoffLocal, todayLocal,
-                        grand, dayTotals, modelTotals, projectTotals, projectLabels, sessionTotals, sessionProject);
+                        grand, dayTotals, modelTotals, projectTotals, projectLabels, sessionTotals, sessionProject, daySessions);
                 }
             }
         }
@@ -203,7 +244,7 @@ public static class CostAnalytics
             Debug.WriteLine($"[CostAnalytics] Build failed: {ex.Message}");
         }
 
-        return MakeReport(grand, dayTotals, modelTotals, projectTotals, projectLabels, sessionTotals, sessionProject, dayCount, projectScoped);
+        return MakeReport(grand, dayTotals, modelTotals, projectTotals, projectLabels, sessionTotals, sessionProject, daySessions, dayCount, projectScoped);
     }
 
     private static void ProcessFile(
@@ -215,7 +256,8 @@ public static class CostAnalytics
         Dictionary<string, TokenTotals> projectTotals,
         Dictionary<string, string> projectLabels,
         Dictionary<string, TokenTotals> sessionTotals,
-        Dictionary<string, string> sessionProject)
+        Dictionary<string, string> sessionProject,
+        Dictionary<string, HashSet<string>> daySessions)
     {
         string fallbackSessionId = Path.GetFileNameWithoutExtension(filePath);
 
@@ -234,7 +276,7 @@ public static class CostAnalytics
                 try
                 {
                     ProcessLine(line, dirKey, fallbackSessionId, requireCwdNormalized, cutoffLocal, todayLocal,
-                        grand, dayTotals, modelTotals, projectTotals, projectLabels, sessionTotals, sessionProject);
+                        grand, dayTotals, modelTotals, projectTotals, projectLabels, sessionTotals, sessionProject, daySessions);
                 }
                 catch
                 {
@@ -257,7 +299,8 @@ public static class CostAnalytics
         Dictionary<string, TokenTotals> projectTotals,
         Dictionary<string, string> projectLabels,
         Dictionary<string, TokenTotals> sessionTotals,
-        Dictionary<string, string> sessionProject)
+        Dictionary<string, string> sessionProject,
+        Dictionary<string, HashSet<string>> daySessions)
     {
         using var doc = JsonDocument.Parse(line);
         var root = doc.RootElement;
@@ -298,6 +341,21 @@ public static class CostAnalytics
 
         double cost = EstimateCostUsd(model, input, output, cacheRead, cacheCreation);
 
+        long toolCalls = 0;
+        if (msgProp.TryGetProperty("content", out var contentProp) && contentProp.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var block in contentProp.EnumerateArray())
+            {
+                if (block.ValueKind == JsonValueKind.Object
+                    && block.TryGetProperty("type", out var blockType)
+                    && blockType.ValueKind == JsonValueKind.String
+                    && blockType.GetString() == "tool_use")
+                {
+                    toolCalls++;
+                }
+            }
+        }
+
         string sessionId = root.TryGetProperty("sessionId", out var sidProp) && sidProp.ValueKind == JsonValueKind.String
             ? sidProp.GetString() ?? fallbackSessionId : fallbackSessionId;
 
@@ -312,14 +370,21 @@ public static class CostAnalytics
                 projectLabels[projectKey] = dirKey;
         }
 
-        grand.Add(input, output, cacheRead, cacheCreation, cost);
+        grand.Add(input, output, cacheRead, cacheCreation, cost, toolCalls);
 
         string dayKey = dateLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        GetOrAdd(dayTotals, dayKey).Add(input, output, cacheRead, cacheCreation, cost);
-        GetOrAdd(modelTotals, model).Add(input, output, cacheRead, cacheCreation, cost);
-        GetOrAdd(projectTotals, projectKey).Add(input, output, cacheRead, cacheCreation, cost);
-        GetOrAdd(sessionTotals, sessionId).Add(input, output, cacheRead, cacheCreation, cost);
+        GetOrAdd(dayTotals, dayKey).Add(input, output, cacheRead, cacheCreation, cost, toolCalls);
+        GetOrAdd(modelTotals, model).Add(input, output, cacheRead, cacheCreation, cost, toolCalls);
+        GetOrAdd(projectTotals, projectKey).Add(input, output, cacheRead, cacheCreation, cost, toolCalls);
+        GetOrAdd(sessionTotals, sessionId).Add(input, output, cacheRead, cacheCreation, cost, toolCalls);
         sessionProject[sessionId] = projectLabels.TryGetValue(projectKey, out var lbl) ? lbl : projectKey;
+
+        if (!daySessions.TryGetValue(dayKey, out var seenThatDay))
+        {
+            seenThatDay = new HashSet<string>();
+            daySessions[dayKey] = seenThatDay;
+        }
+        seenThatDay.Add(sessionId);
     }
 
     private static TokenTotals GetOrAdd(Dictionary<string, TokenTotals> dict, string key)
@@ -350,6 +415,7 @@ public static class CostAnalytics
         Dictionary<string, string> projectLabels,
         Dictionary<string, TokenTotals> sessionTotals,
         Dictionary<string, string> sessionProject,
+        Dictionary<string, HashSet<string>> daySessions,
         int days, bool projectScoped)
     {
         var byDay = dayTotals
@@ -392,6 +458,8 @@ public static class CostAnalytics
             ByModel = byModel,
             ByProject = byProject,
             BySession = bySession,
+            SessionCount = sessionTotals.Count,
+            SessionsByDay = daySessions.ToDictionary(kv => kv.Key, kv => kv.Value.Count),
             Days = days,
             ProjectScoped = projectScoped,
         };

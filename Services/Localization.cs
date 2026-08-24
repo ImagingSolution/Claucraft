@@ -255,6 +255,28 @@ public static class Loc
         ["ContextLowTitle"] = new() { ["English"] = "Context is running low", ["日本語"] = "コンテキストが残り少なくなっています" },
         ["ContextLowDetail"] = new() { ["English"] = "About {0}% left. Running /compact now summarises the conversation and frees room.", ["日本語"] = "残り約 {0}% です。いま /compact を実行すると会話が要約され、余裕ができます。" },
         ["RunCompact"] = new() { ["English"] = "Run /compact", ["日本語"] = "/compact を実行" },
+
+        // ── Launch profiles ──
+        ["LaunchProfile"] = new() { ["English"] = "Profile", ["日本語"] = "プロファイル" },
+        ["LaunchProfileTooltip"] = new() { ["English"] = "Flags applied to new sessions. Bounding context length is what lowers the bill.", ["日本語"] = "新規セッションに付与するフラグ。コンテキスト長を抑えることがコスト削減に直結します。" },
+        ["ProfileLightDesc"] = new() { ["English"] = "Sonnet, low effort, context capped at 100k, MCP and skills off. For lookups and single fixes.", ["日本語"] = "Sonnet・低 effort・コンテキスト上限 100k・MCP とスキルを無効。調査や単発修正向け。" },
+        ["ProfileStandardDesc"] = new() { ["English"] = "Context capped at 200k with better cache reuse. Everyday work.", ["日本語"] = "コンテキスト上限 200k、キャッシュ再利用を改善。通常作業向け。" },
+        ["ProfileDeepDesc"] = new() { ["English"] = "Opus at high effort, nothing restricted. Design and review.", ["日本語"] = "Opus・高 effort・制限なし。設計やレビュー向け。" },
+
+        // ── Marginal cost ──
+        ["CostMeterFormat"] = new() { ["English"] = "${0} turn / ${1} next", ["日本語"] = "${0}/ターン・次 ${1}" },
+        ["CostMeterTooltipFormat"] = new() { ["English"] = "This turn cost ${0}. The conversation is now {1} tokens, so the next turn costs about ${2} just to re-read it. Session so far: ${3} over {4} turns.\nClick to open the cost dashboard.", ["日本語"] = "このターンは ${0}。会話は現在 {1} トークンあり、次のターンは読み直すだけで約 ${2} かかります。セッション累計 ${3}（{4} ターン）。\nクリックでコストダッシュボードを開きます。" },
+
+        // ── Hand-off ──
+        ["HandoffAction"] = new() { ["English"] = "Hand off to a new session", ["日本語"] = "引き継いで新規セッション" },
+        ["HandoffTitle"] = new() { ["English"] = "This session is getting expensive to continue", ["日本語"] = "このセッションは継続コストが高くなっています" },
+        ["HandoffDetailFormat"] = new() { ["English"] = "About {0}% context left. Each further turn costs roughly ${1} just to re-read the conversation. Handing off starts fresh from a brief built locally, at no token cost.", ["日本語"] = "コンテキスト残り約 {0}%。以降は会話を読み直すだけで1ターンあたり約 ${1} かかります。引き継ぎならローカル生成したブリーフでやり直せて、トークン費用はかかりません。" },
+        ["HandoffDialogTitle"] = new() { ["English"] = "Hand off to a new session", ["日本語"] = "新規セッションへ引き継ぐ" },
+        ["HandoffDialogHint"] = new() { ["English"] = "Extracted from this session's transcript. Edit freely - it is placed in the new session's input box, and nothing is sent until you press Enter.", ["日本語"] = "このセッションの記録から抽出したものです。自由に編集できます。新規セッションの入力欄に差し込まれるだけで、Enter を押すまで送信されません。" },
+        ["HandoffStart"] = new() { ["English"] = "Start new session", ["日本語"] = "新規セッションを開始" },
+        ["HandoffCancel"] = new() { ["English"] = "Cancel", ["日本語"] = "キャンセル" },
+        ["HandoffEmpty"] = new() { ["English"] = "There is nothing to hand off yet - this session has no recorded requests or edits.", ["日本語"] = "引き継ぐ内容がまだありません。このセッションには記録された依頼や編集がありません。" },
+        ["HandoffNoSession"] = new() { ["English"] = "No transcript found for the active session yet. Wait for the first reply, then try again.", ["日本語"] = "アクティブなセッションの記録がまだ見つかりません。最初の応答を待ってから再試行してください。" },
         ["Dismiss"] = new() { ["English"] = "Dismiss", ["日本語"] = "閉じる" },
 
         // ── Error diagnosis ──

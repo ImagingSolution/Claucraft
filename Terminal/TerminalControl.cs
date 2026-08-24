@@ -3541,6 +3541,19 @@ public class TerminalControl : Control, IDisposable
         _expandedTextBox.Focus();
     }
 
+    /// <summary>
+    /// Opens the expanded input panel if needed and puts <paramref name="text"/> in it, replacing
+    /// anything already there. For long text that the user must be able to read and edit before
+    /// it goes anywhere - nothing is written to the PTY until they send it themselves.
+    /// </summary>
+    public void ShowInExpandedInput(string text)
+    {
+        if (!_isExpanded) ExpandInputPanel();
+        _expandedTextBox.Text = text;
+        _expandedTextBox.CaretIndex = _expandedTextBox.Text.Length;
+        _expandedTextBox.Focus();
+    }
+
     public void SendText(string text) => _pty?.WriteInput(text);
 
     private async Task PasteToInputBoxAsync()

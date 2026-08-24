@@ -49,15 +49,25 @@
                               SelectionChanged="OnProjectFolderSelectionChanged"
                               KeyDown="OnProjectFolderKeyDown" />
 
-                    <Button x:Name="BtnNewClaude" Grid.Row="0" Grid.Column="2"
-                            Classes="primary"
-                            ToolTip.Tip="Open a new session"
-                            Click="OnNewClaude"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Center">
-                        <TextBlock x:Name="LblNewClaude" Text="New Session"
-                                   VerticalAlignment="Center" HorizontalAlignment="Center" />
-                    </Button>
+                    <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                        <!-- Launch profile: bounds how much context a new session accumulates -->
+                        <ComboBox x:Name="CmbLaunchProfile"
+                                  Classes="modern"
+                                  MinWidth="104"
+                                  IsVisible="False"
+                                  VerticalAlignment="Center"
+                                  SelectionChanged="OnLaunchProfileChanged" />
+
+                        <Button x:Name="BtnNewClaude"
+                                Classes="primary"
+                                ToolTip.Tip="Open a new session"
+                                Click="OnNewClaude"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center">
+                            <TextBlock x:Name="LblNewClaude" Text="New Session"
+                                       VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        </Button>
+                    </StackPanel>
 
                     <!-- Row 1: Session -->
                     <TextBlock x:Name="LblSession" Grid.Row="1" Grid.Column="0"
@@ -194,6 +204,14 @@
                         <Border x:Name="StatusContextFill" Height="6" CornerRadius="3"
                                 Background="#30D158" HorizontalAlignment="Left" Width="0" />
                     </Border>
+                </StackPanel>
+                <!-- Marginal cost: what this turn cost and what the next one will cost -->
+                <StackPanel x:Name="StatusCostPanel" Orientation="Horizontal" Spacing="5"
+                            IsVisible="False" Cursor="Hand" VerticalAlignment="Center"
+                            PointerPressed="OnCostMeterPressed">
+                    <TextBlock x:Name="StatusCostText" Text=""
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
+                               VerticalAlignment="Center" />
                 </StackPanel>
                 <!-- Usage progress bar -->
                 <StackPanel x:Name="StatusUsagePanel" Orientation="Horizontal" Spacing="5" Cursor="Hand"

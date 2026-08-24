@@ -43,6 +43,18 @@ public class AppSettings
     /// <summary>Plan the usage readout is measured against: Pro, Max5x or Max20x.</summary>
     public string PlanTier { get; set; } = "Pro";
 
+    /// <summary>Launch profile applied to new sessions, matched against CliProvider.Profiles.</summary>
+    public string ActiveProfileId { get; set; } = CliProviderService.StandardProfileId;
+
+    /// <summary>Show what the current turn cost and what the next one will cost in the status bar.</summary>
+    public bool ShowMarginalCost { get; set; } = true;
+
+    /// <summary>
+    /// Context-remaining percentage at or below which the hand-off banner appears.
+    /// Continuing past this point costs more per turn than starting fresh with a brief.
+    /// </summary>
+    public int HandoffBannerThreshold { get; set; } = 20;
+
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Claucraft");

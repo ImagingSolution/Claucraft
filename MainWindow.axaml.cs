@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -33,6 +34,16 @@ public partial class MainWindow : Window
     private FileSystemWatcher? _fileWatcher;
     private DispatcherTimer? _fileWatcherDebounce;
     private readonly UsageTracker _usageTracker = new();
+
+    /// <summary>Marginal cost of the session in the active window. See SessionCostMonitor.</summary>
+    private readonly SessionCostMonitor _costMonitor = new();
+    private List<LaunchProfile> _profiles = new();
+    private bool _suppressProfileChange;
+    private bool _wasWorking;
+    private bool _costRefreshInFlight;
+
+    /// <summary>Banner action that opens the hand-off flow rather than typing a slash command.</summary>
+    private const string HandoffActionCommand = "claucraft:handoff";
     private bool _isDark = true;
     private MdiLayout _layout = MdiLayout.Maximize;
     private int _activeChildIndex = -1;
@@ -474,7 +485,21 @@ public partial class MainWindow : Window
         BtnActivityModeSwitch.IsVisible = features.ModeSwitchButton;
         BtnActivityCompact.IsVisible = features.CompactButton;
 
-        // Usage tracking reads Claude's stats-cache.json, so it only runs for Claude
+        // Launch profiles are per-CLI; a CLI that defines none keeps the picker hidden.
+        _profiles = _cli.ActiveProfiles.ToList();
+        _suppressProfileChange = true;
+        CmbLaunchProfile.ItemsSource = _profiles.Select(p => p.Name).ToList();
+        CmbLaunchProfile.IsVisible = _profiles.Count > 0;
+        if (_profiles.Count > 0)
+        {
+            var activeProfile = _cli.FindProfile(_settings.ActiveProfileId);
+            int profileIndex = activeProfile == null ? 0 : _profiles.FindIndex(p => p.Id == activeProfile.Id);
+            CmbLaunchProfile.SelectedIndex = profileIndex < 0 ? 0 : profileIndex;
+            UpdateProfileTooltip();
+        }
+        _suppressProfileChange = false;
+
+        // Usage tracking reads Claude Code's transcripts, so it only runs for Claude
         StatusUsagePanel.IsVisible = features.UsageTracker;
         if (features.UsageTracker)
         {
@@ -2097,6 +2122,7 @@ public partial class MainWindow : Window
         else
             ClearLiveStatus();
 
+        RefreshCostReadout(_insight);
         UpdateAdviceBanner(_insight);
     }
 
@@ -2171,13 +2197,26 @@ public partial class MainWindow : Window
             actionCommand = snap.Error.ActionCommand;
         }
         else if (_settings.EnableLiveStatus && _cli.Features.CompactButton
-                 && snap.ContextRemainingPercent is int left && left <= 20)
+                 && snap.ContextRemainingPercent is int left
+                 && left <= _settings.HandoffBannerThreshold)
         {
             key = "compact";
-            title = Loc.Get("ContextLowTitle");
-            detail = string.Format(Loc.Get("ContextLowDetail"), left);
-            actionLabel = Loc.Get("RunCompact");
-            actionCommand = "/compact";
+            var cost = _costMonitor.Current;
+
+            // Handing off is the cheaper of the two ways out, so it gets the button. /compact
+            // stays one click away on the context meter itself.
+            if (cost.HasData)
+            {
+                title = Loc.Get("HandoffTitle");
+                detail = string.Format(Loc.Get("HandoffDetailFormat"), left, FormatUsd(cost.NextTurnUsd));
+            }
+            else
+            {
+                title = Loc.Get("ContextLowTitle");
+                detail = string.Format(Loc.Get("ContextLowDetail"), left);
+            }
+            actionLabel = Loc.Get("HandoffAction");
+            actionCommand = HandoffActionCommand;
             accent = Color.FromRgb(255, 214, 10);
         }
 
@@ -2225,6 +2264,15 @@ public partial class MainWindow : Window
     private void OnBannerAction(object? sender, RoutedEventArgs e)
     {
         var cmd = _bannerActionCommand;
+
+        if (cmd == HandoffActionCommand)
+        {
+            if (_bannerKey != null) _dismissedBanners.Add(_bannerKey);
+            HideBanner();
+            _ = StartHandoffAsync();
+            return;
+        }
+
         if (!string.IsNullOrEmpty(cmd))
         {
             if (cmd.StartsWith("/") && _activeChildIndex >= 0 && _activeChildIndex < _children.Count)
@@ -3212,6 +3260,229 @@ public partial class MainWindow : Window
         return source.Task;
     }
 
+    // ── Launch profiles ──
+
+    private void OnLaunchProfileChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressProfileChange) return;
+
+        int index = CmbLaunchProfile.SelectedIndex;
+        if (index < 0 || index >= _profiles.Count) return;
+
+        _settings.ActiveProfileId = _profiles[index].Id;
+        _settings.Save();
+        UpdateProfileTooltip();
+    }
+
+    private void UpdateProfileTooltip()
+    {
+        var profile = _cli.FindProfile(_settings.ActiveProfileId);
+        ToolTip.SetTip(CmbLaunchProfile, profile == null
+            ? Loc.Get("LaunchProfileTooltip")
+            : $"{Loc.Get(profile.Description)}\n\n{profile.ExtraArgs}");
+    }
+
+    // ── Marginal cost ──
+
+    /// <summary>
+    /// Transcript backing the active window. Prefers the session the window actually resumed;
+    /// falls back to the newest transcript in the project, which can belong to a sibling window
+    /// when several share one folder and none has reported its id yet.
+    /// </summary>
+    private string? ResolveActiveSessionPath()
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return null;
+
+        var child = _children[_activeChildIndex];
+        var folder = string.IsNullOrEmpty(child.ProjectFolder) ? _projectFolder : child.ProjectFolder;
+        if (string.IsNullOrEmpty(folder)) return null;
+
+        if (!string.IsNullOrEmpty(child.SessionId))
+        {
+            var byId = SessionMessageReader.FindSessionFile(folder, child.SessionId!);
+            if (byId != null) return byId;
+        }
+
+        return SessionMessageReader.FindMostRecentSession(folder);
+    }
+
+    /// <summary>
+    /// Keeps the cost readout in step with the active session. New usage only reaches the
+    /// transcript when a turn ends, so the file is re-read on that edge rather than every tick.
+    /// </summary>
+    private async void RefreshCostReadout(TerminalSnapshot snap)
+    {
+        if (!_settings.ShowMarginalCost || !_cli.Features.CompactButton)
+        {
+            StatusCostPanel.IsVisible = false;
+            return;
+        }
+
+        string? path = ResolveActiveSessionPath();
+        if (path == null)
+        {
+            StatusCostPanel.IsVisible = false;
+            return;
+        }
+
+        bool attaching = !string.Equals(_costMonitor.Path, path, StringComparison.OrdinalIgnoreCase);
+        _costMonitor.Track(path);
+
+        bool turnEnded = _wasWorking && !snap.IsWorking;
+        _wasWorking = snap.IsWorking;
+
+        if (!attaching && !turnEnded)
+        {
+            ApplyCostReadout();
+            return;
+        }
+
+        if (_costRefreshInFlight) return;
+        _costRefreshInFlight = true;
+        try { await _costMonitor.RefreshAsync(); }
+        catch { /* a transcript that cannot be read just leaves the readout as it was */ }
+        finally { _costRefreshInFlight = false; }
+
+        ApplyCostReadout();
+    }
+
+    private void ApplyCostReadout()
+    {
+        var cost = _costMonitor.Current;
+        StatusCostPanel.IsVisible = cost.HasData;
+        if (!cost.HasData) return;
+
+        StatusCostText.Text = string.Format(Loc.Get("CostMeterFormat"),
+            FormatUsd(cost.LastTurnUsd), FormatUsd(cost.NextTurnUsd));
+
+        ToolTip.SetTip(StatusCostPanel, string.Format(Loc.Get("CostMeterTooltipFormat"),
+            FormatUsd(cost.LastTurnUsd), FormatTokens(cost.ContextTokens),
+            FormatUsd(cost.NextTurnUsd), FormatUsd(cost.SessionUsd), cost.Turns));
+    }
+
+    private void OnCostMeterPressed(object? sender, PointerPressedEventArgs e)
+    {
+        new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this);
+        e.Handled = true;
+    }
+
+    private static string FormatUsd(double usd) =>
+        usd >= 100 ? usd.ToString("N0", CultureInfo.InvariantCulture)
+        : usd >= 1 ? usd.ToString("0.00", CultureInfo.InvariantCulture)
+        : usd.ToString("0.000", CultureInfo.InvariantCulture);
+
+    private static string FormatTokens(long tokens) =>
+        tokens >= 1_000_000 ? (tokens / 1_000_000.0).ToString("0.0", CultureInfo.InvariantCulture) + "M"
+        : tokens >= 1_000 ? (tokens / 1_000.0).ToString("0", CultureInfo.InvariantCulture) + "k"
+        : tokens.ToString(CultureInfo.InvariantCulture);
+
+    // ── Hand-off to a new session ──
+
+    /// <summary>
+    /// Builds a brief from the active session's transcript, lets the user edit it, then opens a
+    /// fresh session with it waiting in the input box. Nothing is sent: the user presses Enter.
+    /// This replaces /compact, which pays full model price to summarise a context that is
+    /// already sitting on disk.
+    /// </summary>
+    private async Task StartHandoffAsync()
+    {
+        string? path = ResolveActiveSessionPath();
+        if (path == null)
+        {
+            await ShowConfirmDialog(Loc.Get("HandoffDialogTitle"), Loc.Get("HandoffNoSession"));
+            return;
+        }
+
+        string brief;
+        try { brief = await HandoffBuilder.BuildAsync(path); }
+        catch { brief = ""; }
+
+        if (string.IsNullOrWhiteSpace(brief))
+        {
+            await ShowConfirmDialog(Loc.Get("HandoffDialogTitle"), Loc.Get("HandoffEmpty"));
+            return;
+        }
+
+        string? edited = await ShowHandoffDialog(brief);
+        if (string.IsNullOrWhiteSpace(edited)) return;
+
+        LaunchClaudeWithInitialPrompt();
+
+        // The brief goes into Claucraft's own input panel, not the PTY, so it does not race
+        // the CLI's startup and cannot be sent before the user has read it.
+        if (_children.Count > 0)
+            _children[^1].Terminal.ShowInExpandedInput(edited!);
+    }
+
+    private Task<string?> ShowHandoffDialog(string brief)
+    {
+        var source = new TaskCompletionSource<string?>();
+
+        var hint = new TextBlock
+        {
+            Text = Loc.Get("HandoffDialogHint"),
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12,
+            Foreground = new SolidColorBrush(DialogSubtle()),
+        };
+
+        var editor = new TextBox
+        {
+            Text = brief,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            Height = 380,
+            FontFamily = new FontFamily(_settings.FontFamily),
+            FontSize = 12,
+            VerticalContentAlignment = VerticalAlignment.Top,
+        };
+        ScrollViewer.SetVerticalScrollBarVisibility(editor, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
+
+        var start = new Button
+        {
+            Content = Loc.Get("HandoffStart"),
+            MinWidth = 140,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var cancel = new Button
+        {
+            Content = Loc.Get("HandoffCancel"),
+            MinWidth = 88,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(start);
+
+        var panel = new StackPanel { Spacing = 14, Margin = new Thickness(22, 20) };
+        panel.Children.Add(hint);
+        panel.Children.Add(editor);
+        panel.Children.Add(buttons);
+
+        var dialog = CreateToolDialog(Loc.Get("HandoffDialogTitle"), 720, 0);
+        dialog.SizeToContent = SizeToContent.Height;
+        dialog.Content = panel;
+
+        bool answered = false;
+        start.Click += (_, _) =>
+        {
+            answered = true;
+            source.TrySetResult(editor.Text);
+            dialog.Close();
+        };
+        cancel.Click += (_, _) => { answered = true; source.TrySetResult(null); dialog.Close(); };
+        dialog.Closed += (_, _) => { if (!answered) source.TrySetResult(null); };
+
+        _ = dialog.ShowDialog(this);
+        return source.Task;
+    }
+
     // ── Tab Context Menu ──
 
     private ContextMenu CreateTabContextMenu(MdiChildInfo entry)
@@ -3331,7 +3602,7 @@ public partial class MainWindow : Window
             if (canResume)
                 CreateNewChild(_cli.BuildResumeCommand(tab.SessionId), tab.TabTitle, tab.TabTitle, tab.SessionId);
             else
-                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt), tab.TabTitle);
+                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle);
 
             if (tab.IsManualTitle && _children.Count > 0)
             {
@@ -4386,8 +4657,11 @@ public partial class MainWindow : Window
 
     private void LaunchClaudeWithInitialPrompt()
     {
-        CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt), _cli.Active.Name);
+        CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), _cli.Active.Name);
     }
+
+    /// <summary>The launch profile new sessions start with, or null when the CLI defines none.</summary>
+    private LaunchProfile? ActiveLaunchProfile() => _cli.FindProfile(_settings.ActiveProfileId);
 
     protected override async void OnClosed(EventArgs e)
     {

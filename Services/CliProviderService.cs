@@ -19,6 +19,10 @@ public class CliProviderService
 {
     public const string ClaudeId = "claude";
 
+    public const string LightProfileId = "light";
+    public const string StandardProfileId = "standard";
+    public const string DeepProfileId = "deep";
+
     private const int VersionTimeoutMs = 3000;
 
     private static readonly string SettingsDir = Path.Combine(
@@ -72,6 +76,22 @@ public class CliProviderService
 
     public CliProvider? Find(string id) => _providers.FirstOrDefault(p => p.Id == id);
 
+    /// <summary>Launch profiles the active CLI offers. Empty means the picker stays hidden.</summary>
+    public IReadOnlyList<LaunchProfile> ActiveProfiles => Active.Profiles;
+
+    /// <summary>
+    /// Resolves a stored profile id against the active CLI. Falls back to the standard
+    /// profile, then the first one, so a stale id from another CLI never launches unflagged.
+    /// </summary>
+    public LaunchProfile? FindProfile(string? id)
+    {
+        var list = Active.Profiles;
+        if (list.Count == 0) return null;
+        return list.FirstOrDefault(p => p.Id == id)
+            ?? list.FirstOrDefault(p => p.Id == StandardProfileId)
+            ?? list[0];
+    }
+
     public static string ConfigFolderPath => SettingsDir;
 
     /// <summary>Absolute path of the active provider's config directory, e.g. C:\Users\me\.claude.</summary>
@@ -89,16 +109,17 @@ public class CliProviderService
 
     /// <summary>
     /// Command for a brand-new session. NewArgs is only applied when an initial prompt
-    /// is set; without one the CLI is launched bare.
+    /// is set; without one the CLI is launched with just the profile flags.
     /// </summary>
-    public string BuildNewCommand(string? initialPrompt)
+    public string BuildNewCommand(string? initialPrompt, LaunchProfile? profile = null)
     {
         var p = Active;
         var exe = QuoteExe(p.Exe);
         var prompt = SanitizePrompt(initialPrompt);
+        var extra = SanitizePrompt(profile?.ExtraArgs);
 
         if (string.IsNullOrEmpty(prompt))
-            return exe;
+            return string.IsNullOrEmpty(extra) ? exe : $"{exe} {extra}";
 
         var args = p.NewArgs;
         args = string.IsNullOrWhiteSpace(args)
@@ -106,6 +127,11 @@ public class CliProviderService
             : args.Contains("{prompt}")
                 ? args.Replace("{prompt}", QuoteArg(prompt))
                 : $"{args} {QuoteArg(prompt)}";
+
+        // Profile flags lead so a prompt beginning with "-" still lands as the trailing
+        // positional argument rather than being eaten as a flag value.
+        if (!string.IsNullOrEmpty(extra))
+            args = $"{extra} {args}";
 
         return $"{exe} {args}".Trim();
     }
@@ -409,6 +435,19 @@ public class CliProviderService
                 continue;
             }
 
+            // Launch profiles arrived after providers.json first shipped. Backfill them so an
+            // existing install gets the presets rather than an empty picker; a user who has
+            // already customised or removed them keeps their list untouched.
+            if (stale.Profiles is not { Count: > 0 })
+            {
+                var match = presets.FirstOrDefault(p => p.Id == stale.Id);
+                if (match != null && match.Profiles.Count > 0)
+                {
+                    stale.Profiles = match.Profiles.Select(x => x.Clone()).ToList();
+                    changed = true;
+                }
+            }
+
             result.Add(stale);
         }
 
@@ -445,6 +484,34 @@ public class CliProviderService
                 ModeSwitchButton = true,
                 DiagramViewer = true,
                 ExitCommand = "/exit\r",
+            },
+            // Re-reading the conversation prefix (cache_read) is the bulk of a session's cost,
+            // so these presets exist to bound context length and trim the fixed prefix.
+            // Deliberately not using --bare: it reads auth only from ANTHROPIC_API_KEY or an
+            // apiKeyHelper, never OAuth or the keychain, so it breaks Pro/Max sign-in.
+            Profiles = new List<LaunchProfile>
+            {
+                new()
+                {
+                    Id = LightProfileId,
+                    Name = "Light",
+                    ExtraArgs = "--model sonnet --effort low --autocompact 100k --strict-mcp-config --disable-slash-commands",
+                    Description = "ProfileLightDesc",
+                },
+                new()
+                {
+                    Id = StandardProfileId,
+                    Name = "Standard",
+                    ExtraArgs = "--autocompact 200k --exclude-dynamic-system-prompt-sections",
+                    Description = "ProfileStandardDesc",
+                },
+                new()
+                {
+                    Id = DeepProfileId,
+                    Name = "Deep",
+                    ExtraArgs = "--model opus --effort high",
+                    Description = "ProfileDeepDesc",
+                },
             },
         },
         new CliProvider

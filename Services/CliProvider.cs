@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 
 namespace Claucraft.Services;
@@ -34,6 +35,33 @@ public class CliFeatures
 }
 
 /// <summary>
+/// A named set of extra command-line flags applied when starting a new session.
+/// Exists to cap how much context a session accumulates: cache_read of the conversation
+/// prefix dominates the bill, so the flags that bound context length (--autocompact) and
+/// trim the fixed prefix (--strict-mcp-config, --disable-slash-commands) are the levers.
+/// Serialized with the provider so users can edit them without a rebuild.
+/// </summary>
+public class LaunchProfile
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+
+    /// <summary>Flags inserted ahead of the prompt by <c>CliProviderService.BuildNewCommand</c>.</summary>
+    public string ExtraArgs { get; set; } = "";
+
+    /// <summary>Localization key describing when to pick this profile, or literal text.</summary>
+    public string Description { get; set; } = "";
+
+    public LaunchProfile Clone() => new()
+    {
+        Id = Id,
+        Name = Name,
+        ExtraArgs = ExtraArgs,
+        Description = Description,
+    };
+}
+
+/// <summary>
 /// One AI CLI that Claucraft can drive (Claude Code, Antigravity CLI, Codex CLI, ...).
 /// Serialized to %AppData%\Claucraft\providers.json so users can adjust arguments
 /// without a rebuild when a CLI changes its flags.
@@ -61,6 +89,12 @@ public class CliProvider
     public string InstallHint { get; set; } = "";
 
     public CliFeatures Features { get; set; } = new();
+
+    /// <summary>
+    /// Launch presets offered next to the New Session button. Empty means the CLI has none
+    /// and the picker stays hidden.
+    /// </summary>
+    public List<LaunchProfile> Profiles { get; set; } = new();
 
     // ── Runtime state (not persisted) ──
 
@@ -90,6 +124,7 @@ public class CliProvider
         ConfigDir = ConfigDir,
         InstallHint = InstallHint,
         Features = Features.Clone(),
+        Profiles = Profiles.Select(p => p.Clone()).ToList(),
     };
 }
 

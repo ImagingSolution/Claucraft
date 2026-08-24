@@ -3,11 +3,12 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Text.Json;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Media;
+using Claucraft.Services;
 
 namespace Claucraft;
 
@@ -18,45 +19,41 @@ public partial class UsageChartWindow : Window
     public UsageChartWindow()
     {
         InitializeComponent();
-        Opened += (_, _) => DrawChart();
+        Opened += async (_, _) => await DrawChartAsync();
     }
 
-    private List<DailyData> LoadData()
+    /// <summary>
+    /// Daily counts for the last 14 days, aggregated from the session transcripts.
+    /// This used to read ~/.claude/stats-cache.json, which is not written on every install;
+    /// when it was missing the chart drew nothing at all.
+    /// </summary>
+    private static async Task<List<DailyData>> LoadDataAsync()
     {
         var data = new List<DailyData>();
         try
         {
-            string path = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".claude", "stats-cache.json");
-            if (!System.IO.File.Exists(path)) return data;
+            var report = await CostAnalytics.BuildAsync(days: 14);
 
-            string json = System.IO.File.ReadAllText(path);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("dailyActivity", out var arr)) return data;
-
-            foreach (var item in arr.EnumerateArray())
+            // ByDay is pre-filled with one entry per calendar day, oldest first.
+            foreach (var day in report.ByDay)
             {
+                report.SessionsByDay.TryGetValue(day.Key, out int sessions);
                 data.Add(new DailyData(
-                    item.GetProperty("date").GetString() ?? "",
-                    item.TryGetProperty("messageCount", out var mc) ? mc.GetInt32() : 0,
-                    item.TryGetProperty("toolCallCount", out var tc) ? tc.GetInt32() : 0,
-                    item.TryGetProperty("sessionCount", out var sc) ? sc.GetInt32() : 0
-                ));
+                    day.Key,
+                    (int)Math.Min(int.MaxValue, day.Totals.Turns),
+                    (int)Math.Min(int.MaxValue, day.Totals.ToolCalls),
+                    sessions));
             }
         }
         catch { }
 
-        // Last 14 days
-        return data.TakeLast(14).ToList();
+        return data;
     }
 
-    private void DrawChart()
+    private async Task DrawChartAsync()
     {
         ChartCanvas.Children.Clear();
-        var data = LoadData();
+        var data = await LoadDataAsync();
         if (data.Count == 0) return;
 
         double canvasW = ChartCanvas.Bounds.Width;
