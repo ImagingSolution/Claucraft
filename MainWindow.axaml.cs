@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -25,7 +26,7 @@ namespace Claucraft;
 public partial class MainWindow : Window
 {
     private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical, Cascade }
-    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows }
+    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, Changes }
 
     private string? _projectFolder;
     private string? _gitRepoUrl;
@@ -51,7 +52,24 @@ public partial class MainWindow : Window
     private double _sidePanelWidth = 250;
     private bool _settingsInitialized;
     private bool _snippetsInitialized;
+    // Set while the settings panel is being populated, so seeding a checkbox does not
+    // write a half-filled panel back over the saved settings.
+    private bool _suppressSettingsChanged;
     private readonly SnippetStore _snippetStore;
+    private readonly NotificationService _notifications = new();
+    private readonly CheckpointService _checkpoints = new();
+
+    // Live status read off the terminal screen (mode / activity / context / errors)
+    private DispatcherTimer? _insightTimer;
+    private TerminalSnapshot _insight = new();
+    private string? _bannerKey;
+    private string? _bannerActionCommand;
+    private readonly HashSet<string> _dismissedBanners = new();
+    private List<GitChange> _changes = new();
+    private bool _changesLoading;
+
+    /// <summary>Plan ids in the order the settings combo lists them.</summary>
+    private static readonly string[] PlanTierIds = { "Pro", "Max5x", "Max20x" };
 
     // Snippet drag state
     private bool _snippetDragging;
@@ -103,7 +121,12 @@ public partial class MainWindow : Window
 
         _settings = AppSettings.Load();
         _snippetStore = SnippetStore.Load();
+        _snippetStore.SeedDefaultsIfEmpty(_settings.Language);
         _isDark = _settings.IsDark;
+
+        _checkpoints.Load();
+        _notifications.EnableToast = _settings.NotifyOnComplete;
+        _notifications.EnableSound = _settings.NotifySound;
 
         _cli = new CliProviderService { ActiveId = _settings.CliProviderId };
         // A retired CLI (e.g. gemini -> antigravity) is remapped on assignment; persist it
@@ -117,6 +140,13 @@ public partial class MainWindow : Window
         InitializeProviderFieldHandlers();
 
         _usageTracker.Updated += OnUsageUpdated;
+        UsageTracker.DailyLimit = PlanDailyLimit(_settings.PlanTier);
+
+        // Mirror what the CLI is doing into the status bar. Cheap: reads the screen buffer
+        // that is already in memory, no extra process or file access.
+        _insightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
+        _insightTimer.Tick += (_, _) => RefreshLiveStatus();
+        _insightTimer.Start();
 
 
         _projectFolder = !string.IsNullOrEmpty(_settings.ProjectFolder) && Directory.Exists(_settings.ProjectFolder)
@@ -131,6 +161,11 @@ public partial class MainWindow : Window
 
         // Global keyboard shortcuts
         KeyDown += OnGlobalKeyDown;
+        // F1 and Ctrl+/ never survive the bubble route: with a terminal focused, its input
+        // TextBox marks them handled before the window ever sees them. Catch those two on the
+        // way down instead. Everything else stays on the bubble route, so the terminal keeps
+        // first claim on the keys it needs.
+        AddHandler(KeyDownEvent, OnAppShortcutTunnel, RoutingStrategies.Tunnel);
 
         // Apply saved language and theme
         Loc.Language = _settings.Language;
@@ -161,6 +196,15 @@ public partial class MainWindow : Window
         else if (!string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder))
         {
             Dispatcher.UIThread.Post(LaunchClaudeWithInitialPrompt, DispatcherPriority.Background);
+        }
+
+        // First run: surface a missing CLI or sign-in before the user hits a wall in the
+        // terminal. Stays silent when everything checks out.
+        if (!_settings.SetupDoctorShown)
+        {
+            _settings.SetupDoctorShown = true;
+            _settings.Save();
+            _ = ShowSetupDoctorIfProblemsAsync();
         }
     }
 
@@ -229,6 +273,41 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnLayoutTileV, Loc.Get("TileVertically"));
         ToolTip.SetTip(BtnLayoutCascade, Loc.Get("CascadeWindows"));
         ToolTip.SetTip(BtnLayoutMaximize, Loc.Get("FullView"));
+
+        // Stop / undo in the status bar
+        LblStopTask.Text = Loc.Get("StopTask");
+        ToolTip.SetTip(BtnStopTask, Loc.Get("StopTaskTooltip"));
+        LblUndoCheckpoint.Text = Loc.Get("Undo");
+        ToolTip.SetTip(BtnUndoCheckpoint, Loc.Get("UndoTooltip"));
+
+        // Slash command palette
+        ToolTip.SetTip(BtnActivitySlash, Loc.Get("SlashCommandsTooltip"));
+
+        // Setup check, shortcuts, notifications, checkpoints
+        LblSetupDoctor.Text = Loc.Get("SetupDoctor");
+        ToolTip.SetTip(BtnSetupDoctor, Loc.Get("SetupDoctorTooltip"));
+        LblShortcuts.Text = Loc.Get("Shortcuts");
+        ToolTip.SetTip(BtnShortcuts, Loc.Get("ShortcutsTooltip"));
+        LblNotifications.Text = Loc.Get("Notifications");
+        ChkNotifyOnComplete.Content = Loc.Get("NotifyOnComplete");
+        ChkNotifySound.Content = Loc.Get("NotifySound");
+        LblCheckpoints.Text = Loc.Get("Checkpoints");
+        ChkEnableCheckpoints.Content = Loc.Get("EnableCheckpoints");
+
+        // Changed files, tokens & cost, and the live status readouts
+        ToolTip.SetTip(BtnActivityChanges, Loc.Get("ChangesTooltip"));
+        ToolTip.SetTip(BtnActivityCost, Loc.Get("CostTooltip"));
+        ToolTip.SetTip(BtnRefreshChanges, Loc.Get("Refresh"));
+        ToolTip.SetTip(StatusGitChanges, Loc.Get("ChangesTooltip"));
+        ToolTip.SetTip(StatusModeBadge, Loc.Get("ModeBadgeTooltip"));
+        ToolTip.SetTip(StatusContextPanel, Loc.Get("ContextMeterTooltip"));
+        ToolTip.SetTip(BtnBannerDismiss, Loc.Get("Dismiss"));
+        LblLiveStatus.Text = Loc.Get("LiveStatus");
+        ChkEnableLiveStatus.Content = Loc.Get("EnableLiveStatus");
+        ChkEnableErrorBanner.Content = Loc.Get("EnableErrorBanner");
+        LblPlanTier.Text = Loc.Get("PlanTier");
+        LblOpenCostDashboard.Text = Loc.Get("CostDashboard");
+        if (_settingsInitialized) FillPlanTierCombo();
 
         // Window title, the labels that embed the AI name, plus feature gating
         ApplyProviderUi();
@@ -388,7 +467,10 @@ public partial class MainWindow : Window
 
         // Activity bar — hide what this CLI does not implement
         BtnActivityDocView.IsVisible = features.ChatView;
-        BtnActivityDiagram.IsVisible = features.DiagramViewer;
+        // BtnActivityDiagram stays hidden: diagram detection scrapes Claude Code's
+        // terminal output, which breaks whenever Claude changes its renderer. The
+        // handler and inline rendering are still live — restore this line and drop
+        // IsVisible="False" in the axaml to bring the button back.
         BtnActivityModeSwitch.IsVisible = features.ModeSwitchButton;
         BtnActivityCompact.IsVisible = features.CompactButton;
 
@@ -544,6 +626,11 @@ public partial class MainWindow : Window
             Content = panel,
         };
         ok.Click += (_, _) => dialog.Close();
+        // A modal that only closes by mouse also blocks the app from shutting down.
+        dialog.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape || args.Key == Key.Enter) dialog.Close();
+        };
         _ = dialog.ShowDialog(this);
     }
 
@@ -686,17 +773,21 @@ public partial class MainWindow : Window
         SettingsPanel.IsVisible = panel == SidebarPanel.Settings;
         SnippetsPanel.IsVisible = panel == SidebarPanel.Snippets;
         WindowsPanel.IsVisible = panel == SidebarPanel.Windows;
+        ChangesPanel.IsVisible = panel == SidebarPanel.Changes;
         SidePanelTitle.Text = panel switch
         {
             SidebarPanel.Explorer => Loc.Get("EXPLORER"),
             SidebarPanel.Settings => Loc.Get("SETTINGS"),
             SidebarPanel.Snippets => Loc.Get("SNIPPETS"),
             SidebarPanel.Windows => Loc.Get("WINDOWS"),
+            SidebarPanel.Changes => Loc.Get("CHANGES"),
             _ => ""
         };
         BtnBrowseFolder.IsVisible = panel == SidebarPanel.Explorer;
         if (panel == SidebarPanel.Windows)
             RefreshWindowsPanel();
+        if (panel == SidebarPanel.Changes)
+            RefreshChangesPanel();
     }
 
     private void UpdateActivityBarHighlight()
@@ -705,6 +796,7 @@ public partial class MainWindow : Window
         SetActivityButtonActive(BtnActivitySnippets, _activeSidePanel == SidebarPanel.Snippets);
         SetActivityButtonActive(BtnActivitySettings, _activeSidePanel == SidebarPanel.Settings);
         SetActivityButtonActive(BtnActivityWindows, _activeSidePanel == SidebarPanel.Windows);
+        SetActivityButtonActive(BtnActivityChanges, _activeSidePanel == SidebarPanel.Changes);
         // DocView button state is managed by OnActivityDocView, not side panel
     }
 
@@ -1160,6 +1252,14 @@ public partial class MainWindow : Window
         ChkShowWelcomePage.IsChecked = _settings.ShowWelcomePage;
         ChkEnableCharts.IsChecked = _settings.EnableChartRendering;
         ChkDarkMode.IsChecked = _settings.IsDark;
+        _suppressSettingsChanged = true;
+        ChkNotifyOnComplete.IsChecked = _settings.NotifyOnComplete;
+        ChkNotifySound.IsChecked = _settings.NotifySound;
+        ChkEnableCheckpoints.IsChecked = _settings.EnableCheckpoints;
+        ChkEnableLiveStatus.IsChecked = _settings.EnableLiveStatus;
+        ChkEnableErrorBanner.IsChecked = _settings.EnableErrorBanner;
+        FillPlanTierCombo();
+        _suppressSettingsChanged = false;
     }
 
     private bool _suppressWelcomeCheckChanged;
@@ -1261,6 +1361,14 @@ public partial class MainWindow : Window
     }
 
     // ── Snippets Panel ──
+
+    // A snippet may write a newline as the escape text \r, \n or \r\n, or hold a real
+    // line break. All of them mean "press Enter", which the console expects as a CR.
+    private static readonly Regex SnippetNewlineRegex =
+        new(@"\\r\\n|\\r|\\n|\r\n|\r|\n", RegexOptions.Compiled);
+
+    private static string NormalizeSnippetNewlines(string text)
+        => SnippetNewlineRegex.Replace(text, "\r");
 
     private void LoadSnippetsPanel()
     {
@@ -1375,7 +1483,7 @@ public partial class MainWindow : Window
                 && !string.IsNullOrEmpty(textBox.Text))
             {
                 var terminal = _children[_activeChildIndex].Terminal;
-                var snippetText = textBox.Text.Replace("\\r", "\r");
+                var snippetText = NormalizeSnippetNewlines(textBox.Text);
                 if (terminal.IsDocumentView && terminal.IsExpanded)
                     terminal.AppendToExpandedInput(snippetText);
                 else if (terminal.IsDocumentView)
@@ -1723,6 +1831,9 @@ public partial class MainWindow : Window
             StatusGitChanges.Text = changedCount > 0 ? $"+{changedCount}" : "";
         }
         catch { }
+
+        // Keep the changed-files list on the project the status bar just switched to.
+        if (ChangesPanel.IsVisible) RefreshChangesPanel();
     }
 
     private async void RefreshSessionList()
@@ -1857,6 +1968,29 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// Shortcuts that have to win over whatever holds focus, handled while the key event is
+    /// still tunnelling down to it. Keep this list short: anything added here is taken away
+    /// from the terminal and from every text box in the window.
+    /// </summary>
+    private void OnAppShortcutTunnel(object? sender, KeyEventArgs e)
+    {
+        // F1: keyboard shortcut cheat sheet
+        if (e.Key == Key.F1)
+        {
+            ShowShortcutSheet();
+            e.Handled = true;
+            return;
+        }
+        // Ctrl+/: slash command palette
+        if ((e.Key == Key.OemQuestion || e.Key == Key.Divide)
+            && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            ShowSlashCommandPalette();
+            e.Handled = true;
+        }
+    }
+
     // ── Status Bar Updates ──
 
     private void OnUsageUpdated()
@@ -1866,9 +2000,16 @@ public partial class MainWindow : Window
             var today = _usageTracker.GetTodayActivity();
             if (today != null && today.TodayMessages > 0)
             {
-                StatusUsageText.Text = $"{today.TodayMessages} {Loc.Get("Msgs")}";
+                // "about 840 left, resets in 5h" reads better than a bare message count.
+                int limit = PlanDailyLimit(_settings.PlanTier);
+                int left = Math.Max(0, limit - today.TodayMessages);
+                int hours = Math.Max(1, (int)Math.Ceiling((DateTime.Today.AddDays(1) - DateTime.Now).TotalHours));
+                StatusUsageText.Text = string.Format(Loc.Get("UsageRemainingFormat"), left, hours);
+                ToolTip.SetTip(StatusUsagePanel, string.Format(
+                    Loc.Get("UsageTooltipFormat"),
+                    today.TodayMessages, limit, Loc.Get("Plan" + _settings.PlanTier)));
                 // Update progress bar
-                double pct = today.Percentage / 100.0;
+                double pct = Math.Min(1.0, (double)today.TodayMessages / Math.Max(1, limit));
                 StatusUsageBarFill.Width = 60 * Math.Min(1.0, pct);
                 StatusUsageBarFill.Background = pct < 0.5
                     ? new SolidColorBrush(Color.FromRgb(48, 209, 88))    // Green
@@ -1916,12 +2057,417 @@ public partial class MainWindow : Window
                 ? new SolidColorBrush(Color.FromRgb(48, 209, 88))
                 : new SolidColorBrush(Color.FromRgb(142, 142, 147));
             StatusTerminalState.Text = running ? Loc.Get("Running") : Loc.Get("Exited");
+            BtnStopTask.IsVisible = running;
+            BtnUndoCheckpoint.IsVisible = _settings.EnableCheckpoints
+                && _checkpoints.LatestFor(_children[_activeChildIndex].ProjectFolder ?? "") != null;
         }
         else
         {
             StatusTerminalDot.Fill = new SolidColorBrush(Color.FromRgb(100, 100, 105));
             StatusTerminalState.Text = Loc.Get("Ready");
+            BtnStopTask.IsVisible = false;
+            BtnUndoCheckpoint.IsVisible = false;
         }
+    }
+
+    // ── Live Status: mode, activity, context, error diagnosis ──
+
+    /// <summary>
+    /// Reads the active terminal's screen and mirrors what the CLI is doing into the status
+    /// bar: which mode it is in, what it is working on, and how much context is left.
+    /// </summary>
+    private void RefreshLiveStatus()
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count
+            || (!_settings.EnableLiveStatus && !_settings.EnableErrorBanner))
+        {
+            ClearLiveStatus();
+            if (_bannerKey != null) HideBanner();
+            return;
+        }
+
+        string screen;
+        try { screen = _children[_activeChildIndex].Terminal.GetScreenText(); }
+        catch { return; }
+
+        _insight = TerminalInsight.Analyze(screen);
+
+        if (_settings.EnableLiveStatus)
+            ApplyLiveStatus(_insight);
+        else
+            ClearLiveStatus();
+
+        UpdateAdviceBanner(_insight);
+    }
+
+    private void ClearLiveStatus()
+    {
+        StatusModeBadge.IsVisible = false;
+        StatusActivity.IsVisible = false;
+        StatusContextPanel.IsVisible = false;
+    }
+
+    private void ApplyLiveStatus(TerminalSnapshot snap)
+    {
+        // Mode badge — only Claude Code prints the mode line this reads.
+        bool showMode = _cli.Features.ModeSwitchButton
+                        && snap.Mode is AiMode.AcceptEdits or AiMode.Plan or AiMode.BypassPermissions;
+        StatusModeBadge.IsVisible = showMode;
+        if (showMode)
+        {
+            var color = snap.Mode switch
+            {
+                AiMode.AcceptEdits => Color.FromRgb(255, 214, 10),
+                AiMode.Plan => Color.FromRgb(10, 132, 255),
+                _ => Color.FromRgb(255, 69, 58),
+            };
+            StatusModeText.Text = TerminalInsight.ModeShortLabel(snap.Mode);
+            StatusModeText.Foreground = new SolidColorBrush(color);
+            StatusModeBadge.BorderBrush = new SolidColorBrush(color);
+            StatusModeBadge.Background = new SolidColorBrush(color, 0.14);
+        }
+
+        // What it is doing right now
+        bool showActivity = _cli.Features.PermissionOverlay && snap.Activity != AiActivity.None;
+        StatusActivity.IsVisible = showActivity;
+        if (showActivity)
+        {
+            var text = snap.ActivityText;
+            if (!string.IsNullOrEmpty(snap.ActivityTarget))
+                text += "  " + snap.ActivityTarget;
+            if (snap.ElapsedSeconds is int secs && secs > 0)
+                text += $"  ({secs}s)";
+            StatusActivity.Text = text;
+        }
+
+        // Context left before auto-compact
+        bool showContext = _cli.Features.CompactButton && snap.ContextRemainingPercent.HasValue;
+        StatusContextPanel.IsVisible = showContext;
+        if (showContext)
+        {
+            int pct = Math.Clamp(snap.ContextRemainingPercent!.Value, 0, 100);
+            StatusContextText.Text = string.Format(Loc.Get("ContextLeftFormat"), pct);
+            StatusContextFill.Width = 48 * (pct / 100.0);
+            StatusContextFill.Background = new SolidColorBrush(
+                pct > 40 ? Color.FromRgb(48, 209, 88)
+                : pct > 20 ? Color.FromRgb(255, 214, 10)
+                : Color.FromRgb(255, 69, 58));
+        }
+    }
+
+    /// <summary>Shows the one banner that matters right now: a known error, or the compact hint.</summary>
+    private void UpdateAdviceBanner(TerminalSnapshot snap)
+    {
+        string? key = null, title = null, detail = null, actionLabel = null, actionCommand = null;
+        var accent = Color.FromRgb(255, 69, 58);
+
+        if (_settings.EnableErrorBanner && snap.Error != null)
+        {
+            key = "err:" + snap.Error.Kind;
+            title = snap.Error.Title;
+            detail = snap.Error.Detail;
+            actionLabel = snap.Error.ActionLabel;
+            actionCommand = snap.Error.ActionCommand;
+        }
+        else if (_settings.EnableLiveStatus && _cli.Features.CompactButton
+                 && snap.ContextRemainingPercent is int left && left <= 20)
+        {
+            key = "compact";
+            title = Loc.Get("ContextLowTitle");
+            detail = string.Format(Loc.Get("ContextLowDetail"), left);
+            actionLabel = Loc.Get("RunCompact");
+            actionCommand = "/compact";
+            accent = Color.FromRgb(255, 214, 10);
+        }
+
+        if (key == null)
+        {
+            // Condition gone: re-arm anything the user dismissed.
+            _dismissedBanners.Clear();
+            if (_bannerKey != null) HideBanner();
+            return;
+        }
+
+        if (_dismissedBanners.Contains(key))
+        {
+            if (_bannerKey != null) HideBanner();
+            return;
+        }
+
+        if (_bannerKey == key) return;
+        ShowBanner(key, title ?? "", detail ?? "", actionLabel, actionCommand, accent);
+    }
+
+    private void ShowBanner(string key, string title, string detail,
+                            string? actionLabel, string? actionCommand, Color accent)
+    {
+        _bannerKey = key;
+        _bannerActionCommand = actionCommand;
+        BannerTitle.Text = title;
+        BannerTitle.Foreground = new SolidColorBrush(accent);
+        BannerAccent.Background = new SolidColorBrush(accent);
+        InfoBanner.Background = new SolidColorBrush(accent, 0.10);
+        BannerDetail.Text = detail;
+        BannerDetail.IsVisible = !string.IsNullOrWhiteSpace(detail);
+        LblBannerAction.Text = actionLabel ?? "";
+        BtnBannerAction.IsVisible = !string.IsNullOrWhiteSpace(actionLabel);
+        InfoBanner.IsVisible = true;
+    }
+
+    private void HideBanner()
+    {
+        _bannerKey = null;
+        _bannerActionCommand = null;
+        InfoBanner.IsVisible = false;
+    }
+
+    private void OnBannerAction(object? sender, RoutedEventArgs e)
+    {
+        var cmd = _bannerActionCommand;
+        if (!string.IsNullOrEmpty(cmd))
+        {
+            if (cmd.StartsWith("/") && _activeChildIndex >= 0 && _activeChildIndex < _children.Count)
+            {
+                // A slash command belongs to the CLI: type it for the user.
+                _children[_activeChildIndex].Terminal.SendText(cmd + "\r");
+                _children[_activeChildIndex].Terminal.FocusTerminal();
+            }
+            else
+            {
+                // A shell command is for a terminal of their choosing: hand it over on the clipboard.
+                var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+                if (clipboard != null) _ = clipboard.SetTextAsync(cmd);
+            }
+        }
+        if (_bannerKey != null) _dismissedBanners.Add(_bannerKey);
+        HideBanner();
+    }
+
+    private void OnBannerDismiss(object? sender, RoutedEventArgs e)
+    {
+        if (_bannerKey != null) _dismissedBanners.Add(_bannerKey);
+        HideBanner();
+    }
+
+    private void OnModeBadgePressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
+        {
+            _children[_activeChildIndex].Terminal.SendText("\x1b[Z"); // Shift+Tab cycles the mode
+            _children[_activeChildIndex].Terminal.FocusTerminal();
+        }
+        e.Handled = true;
+    }
+
+    private void OnContextMeterPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
+        {
+            _children[_activeChildIndex].Terminal.SendText("/compact\r");
+            _children[_activeChildIndex].Terminal.FocusTerminal();
+        }
+        e.Handled = true;
+    }
+
+    // ── Changed Files ──
+
+    private void OnActivityChanges(object? sender, RoutedEventArgs e)
+    {
+        ToggleSidePanel(SidebarPanel.Changes);
+    }
+
+    private void OnRefreshChanges(object? sender, RoutedEventArgs e)
+    {
+        RefreshChangesPanel();
+    }
+
+    private void OnGitChangesPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_activeSidePanel == SidebarPanel.Changes)
+            RefreshChangesPanel();
+        else
+            ToggleSidePanel(SidebarPanel.Changes);
+        e.Handled = true;
+    }
+
+    private async void RefreshChangesPanel()
+    {
+        if (_changesLoading || !ChangesPanel.IsVisible) return;
+
+        var repo = _projectFolder;
+        ChangesList.Children.Clear();
+
+        if (string.IsNullOrEmpty(repo) || !GitChangeService.IsGitRepository(repo))
+        {
+            LblChangesSummary.Text = Loc.Get("NotAGitRepo");
+            return;
+        }
+
+        _changesLoading = true;
+        LblChangesSummary.Text = Loc.Get("LoadingChanges");
+        try
+        {
+            _changes = await GitChangeService.GetChangesAsync(repo);
+        }
+        catch
+        {
+            _changes = new List<GitChange>();
+        }
+        finally
+        {
+            _changesLoading = false;
+        }
+
+        // The user may have switched panels or projects while git was running.
+        if (!ChangesPanel.IsVisible || !string.Equals(repo, _projectFolder, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        ChangesList.Children.Clear();
+        LblChangesSummary.Text = _changes.Count == 0
+            ? Loc.Get("NoChanges")
+            : string.Format(Loc.Get("ChangedFilesCount"), _changes.Count);
+
+        foreach (var change in _changes)
+            ChangesList.Children.Add(BuildChangeRow(repo, change));
+    }
+
+    private Control BuildChangeRow(string repo, GitChange change)
+    {
+        var glyphColor = change.StatusGlyph switch
+        {
+            "A" => Color.FromRgb(48, 209, 88),
+            "D" => Color.FromRgb(255, 69, 58),
+            "R" => Color.FromRgb(10, 132, 255),
+            "?" => Color.FromRgb(142, 142, 147),
+            _ => Color.FromRgb(255, 214, 10),
+        };
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*") };
+
+        var glyph = new TextBlock
+        {
+            Text = change.StatusGlyph,
+            Width = 14,
+            FontSize = 11,
+            FontWeight = FontWeight.Bold,
+            Foreground = new SolidColorBrush(glyphColor),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var name = new TextBlock
+        {
+            Text = change.DisplayName,
+            FontSize = 12,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var dir = new TextBlock
+        {
+            Text = change.DisplayDir,
+            FontSize = 10,
+            Opacity = 0.55,
+            Margin = new Thickness(6, 0, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(glyph, 0);
+        Grid.SetColumn(name, 1);
+        Grid.SetColumn(dir, 2);
+        grid.Children.Add(glyph);
+        grid.Children.Add(name);
+        grid.Children.Add(dir);
+
+        var row = new Border
+        {
+            Padding = new Thickness(6, 4),
+            CornerRadius = new CornerRadius(4),
+            Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Child = grid,
+        };
+        ToolTip.SetTip(row, change.Path + "  -  " + change.StatusLabel);
+
+        var hover = new SolidColorBrush(_isDark
+            ? Color.FromArgb(30, 255, 255, 255)
+            : Color.FromArgb(20, 0, 0, 0));
+        row.PointerEntered += (_, _) => row.Background = hover;
+        row.PointerExited += (_, _) => row.Background = Brushes.Transparent;
+        row.PointerPressed += (_, _) => ShowDiff(repo, change);
+        return row;
+    }
+
+    private async void ShowDiff(string repo, GitChange change)
+    {
+        string diff;
+        try
+        {
+            diff = await GitChangeService.GetDiffAsync(repo, change);
+        }
+        catch
+        {
+            diff = "";
+        }
+
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            ShowMessageDialog(Loc.Get("Diff"), Loc.Get("DiffEmpty"));
+            return;
+        }
+
+        var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
+        new Controls.DiffWindow(change.Path, diff, _isDark, typeface).Show(this);
+    }
+
+    // ── Tokens & Cost ──
+
+    private void OnActivityCost(object? sender, RoutedEventArgs e)
+    {
+        new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this);
+    }
+
+    // ── Plan ──
+
+    private static int PlanDailyLimit(string planTier) => planTier switch
+    {
+        "Max5x" => 5000,
+        "Max20x" => 20000,
+        _ => 1000,
+    };
+
+    private void FillPlanTierCombo()
+    {
+        CmbPlanTier.ItemsSource = new List<string>
+        {
+            Loc.Get("PlanPro"),
+            Loc.Get("PlanMax5x"),
+            Loc.Get("PlanMax20x"),
+        };
+        int idx = Array.IndexOf(PlanTierIds, _settings.PlanTier);
+        CmbPlanTier.SelectedIndex = idx >= 0 ? idx : 0;
+    }
+
+    private void OnPlanTierChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (!_settingsInitialized || _suppressSettingsChanged) return;
+
+        int idx = CmbPlanTier.SelectedIndex;
+        if (idx < 0 || idx >= PlanTierIds.Length) return;
+
+        _settings.PlanTier = PlanTierIds[idx];
+        _settings.Save();
+        UsageTracker.DailyLimit = PlanDailyLimit(_settings.PlanTier);
+        OnUsageUpdated();
+    }
+
+    private void OnLiveStatusSettingChanged(object? sender, RoutedEventArgs e)
+    {
+        if (!_settingsInitialized || _suppressSettingsChanged) return;
+
+        _settings.EnableLiveStatus = ChkEnableLiveStatus.IsChecked == true;
+        _settings.EnableErrorBanner = ChkEnableErrorBanner.IsChecked == true;
+        _settings.Save();
+
+        if (!_settings.EnableLiveStatus) ClearLiveStatus();
+        if (!_settings.EnableErrorBanner && _bannerKey != null && _bannerKey.StartsWith("err:")) HideBanner();
     }
 
     // ── Command Palette ──
@@ -1931,6 +2477,8 @@ public partial class MainWindow : Window
         var commands = new List<(string Name, string Shortcut, Action Execute)>
         {
             ("New Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
+            ("Changed Files", "", () => ToggleSidePanel(SidebarPanel.Changes)),
+            ("Tokens & Cost", "", () => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this)),
             ("Close Tab", "Ctrl+W", () => { if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count) CloseChild(_children[_activeChildIndex]); }),
             ("Next Tab", "Ctrl+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex + 1) % _children.Count); }),
             ("Previous Tab", "Ctrl+Shift+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex - 1 + _children.Count) % _children.Count); }),
@@ -1945,12 +2493,20 @@ public partial class MainWindow : Window
             ("Compact (/compact)", "", () => OnActivityCompact(null, null!)),
             ("Switch Mode (Shift+Tab)", "", () => OnActivityModeSwitch(null, null!)),
             ("Save Workspace", "", SaveWorkspace),
-            ("Restore Workspace", "", RestoreWorkspace),
+            ("Save Workspace As...", "", () => _ = PromptSaveWorkspaceAsync()),
+            ("Restore Workspace", "", () => RestoreWorkspace()),
+            ("Workspaces...", "", ShowWorkspaceList),
+            ("Slash Commands", "Ctrl+/", ShowSlashCommandPalette),
+            ("Checkpoints", "", ShowCheckpointList),
+            ("Stop", "Esc", () => OnStopTask(null, null!)),
+            ("Setup Check", "", () => _ = ShowSetupDoctorAsync()),
+            ("Keyboard Shortcuts", "F1", ShowShortcutSheet),
             ("Command Palette", "Ctrl+Shift+P", ShowCommandPalette),
         };
 
         var dialog = new Window
         {
+            Title = Loc.Get("CommandPalette"),
             Width = 450, Height = 350,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
@@ -2041,6 +2597,11 @@ public partial class MainWindow : Window
                 action();
             }
         };
+        // Escape has to work even before the search box has taken focus.
+        dialog.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape) { dialog.Close(); args.Handled = true; }
+        };
 
         var dock = new DockPanel();
         DockPanel.SetDock(searchBox, Dock.Top);
@@ -2051,6 +2612,603 @@ public partial class MainWindow : Window
         UpdateList("");
         dialog.ShowDialog(this);
         Dispatcher.UIThread.Post(() => searchBox.Focus());
+    }
+
+    // ── Stop button / Checkpoints (v0.2) ──
+
+    /// <summary>Routes text to wherever the active window is taking input right now.</summary>
+    private void SendToActiveTerminal(string text)
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
+
+        var terminal = _children[_activeChildIndex].Terminal;
+        if (terminal.IsDocumentView && terminal.IsExpanded)
+            terminal.AppendToExpandedInput(text);
+        else if (terminal.IsDocumentView)
+            terminal.SetInputText(text);
+        else if (terminal.IsExpanded)
+            terminal.AppendToExpandedInput(text);
+        else
+            terminal.SendText(text);
+
+        BringToFront(_activeChildIndex);
+        terminal.FocusTerminal();
+    }
+
+    /// <summary>Escape is what every supported CLI reads as "stop what you are doing".</summary>
+    private void OnStopTask(object? sender, RoutedEventArgs e)
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
+
+        var terminal = _children[_activeChildIndex].Terminal;
+        terminal.SendText("\x1b");
+        terminal.FocusTerminal();
+    }
+
+    private void OnNotifySettingChanged(object? sender, RoutedEventArgs e)
+    {
+        if (!_settingsInitialized || _suppressSettingsChanged) return;
+
+        _settings.NotifyOnComplete = ChkNotifyOnComplete.IsChecked == true;
+        _settings.NotifySound = ChkNotifySound.IsChecked == true;
+        _settings.Save();
+
+        _notifications.EnableToast = _settings.NotifyOnComplete;
+        _notifications.EnableSound = _settings.NotifySound;
+    }
+
+    private void OnEnableCheckpointsChanged(object? sender, RoutedEventArgs e)
+    {
+        if (!_settingsInitialized || _suppressSettingsChanged) return;
+
+        _settings.EnableCheckpoints = ChkEnableCheckpoints.IsChecked == true;
+        _settings.Save();
+        UpdateTerminalStatus();
+    }
+
+    /// <summary>
+    /// Snapshots the project before a prompt runs. Git repos get a dangling stash commit, which
+    /// leaves the working tree untouched; folders outside Git get a file copy.
+    /// </summary>
+    private async void CaptureCheckpoint(MdiChildInfo entry, string? prompt)
+    {
+        if (!_settings.EnableCheckpoints) return;
+
+        var folder = entry.ProjectFolder;
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return;
+
+        // Enter also confirms permission prompts and answers y/n, so snapshots are rate
+        // limited; identical trees are then dropped by the service's SHA de-duplication.
+        var latest = _checkpoints.LatestFor(folder);
+        if (latest != null && (DateTime.Now - latest.CreatedAt).TotalSeconds < 20) return;
+
+        // The prompt text is only ever a label. It is scraped back out of the cell grid and
+        // the CLI may have drawn over it, so a snapshot must never depend on reading it.
+        var trimmed = prompt?.Trim() ?? "";
+        var label = trimmed.Length == 0
+            ? DateTime.Now.ToString("HH:mm:ss")
+            : trimmed.Length > 60 ? trimmed[..60] : trimmed;
+
+        Debug.WriteLine($"[Checkpoint] capturing for {folder}: {label}");
+
+        try
+        {
+            if (await _checkpoints.CreateAsync(folder, label) != null)
+                UpdateTerminalStatus();
+        }
+        catch { }
+    }
+
+    private void OnUndoCheckpoint(object? sender, RoutedEventArgs e) => ShowCheckpointList();
+
+    private void ShowCheckpointList()
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
+
+        var folder = _children[_activeChildIndex].ProjectFolder ?? "";
+        var points = _checkpoints.ForProject(folder).ToList();
+        if (points.Count == 0)
+        {
+            ShowMessageDialog(Loc.Get("Checkpoints"), Loc.Get("NoCheckpoints"));
+            return;
+        }
+
+        var list = new ListBox { Background = Brushes.Transparent };
+        foreach (var cp in points)
+        {
+            var label = new TextBlock
+            {
+                Text = cp.Label,
+                FontSize = 13,
+                Foreground = new SolidColorBrush(DialogForeground()),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            var when = new TextBlock
+            {
+                Text = cp.CreatedAt.ToString("MM/dd HH:mm"),
+                FontSize = 11,
+                Foreground = new SolidColorBrush(DialogSubtle()),
+            };
+            var stack = new StackPanel { Spacing = 2 };
+            stack.Children.Add(label);
+            stack.Children.Add(when);
+            list.Items.Add(new ListBoxItem { Content = stack, Tag = cp, Padding = new Thickness(10, 6) });
+        }
+        list.SelectedIndex = 0;
+
+        var restore = new Button
+        {
+            Content = Loc.Get("Undo"),
+            MinWidth = 96,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var cancel = new Button
+        {
+            Content = Loc.Get("Cancel"),
+            MinWidth = 96,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(restore);
+
+        var dock = new DockPanel { Margin = new Thickness(16) };
+        DockPanel.SetDock(buttons, Dock.Bottom);
+        dock.Children.Add(buttons);
+        dock.Children.Add(list);
+
+        var dialog = CreateToolDialog(Loc.Get("Checkpoints"), 460, 380);
+        dialog.Content = dock;
+
+        cancel.Click += (_, _) => dialog.Close();
+        restore.Click += async (_, _) =>
+        {
+            if (list.SelectedItem is not ListBoxItem sel || sel.Tag is not Checkpoint cp) return;
+
+            dialog.Close();
+            if (!await ShowConfirmDialog(Loc.Get("Undo"), Loc.Get("RestoreCheckpointFmt"))) return;
+
+            var error = await _checkpoints.RestoreAsync(cp);
+            ShowMessageDialog(
+                Loc.Get("Checkpoints"),
+                error == null
+                    ? Loc.Get("CheckpointRestored")
+                    : string.Format(Loc.Get("CheckpointFailedFmt"), error));
+
+            RefreshGitInfo();
+            RefreshFileTree();
+        };
+
+        _ = dialog.ShowDialog(this);
+    }
+
+    // ── Slash command palette (v0.2) ──
+
+    private void OnActivitySlashCommands(object? sender, RoutedEventArgs e) => ShowSlashCommandPalette();
+
+    /// <summary>
+    /// Lists the CLI's slash commands with a description each, so they can be picked instead of
+    /// memorised. Project commands from .claude/commands are appended below the built-ins.
+    /// </summary>
+    private void ShowSlashCommandPalette()
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count)
+        {
+            ShowMessageDialog(Loc.Get("SlashCommands"), Loc.Get("SlashNeedsSession"));
+            return;
+        }
+
+        bool japanese = Loc.Language == "日本語";
+        var folder = _children[_activeChildIndex].ProjectFolder;
+
+        var entries = new List<(SlashCommand Cmd, bool FromProject)>();
+        foreach (var c in SlashCommandCatalog.ForProvider(_cli.ActiveId))
+            entries.Add((c, false));
+        foreach (var c in SlashCommandCatalog.ForProject(_cli.ActiveId, folder))
+            entries.Add((c, true));
+
+        var searchBox = new TextBox
+        {
+            Watermark = Loc.Get("SearchSlashCommands"),
+            FontSize = 14,
+            Padding = new Thickness(10, 8),
+            CornerRadius = new CornerRadius(0),
+            BorderThickness = new Thickness(0, 0, 0, 1),
+        };
+        var listBox = new ListBox { Background = Brushes.Transparent, Margin = new Thickness(0, 4, 0, 0) };
+
+        void UpdateList(string filter)
+        {
+            listBox.Items.Clear();
+            foreach (var (cmd, fromProject) in entries)
+            {
+                var description = japanese ? cmd.DescriptionJa : cmd.Description;
+                if (!string.IsNullOrEmpty(filter)
+                    && !cmd.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    && !description.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var nameText = new TextBlock
+                {
+                    Text = cmd.Name,
+                    FontSize = 13,
+                    FontWeight = FontWeight.SemiBold,
+                    Foreground = new SolidColorBrush(DialogForeground()),
+                };
+                var descText = new TextBlock
+                {
+                    Text = cmd.NeedsArgument
+                        ? description + "  (" + Loc.Get("NeedsArgument") + ")"
+                        : description,
+                    FontSize = 11,
+                    Foreground = new SolidColorBrush(DialogSubtle()),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                };
+                var stack = new StackPanel { Spacing = 1 };
+                stack.Children.Add(nameText);
+                stack.Children.Add(descText);
+
+                if (fromProject)
+                {
+                    stack.Children.Add(new TextBlock
+                    {
+                        Text = Loc.Get("ProjectCommands"),
+                        FontSize = 10,
+                        Foreground = new SolidColorBrush(Color.FromRgb(100, 165, 255)),
+                    });
+                }
+
+                listBox.Items.Add(new ListBoxItem { Content = stack, Tag = cmd, Padding = new Thickness(10, 6) });
+            }
+            if (listBox.Items.Count > 0) listBox.SelectedIndex = 0;
+        }
+
+        var dialog = CreateToolDialog(Loc.Get("SlashCommands"), 480, 420);
+
+        void Run()
+        {
+            if (listBox.SelectedItem is not ListBoxItem sel || sel.Tag is not SlashCommand cmd) return;
+            dialog.Close();
+            // Commands that take an argument are only typed in, so the user can finish the line.
+            SendToActiveTerminal(cmd.NeedsArgument ? cmd.Name + " " : cmd.Name + "\r");
+        }
+
+        searchBox.PropertyChanged += (_, args) =>
+        {
+            if (args.Property == TextBox.TextProperty) UpdateList(searchBox.Text ?? "");
+        };
+        searchBox.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape) { dialog.Close(); args.Handled = true; }
+            else if (args.Key == Key.Down && listBox.Items.Count > 0)
+            {
+                listBox.SelectedIndex = Math.Min(listBox.SelectedIndex + 1, listBox.Items.Count - 1);
+                args.Handled = true;
+            }
+            else if (args.Key == Key.Up && listBox.Items.Count > 0)
+            {
+                listBox.SelectedIndex = Math.Max(listBox.SelectedIndex - 1, 0);
+                args.Handled = true;
+            }
+            else if (args.Key == Key.Enter) { Run(); args.Handled = true; }
+        };
+        listBox.DoubleTapped += (_, _) => Run();
+        // Escape has to work even before the search box has taken focus.
+        dialog.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape) { dialog.Close(); args.Handled = true; }
+            else if (args.Key == Key.Enter) { Run(); args.Handled = true; }
+        };
+
+        var dock = new DockPanel();
+        DockPanel.SetDock(searchBox, Dock.Top);
+        dock.Children.Add(searchBox);
+        dock.Children.Add(listBox);
+        dialog.Content = dock;
+
+        UpdateList("");
+        _ = dialog.ShowDialog(this);
+        Dispatcher.UIThread.Post(() => searchBox.Focus());
+    }
+
+    // ── Setup diagnostics (v0.2) ──
+
+    private void OnSetupDoctor(object? sender, RoutedEventArgs e) => _ = ShowSetupDoctorAsync();
+
+    /// <summary>First-run pass: only interrupts the user when something actually needs fixing.</summary>
+    private async Task ShowSetupDoctorIfProblemsAsync()
+    {
+        try
+        {
+            var results = await SetupDoctor.RunAsync(_cli, _projectFolder);
+            if (results.Any(r => r.Status != DiagnosticStatus.Ok))
+                ShowSetupDoctorDialog(results);
+        }
+        catch { }
+    }
+
+    private async Task ShowSetupDoctorAsync()
+    {
+        try
+        {
+            ShowSetupDoctorDialog(await SetupDoctor.RunAsync(_cli, _projectFolder));
+        }
+        catch { }
+    }
+
+    private void ShowSetupDoctorDialog(List<DiagnosticResult> results)
+    {
+        var rows = new StackPanel { Spacing = 14, Margin = new Thickness(18, 16) };
+
+        bool allOk = results.All(r => r.Status == DiagnosticStatus.Ok);
+        rows.Children.Add(new TextBlock
+        {
+            Text = allOk ? Loc.Get("DoctorAllOk") : Loc.Get("DoctorHasIssues"),
+            FontSize = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(allOk
+                ? Color.FromRgb(48, 209, 88)
+                : Color.FromRgb(255, 214, 10)),
+        });
+
+        foreach (var result in results)
+        {
+            var dot = new Ellipse
+            {
+                Width = 8,
+                Height = 8,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, 5, 0, 0),
+                Fill = new SolidColorBrush(result.Status switch
+                {
+                    DiagnosticStatus.Ok => Color.FromRgb(48, 209, 88),
+                    DiagnosticStatus.Warning => Color.FromRgb(255, 214, 10),
+                    _ => Color.FromRgb(255, 69, 58),
+                }),
+            };
+
+            var text = new StackPanel { Spacing = 2 };
+            text.Children.Add(new TextBlock
+            {
+                Text = Loc.Get(result.TitleKey),
+                FontSize = 13,
+                Foreground = new SolidColorBrush(DialogForeground()),
+            });
+            text.Children.Add(new TextBlock
+            {
+                Text = result.Detail,
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = new SolidColorBrush(DialogSubtle()),
+            });
+
+            if (!string.IsNullOrEmpty(result.FixHint))
+            {
+                text.Children.Add(new TextBlock
+                {
+                    Text = result.FixHint,
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = new SolidColorBrush(Color.FromRgb(100, 165, 255)),
+                });
+            }
+
+            if (!string.IsNullOrEmpty(result.FixCommand))
+            {
+                var command = result.FixCommand;
+                var copy = new Button
+                {
+                    Content = Loc.Get("CopyCommand") + ":  " + command,
+                    FontSize = 11,
+                    Padding = new Thickness(8, 3),
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Margin = new Thickness(0, 3, 0, 0),
+                    Cursor = new Cursor(StandardCursorType.Hand),
+                };
+                copy.Click += async (_, _) =>
+                {
+                    await CopyToClipboard(command);
+                    copy.Content = Loc.Get("Copied");
+                };
+                text.Children.Add(copy);
+            }
+
+            var row = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("18,*") };
+            Grid.SetColumn(dot, 0);
+            Grid.SetColumn(text, 1);
+            row.Children.Add(dot);
+            row.Children.Add(text);
+            rows.Children.Add(row);
+        }
+
+        var rerun = new Button
+        {
+            Content = Loc.Get("RunAgain"),
+            MinWidth = 96,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        rows.Children.Add(rerun);
+
+        var dialog = CreateToolDialog(Loc.Get("SetupDoctor"), 480, 0);
+        dialog.SizeToContent = SizeToContent.Height;
+        dialog.Content = new ScrollViewer
+        {
+            Content = rows,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            MaxHeight = 620,
+        };
+
+        rerun.Click += (_, _) => { dialog.Close(); _ = ShowSetupDoctorAsync(); };
+        _ = dialog.ShowDialog(this);
+    }
+
+    // ── Keyboard shortcut cheat sheet (v0.2) ──
+
+    private void OnShowShortcuts(object? sender, RoutedEventArgs e) => ShowShortcutSheet();
+
+    private void ShowShortcutSheet()
+    {
+        var groups = new (string TitleKey, (string Keys, string What)[] Rows)[]
+        {
+            ("ShortcutsWindows", new[]
+            {
+                ("Ctrl+N", Loc.Get("NewSession")),
+                ("Ctrl+W", Loc.Get("Close")),
+                ("Ctrl+Tab", "Next tab"),
+                ("Ctrl+Shift+Tab", "Previous tab"),
+            }),
+            ("ShortcutsPanels", new[]
+            {
+                ("Ctrl+Shift+E", Loc.Get("EXPLORER")),
+                ("Ctrl+Shift+P", Loc.Get("CommandPalette")),
+                ("Ctrl+/", Loc.Get("SlashCommands")),
+                ("F1", Loc.Get("Shortcuts")),
+            }),
+            ("ShortcutsTerminal", new[]
+            {
+                ("Ctrl+F", "Search"),
+                ("Ctrl+Up / Ctrl+Down", "Jump between prompts"),
+                ("Ctrl+Scroll", "Zoom font"),
+                ("Ctrl+0", "Reset font size"),
+                ("Shift+Enter", "New line without sending"),
+                ("Ctrl+Enter", "Send from the expanded input"),
+                ("Esc", Loc.Get("StopTask")),
+                ("Ctrl+C", "Copy, or interrupt when nothing is selected"),
+                ("Ctrl+V", "Paste, images included"),
+            }),
+        };
+
+        var panel = new StackPanel { Spacing = 16, Margin = new Thickness(20, 18) };
+        foreach (var (titleKey, entries) in groups)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = Loc.Get(titleKey),
+                FontSize = 12,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = new SolidColorBrush(Color.FromRgb(100, 165, 255)),
+            });
+
+            foreach (var (keys, what) in entries)
+            {
+                var keyText = new TextBlock
+                {
+                    Text = keys,
+                    FontSize = 12,
+                    FontFamily = new FontFamily("Cascadia Mono, Consolas, monospace"),
+                    Foreground = new SolidColorBrush(DialogForeground()),
+                };
+                var whatText = new TextBlock
+                {
+                    Text = what,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(DialogSubtle()),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                };
+                var row = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("190,*") };
+                Grid.SetColumn(keyText, 0);
+                Grid.SetColumn(whatText, 1);
+                row.Children.Add(keyText);
+                row.Children.Add(whatText);
+                panel.Children.Add(row);
+            }
+        }
+
+        var dialog = CreateToolDialog(Loc.Get("Shortcuts"), 480, 0);
+        dialog.SizeToContent = SizeToContent.Height;
+        dialog.Content = new ScrollViewer
+        {
+            Content = panel,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            MaxHeight = 640,
+        };
+        dialog.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Escape || args.Key == Key.F1) dialog.Close();
+        };
+        _ = dialog.ShowDialog(this);
+    }
+
+    // ── Shared dialog chrome ──
+
+    private Color DialogForeground() =>
+        _isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(40, 40, 45);
+
+    private Color DialogSubtle() =>
+        _isDark ? Color.FromRgb(140, 140, 148) : Color.FromRgb(110, 110, 118);
+
+    private Window CreateToolDialog(string title, double width, double height)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = width,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            CanResize = false,
+            ShowInTaskbar = false,
+            Background = new SolidColorBrush(_isDark
+                ? Color.FromRgb(30, 30, 32)
+                : Color.FromRgb(246, 246, 250)),
+        };
+        if (height > 0) dialog.Height = height;
+        return dialog;
+    }
+
+    private Task<bool> ShowConfirmDialog(string title, string message)
+    {
+        var source = new TaskCompletionSource<bool>();
+
+        var text = new TextBlock
+        {
+            Text = message,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 13,
+            Foreground = new SolidColorBrush(DialogForeground()),
+        };
+        var ok = new Button
+        {
+            Content = Loc.Get("OK"),
+            MinWidth = 88,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var cancel = new Button
+        {
+            Content = Loc.Get("Cancel"),
+            MinWidth = 88,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(ok);
+
+        var panel = new StackPanel { Spacing = 18, Margin = new Thickness(22, 20) };
+        panel.Children.Add(text);
+        panel.Children.Add(buttons);
+
+        var dialog = CreateToolDialog(title, 430, 0);
+        dialog.SizeToContent = SizeToContent.Height;
+        dialog.Content = panel;
+
+        bool answered = false;
+        ok.Click += (_, _) => { answered = true; source.TrySetResult(true); dialog.Close(); };
+        cancel.Click += (_, _) => { answered = true; source.TrySetResult(false); dialog.Close(); };
+        dialog.Closed += (_, _) => { if (!answered) source.TrySetResult(false); };
+
+        _ = dialog.ShowDialog(this);
+        return source.Task;
     }
 
     // ── Tab Context Menu ──
@@ -2107,26 +3265,53 @@ public partial class MainWindow : Window
 
     // ── Workspace ──
 
-    private void SaveWorkspace()
+    private void SaveWorkspace() => SaveWorkspaceAs(WorkspaceInfo.DefaultName);
+
+    /// <summary>
+    /// Captures the open windows down to the transcript each one is showing, so restoring brings
+    /// the conversations back instead of opening blank sessions.
+    /// </summary>
+    private void SaveWorkspaceAs(string name)
     {
         var ws = new WorkspaceInfo
         {
+            Name = string.IsNullOrWhiteSpace(name) ? WorkspaceInfo.DefaultName : name.Trim(),
             Layout = _layout.ToString(),
         };
+
         foreach (var child in _children)
         {
+            double left = Canvas.GetLeft(child.Container);
+            double top = Canvas.GetTop(child.Container);
+
             ws.Tabs.Add(new WorkspaceTab
             {
                 ProjectFolder = child.ProjectFolder ?? "",
                 TabTitle = child.StripText.Text ?? _cli.Active.Name,
+                SessionId = child.SessionId ?? "",
+                ProviderId = _cli.ActiveId,
+                IsManualTitle = child.Terminal.IsManualTitle,
+                Left = double.IsNaN(left) ? 0 : left,
+                Top = double.IsNaN(top) ? 0 : top,
+                Width = child.Container.Bounds.Width,
+                Height = child.Container.Bounds.Height,
             });
         }
+
         WorkspaceService.Save(ws);
     }
 
-    private void RestoreWorkspace()
+    private async Task PromptSaveWorkspaceAsync()
     {
-        var ws = WorkspaceService.Load();
+        var name = await ShowTextInputDialog(
+            Loc.Get("SaveWorkspaceAs"), Loc.Get("WorkspaceName"), WorkspaceInfo.DefaultName);
+        if (!string.IsNullOrWhiteSpace(name))
+            SaveWorkspaceAs(name);
+    }
+
+    private void RestoreWorkspace(string? name = null)
+    {
+        var ws = WorkspaceService.Load(name);
         if (ws == null || ws.Tabs.Count == 0) return;
 
         if (Enum.TryParse<MdiLayout>(ws.Layout, out var layout))
@@ -2136,8 +3321,191 @@ public partial class MainWindow : Window
         {
             if (!string.IsNullOrEmpty(tab.ProjectFolder) && Directory.Exists(tab.ProjectFolder))
                 _projectFolder = tab.ProjectFolder;
-            LaunchClaudeWithInitialPrompt();
+
+            // Resume the exact transcript when the CLI can address one; otherwise open a new session.
+            bool canResume = !string.IsNullOrEmpty(tab.SessionId)
+                             && tab.ProviderId == _cli.ActiveId
+                             && _cli.Features.SessionList;
+
+            if (canResume)
+                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId), tab.TabTitle, tab.TabTitle, tab.SessionId);
+            else
+                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt), tab.TabTitle);
+
+            if (tab.IsManualTitle && _children.Count > 0)
+            {
+                var child = _children[^1];
+                child.Terminal.IsManualTitle = true;
+                child.TitleText.Text = tab.TabTitle;
+                child.StripText.Text = tab.TabTitle;
+            }
         }
+
+        // Saved geometry only means anything while windows float freely.
+        if (_layout == MdiLayout.Cascade)
+        {
+            for (int i = 0; i < _children.Count && i < ws.Tabs.Count; i++)
+            {
+                var tab = ws.Tabs[i];
+                if (tab.Width <= 0 || tab.Height <= 0) continue;
+
+                var container = _children[i].Container;
+                Canvas.SetLeft(container, tab.Left);
+                Canvas.SetTop(container, tab.Top);
+                container.Width = tab.Width;
+                container.Height = tab.Height;
+            }
+        }
+        else
+        {
+            ArrangeChildren();
+        }
+
+        RefreshWindowsPanel();
+    }
+
+    private void ShowWorkspaceList()
+    {
+        var names = WorkspaceService.Names();
+        if (names.Count == 0)
+        {
+            ShowMessageDialog(Loc.Get("Workspaces"), Loc.Get("NoWorkspaces"));
+            return;
+        }
+
+        var list = new ListBox { Background = Brushes.Transparent };
+        foreach (var name in names)
+        {
+            list.Items.Add(new ListBoxItem
+            {
+                Content = new TextBlock
+                {
+                    Text = name,
+                    FontSize = 13,
+                    Foreground = new SolidColorBrush(DialogForeground()),
+                },
+                Tag = name,
+                Padding = new Thickness(10, 6),
+            });
+        }
+        list.SelectedIndex = 0;
+
+        var restore = new Button
+        {
+            Content = Loc.Get("RestoreWorkspace"),
+            MinWidth = 110,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var delete = new Button
+        {
+            Content = Loc.Get("Delete"),
+            MinWidth = 88,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        buttons.Children.Add(delete);
+        buttons.Children.Add(restore);
+
+        var dock = new DockPanel { Margin = new Thickness(16) };
+        DockPanel.SetDock(buttons, Dock.Bottom);
+        dock.Children.Add(buttons);
+        dock.Children.Add(list);
+
+        var dialog = CreateToolDialog(Loc.Get("Workspaces"), 400, 340);
+        dialog.Content = dock;
+
+        string? Selected() =>
+            list.SelectedItem is ListBoxItem sel ? sel.Tag as string : null;
+
+        restore.Click += (_, _) =>
+        {
+            var name = Selected();
+            dialog.Close();
+            if (name != null) RestoreWorkspace(name);
+        };
+        delete.Click += (_, _) =>
+        {
+            var name = Selected();
+            if (name == null) return;
+            WorkspaceService.Delete(name);
+            dialog.Close();
+        };
+        list.DoubleTapped += (_, _) =>
+        {
+            var name = Selected();
+            dialog.Close();
+            if (name != null) RestoreWorkspace(name);
+        };
+
+        _ = dialog.ShowDialog(this);
+    }
+
+    private Task<string?> ShowTextInputDialog(string title, string watermark, string initial)
+    {
+        var source = new TaskCompletionSource<string?>();
+
+        var box = new TextBox
+        {
+            Text = initial,
+            Watermark = watermark,
+            FontSize = 13,
+            Padding = new Thickness(8, 6),
+        };
+        var ok = new Button
+        {
+            Content = Loc.Get("Save"),
+            MinWidth = 88,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var cancel = new Button
+        {
+            Content = Loc.Get("Cancel"),
+            MinWidth = 88,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(ok);
+
+        var panel = new StackPanel { Spacing = 16, Margin = new Thickness(22, 20) };
+        panel.Children.Add(box);
+        panel.Children.Add(buttons);
+
+        var dialog = CreateToolDialog(title, 420, 0);
+        dialog.SizeToContent = SizeToContent.Height;
+        dialog.Content = panel;
+
+        bool answered = false;
+        void Accept()
+        {
+            answered = true;
+            source.TrySetResult(box.Text);
+            dialog.Close();
+        }
+
+        ok.Click += (_, _) => Accept();
+        cancel.Click += (_, _) => { answered = true; source.TrySetResult(null); dialog.Close(); };
+        box.KeyDown += (_, args) =>
+        {
+            if (args.Key == Key.Enter) { Accept(); args.Handled = true; }
+            else if (args.Key == Key.Escape) { answered = true; source.TrySetResult(null); dialog.Close(); }
+        };
+        dialog.Closed += (_, _) => { if (!answered) source.TrySetResult(null); };
+
+        _ = dialog.ShowDialog(this);
+        Dispatcher.UIThread.Post(() => { box.Focus(); box.SelectAll(); });
+        return source.Task;
     }
 
     // ── Layout switching ──
@@ -2609,6 +3977,9 @@ public partial class MainWindow : Window
             }
         };
 
+        // Snapshot the project just before each prompt, so it can be rolled back.
+        terminal.PromptSubmitted += prompt => CaptureCheckpoint(entry, prompt);
+
         terminal.Clicked += () =>
         {
             int idx = _children.IndexOf(entry);
@@ -2634,9 +4005,18 @@ public partial class MainWindow : Window
             stripDot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));
             RefreshSessionList();
             UpdateTerminalStatus();
-            // Flash taskbar if window is not focused
+            // Flash the taskbar and raise a toast when the window is not focused
             if (!IsActive)
+            {
                 FlashTaskbar();
+                if (_settings.NotifyOnComplete)
+                {
+                    _notifications.Notify(
+                        NotifyKind.TaskComplete,
+                        Loc.Get("TaskComplete"),
+                        string.Format(Loc.Get("TaskCompleteFmt"), stripText.Text ?? _cli.Active.Name));
+                }
+            }
         };
 
         // Sync font size from Ctrl+Scroll zoom
@@ -2662,7 +4042,28 @@ public partial class MainWindow : Window
             string fullCommand = $"cmd.exe /c chcp 65001 >nul && {cdPart}{command}";
             terminal.StartProcess(fullCommand, _projectFolder);
             terminal.FocusTerminal();
+
+            if (string.IsNullOrEmpty(sessionId))
+                _ = TrackSessionIdAsync(entry, DateTime.Now.AddSeconds(-2));
         }, DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// Learns the id of a session we started ourselves. The CLI only reveals it by creating its
+    /// transcript, so the project's session folder is polled briefly after launch. Without this a
+    /// saved workspace could only reopen blank sessions.
+    /// </summary>
+    private async Task TrackSessionIdAsync(MdiChildInfo entry, DateTime launchedAt)
+    {
+        var folder = entry.ProjectFolder;
+        if (string.IsNullOrEmpty(folder) || !_cli.Features.SessionList) return;
+
+        for (int i = 0; i < 20 && string.IsNullOrEmpty(entry.SessionId); i++)
+        {
+            await Task.Delay(1500);
+            if (!_children.Contains(entry)) return;
+            entry.SessionId = SessionService.FindSessionIdCreatedAfter(folder, launchedAt);
+        }
     }
 
     private async void CloseChild(MdiChildInfo entry)
@@ -3009,5 +4410,7 @@ public partial class MainWindow : Window
         }
         _usageTracker.Dispose();
         _fileWatcher?.Dispose();
+        _notifications.Dispose();
+        _checkpoints.Save();
     }
 }

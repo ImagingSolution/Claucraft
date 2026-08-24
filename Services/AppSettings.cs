@@ -16,6 +16,33 @@ public class AppSettings
     public bool EnableChartRendering { get; set; } = true;
     public string CliProviderId { get; set; } = CliProviderService.ClaudeId;
 
+    // ── Task completion notification ──
+
+    /// <summary>Raise a tray toast when a terminal finishes while the window is in the background.</summary>
+    public bool NotifyOnComplete { get; set; } = true;
+
+    /// <summary>Play a system sound alongside the notification.</summary>
+    public bool NotifySound { get; set; } = true;
+
+    // ── Safety net ──
+
+    /// <summary>Snapshot the working tree before each prompt so it can be rolled back.</summary>
+    public bool EnableCheckpoints { get; set; } = true;
+
+    /// <summary>Set once the setup diagnostics have been shown, so they only auto-open on first run.</summary>
+    public bool SetupDoctorShown { get; set; }
+
+    // ── Live status readouts ──
+
+    /// <summary>Read the terminal screen to show mode, activity and context left in the status bar.</summary>
+    public bool EnableLiveStatus { get; set; } = true;
+
+    /// <summary>Surface a banner with a suggested fix when a known CLI error shows up in the output.</summary>
+    public bool EnableErrorBanner { get; set; } = true;
+
+    /// <summary>Plan the usage readout is measured against: Pro, Max5x or Max20x.</summary>
+    public string PlanTier { get; set; } = "Pro";
+
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Claucraft");

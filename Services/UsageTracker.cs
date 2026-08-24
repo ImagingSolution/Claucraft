@@ -18,8 +18,11 @@ public class UsageTracker : IDisposable
     private Timer? _timer;
     private readonly string _statsCachePath;
 
-    // Estimated daily message limit for Pro plan (approximate)
-    private const int EstimatedDailyLimit = 1000;
+    /// <summary>
+    /// Messages per day the readout is measured against. Set from the plan chosen in settings
+    /// (Pro / Max 5x / Max 20x); these are approximations, Anthropic does not publish exact caps.
+    /// </summary>
+    public static int DailyLimit { get; set; } = 1000;
 
     public event Action<UsageInfo>? UsageUpdated;
     public event Action? Updated;
@@ -84,7 +87,7 @@ public class UsageTracker : IDisposable
                 }
             }
 
-            info.Percentage = Math.Min(100.0, (double)info.TodayMessages / EstimatedDailyLimit * 100.0);
+            info.Percentage = Math.Min(100.0, (double)info.TodayMessages / Math.Max(1, DailyLimit) * 100.0);
         }
         catch
         {

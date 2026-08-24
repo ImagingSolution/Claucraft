@@ -125,6 +125,12 @@ public class TerminalControl : Control, IDisposable
     private readonly System.Text.StringBuilder _firstInputBuffer = new();
     public event Action<string>? TitleChanged;
     public event Action? Exited;
+
+    /// <summary>Raised whenever the user submits a prompt, carrying the text when it is known.</summary>
+    public event Action<string?>? PromptSubmitted;
+
+    /// <summary>True while the CLI process is alive.</summary>
+    public bool IsProcessRunning => _pty?.IsRunning == true;
     public event Action? Clicked;
     public event Action<double>? FontSizeChanged;
 
@@ -517,6 +523,7 @@ public class TerminalControl : Control, IDisposable
             if (_isDocumentView && !string.IsNullOrEmpty(_inputTextBox.Text))
             {
                 var text = _inputTextBox.Text;
+                PromptSubmitted?.Invoke(text);
                 _pty?.WriteInput(text);
                 _pty?.WriteInput("\r");
                 _inputTextBox.Text = "";
@@ -552,6 +559,7 @@ public class TerminalControl : Control, IDisposable
                 if (!string.IsNullOrWhiteSpace(summary))
                     TitleChanged?.Invoke(summary);
             }
+            PromptSubmitted?.Invoke(ReadSubmittedLine());
             _inputStartPending = true;
             _pty?.WriteInput("\r");
             e.Handled = true;
@@ -1402,6 +1410,7 @@ public class TerminalControl : Control, IDisposable
                 if (!string.IsNullOrWhiteSpace(summary))
                     TitleChanged?.Invoke(summary);
             }
+            PromptSubmitted?.Invoke(text);
             _pty?.WriteInput(text + "\r");
             _expandedTextBox.Text = "";
         }
@@ -1670,6 +1679,22 @@ public class TerminalControl : Control, IDisposable
         UpdateSearchCountLabel();
         ScrollToCurrentMatch();
         InvalidateVisual();
+    }
+
+    /// <summary>
+    /// Best-effort text of the line the user just submitted. Typing in the plain terminal goes
+    /// straight to the PTY, so the only copy of it is what the CLI echoed into the cell grid;
+    /// the CLI's own prompt decoration is trimmed off the front.
+    /// </summary>
+    private string? ReadSubmittedLine()
+    {
+        try
+        {
+            var text = GetRowText(_inputStartAbsRow).TrimEnd();
+            text = text.TrimStart('│', '╭', '╰', '>', '❯', ' ');
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        catch { return null; }
     }
 
     private string GetRowText(int absRow)
@@ -2040,13 +2065,26 @@ public class TerminalControl : Control, IDisposable
 
         if (found && _permissionOverlay == null)
         {
-            ShowPermissionOverlay("");
+            ShowPermissionOverlay(ReadPermissionPromptText());
             _permissionPopupShown = true;
         }
         else if (!found && _permissionOverlay != null)
         {
             HidePermissionOverlay();
         }
+    }
+
+    /// <summary>Grabs the text of the permission prompt so it can be explained in plain words.</summary>
+    private string ReadPermissionPromptText()
+    {
+        var sb = new System.Text.StringBuilder();
+        int totalRows = _buffer.Scrollback.Count + _buffer.Rows;
+        for (int i = Math.Max(0, totalRows - 30); i < totalRows; i++)
+        {
+            var text = GetRowText(i).TrimEnd();
+            if (text.Length > 0) sb.AppendLine(text);
+        }
+        return sb.ToString();
     }
 
     private void ShowPermissionOverlay(string promptText)
@@ -2115,8 +2153,65 @@ public class TerminalControl : Control, IDisposable
         {
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
+            MaxWidth = 560,
         };
         content.Children.Add(label);
+
+        // Say in plain words what the CLI is asking permission for, and how risky it is.
+        var explanation = Services.CommandExplainer.Explain(promptText);
+        if (explanation != null)
+        {
+            var riskColor = explanation.Risk switch
+            {
+                Services.RiskLevel.ReadOnly => Color.FromRgb(48, 209, 88),
+                Services.RiskLevel.FileChange => Color.FromRgb(255, 214, 10),
+                _ => Color.FromRgb(255, 69, 58),
+            };
+
+            var riskBadge = new Border
+            {
+                Background = new SolidColorBrush(riskColor, 0.18),
+                BorderBrush = new SolidColorBrush(riskColor),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(5),
+                Padding = new Thickness(8, 2),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 6),
+                Child = new TextBlock
+                {
+                    Text = explanation.RiskLabel,
+                    FontSize = 11,
+                    FontWeight = FontWeight.SemiBold,
+                    Foreground = new SolidColorBrush(riskColor),
+                },
+            };
+            content.Children.Add(riskBadge);
+
+            content.Children.Add(new TextBlock
+            {
+                Text = explanation.Title,
+                FontSize = 12,
+                FontWeight = FontWeight.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center,
+                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30)),
+                Margin = new Thickness(0, 0, 0, 2),
+            });
+
+            if (!string.IsNullOrWhiteSpace(explanation.Detail))
+            {
+                content.Children.Add(new TextBlock
+                {
+                    Text = explanation.Detail,
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap,
+                    TextAlignment = TextAlignment.Center,
+                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(152, 152, 158) : Color.FromRgb(99, 99, 102)),
+                    Margin = new Thickness(0, 0, 0, 10),
+                });
+            }
+        }
+
         content.Children.Add(buttonPanel);
 
         _permissionOverlay = new Border
@@ -2644,6 +2739,21 @@ public class TerminalControl : Control, IDisposable
     }
 
     // ── Export ──
+
+    /// <summary>
+    /// Raw text of what is on screen right now, plus a little scrollback, so the status
+    /// detectors can read the mode line, the spinner and any error the CLI just printed.
+    /// </summary>
+    public string GetScreenText(int extraScrollbackLines = 40)
+    {
+        var sb = new System.Text.StringBuilder();
+        int scrollbackCount = _buffer.Scrollback.Count;
+        int start = Math.Max(0, scrollbackCount - extraScrollbackLines);
+        int totalRows = scrollbackCount + _buffer.Rows;
+        for (int absRow = start; absRow < totalRows; absRow++)
+            sb.AppendLine(GetRowText(absRow).TrimEnd());
+        return sb.ToString();
+    }
 
     public string GetPreviewText(int maxLines = 10)
     {

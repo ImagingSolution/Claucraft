@@ -140,10 +140,61 @@
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
+                <!-- Which mode the AI is in (normal / accept edits / plan) -->
+                <Border x:Name="StatusModeBadge" IsVisible="False"
+                        CornerRadius="4" Padding="6,1" Cursor="Hand"
+                        BorderThickness="1" VerticalAlignment="Center"
+                        ToolTip.Tip="Current mode - click to cycle (Shift+Tab)"
+                        PointerPressed="OnModeBadgePressed">
+                    <TextBlock x:Name="StatusModeText" Text="" FontSize="10"
+                               FontWeight="Medium" VerticalAlignment="Center" />
+                </Border>
+                <!-- What the AI is doing right now -->
+                <TextBlock x:Name="StatusActivity" Text="" IsVisible="False"
+                           Foreground="{DynamicResource SubtleText}" FontSize="11"
+                           VerticalAlignment="Center" MaxWidth="260" TextTrimming="CharacterEllipsis" />
+                <!-- Interrupt the running task -->
+                <Button x:Name="BtnStopTask" Background="Transparent" BorderThickness="0"
+                        Padding="6,0" Cursor="Hand" VerticalAlignment="Center" IsVisible="False"
+                        ToolTip.Tip="Interrupt what the AI is doing (Esc)" Click="OnStopTask">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <PathIcon Data="M6 6H18V18H6Z" Width="9" Height="9" Foreground="#FF453A" />
+                        <TextBlock x:Name="LblStopTask" Text="Stop" FontSize="11"
+                                   Foreground="#FF453A" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <!-- Roll the project back to the snapshot taken before the last prompt -->
+                <Button x:Name="BtnUndoCheckpoint" Background="Transparent" BorderThickness="0"
+                        Padding="6,0" Cursor="Hand" VerticalAlignment="Center" IsVisible="False"
+                        ToolTip.Tip="Roll the project back to before the last prompt"
+                        Click="OnUndoCheckpoint">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <PathIcon Data="M12.5 8C9.85 8 7.45 8.99 5.6 10.6L2 7V16H11L7.38 12.38C8.77 11.22 10.54 10.5 12.5 10.5C16.04 10.5 19.05 12.81 20.1 16L22.47 15.22C21.08 11.03 17.15 8 12.5 8Z"
+                                  Width="11" Height="11" Foreground="{DynamicResource SubtleText}" />
+                        <TextBlock x:Name="LblUndoCheckpoint" Text="Undo" FontSize="11"
+                                   Foreground="{DynamicResource SubtleText}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
                 <!-- Git changes count -->
                 <TextBlock x:Name="StatusGitChanges" Text=""
                            Foreground="#FFD60A" FontSize="11"
-                           VerticalAlignment="Center" />
+                           VerticalAlignment="Center" Cursor="Hand"
+                           ToolTip.Tip="Show changed files"
+                           PointerPressed="OnGitChangesPressed" />
+                <!-- Context left before auto-compact -->
+                <StackPanel x:Name="StatusContextPanel" Orientation="Horizontal" Spacing="5"
+                            IsVisible="False" Cursor="Hand" VerticalAlignment="Center"
+                            ToolTip.Tip="Context left before auto-compact - click to run /compact"
+                            PointerPressed="OnContextMeterPressed">
+                    <TextBlock x:Name="StatusContextText" Text=""
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
+                               VerticalAlignment="Center" />
+                    <Border Width="48" Height="6" CornerRadius="3" Background="#30FFFFFF"
+                            VerticalAlignment="Center">
+                        <Border x:Name="StatusContextFill" Height="6" CornerRadius="3"
+                                Background="#30D158" HorizontalAlignment="Left" Width="0" />
+                    </Border>
+                </StackPanel>
                 <!-- Usage progress bar -->
                 <StackPanel x:Name="StatusUsagePanel" Orientation="Horizontal" Spacing="5" Cursor="Hand"
                             ToolTip.Tip="Click to show usage chart">
@@ -202,6 +253,12 @@
                             <PathIcon Data="M17.5 0H8.5L7 1.5V6H2.5L1 7.5V22.57L2.5 24H13.5L15 22.57V18H19.5L21 16.5V3.5L17.5 0ZM13.5 22.57H2.5V7.5H7V16.5L8.5 18H13.5V22.57ZM19.5 16.5H8.5V1.5H14.5V5.5H19.5V16.5ZM15.5 1.5L19.5 4.5H15.5V1.5Z"
                                       Width="20" Height="20" />
                         </Button>
+                        <Button x:Name="BtnActivityChanges" Classes="activity-btn"
+                                ToolTip.Tip="Changed files"
+                                Click="OnActivityChanges">
+                            <PathIcon Data="M13 3C8.03 3 4 7.03 4 12H1L4.89 15.89L4.96 16.03L9 12H6C6 8.13 9.13 5 13 5C16.87 5 20 8.13 20 12C20 15.87 16.87 19 13 19C11.07 19 9.32 18.21 8.06 16.94L6.64 18.36C8.27 19.99 10.51 21 13 21C17.97 21 22 16.97 22 12C22 7.03 17.97 3 13 3ZM12 8V13L16.28 15.54L17 14.33L13.5 12.25V8H12Z"
+                                      Width="20" Height="20" />
+                        </Button>
                         <Button x:Name="BtnActivityWindows" Classes="activity-btn"
                                 ToolTip.Tip="Windows"
                                 Click="OnActivityWindows">
@@ -222,6 +279,7 @@
                         </Button>
                         <Button x:Name="BtnActivityDiagram" Classes="activity-btn"
                                 ToolTip.Tip="Diagram Viewer"
+                                IsVisible="False"
                                 Click="OnActivityDiagram">
                             <PathIcon Data="M4 4H10V10H4ZM14 4H20V10H14ZM4 14H10V20H4ZM14 17L17 14L20 17L17 20Z"
                                       Width="20" Height="20" />
@@ -229,6 +287,12 @@
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom"
                                 Spacing="2" Margin="0,8">
+                        <Button x:Name="BtnActivitySlash" Classes="activity-btn"
+                                ToolTip.Tip="Slash commands (Ctrl+/)"
+                                Click="OnActivitySlashCommands">
+                            <PathIcon Data="M3 3H21V21H3V3M5 5V19H19V5H5M7.5 8.5L10.5 11.5L7.5 14.5L8.9 15.9L13.3 11.5L8.9 7.1L7.5 8.5M12.5 15H17V17H12.5V15Z"
+                                      Width="20" Height="20" />
+                        </Button>
                         <Button x:Name="BtnActivityModeSwitch" Classes="activity-btn"
                                 ToolTip.Tip="Switch Mode (Shift+Tab)"
                                 Click="OnActivityModeSwitch">
@@ -240,6 +304,12 @@
                                 Click="OnActivityCompact">
                             <PathIcon Data="M4 1H20V3H4Z M6 4L18 8L6 12L12 12L22 8L12 4Z M2 12L14 16L2 20L8 20L18 16L8 12Z M4 21H20V23H4Z M10 3H14L12 5Z M10 21L12 19L14 21Z"
                                       Width="22" Height="22" />
+                        </Button>
+                        <Button x:Name="BtnActivityCost" Classes="activity-btn"
+                                ToolTip.Tip="Tokens &amp; cost"
+                                Click="OnActivityCost">
+                            <PathIcon Data="M4 20H20V22H4ZM4 2H6V18H4ZM8 12H11V18H8ZM13 8H16V18H13ZM18 4H21V18H18Z"
+                                      Width="20" Height="20" />
                         </Button>
                         <Button x:Name="BtnActivitySettings" Classes="activity-btn"
                                 ToolTip.Tip="Settings"
@@ -460,6 +530,60 @@
                                         <TextBlock x:Name="LblOpenClaudeFolder" Text="Open .claude Folder" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </Button>
+                                <Grid ColumnDefinitions="*,8,*" Margin="0,16,0,0">
+                                    <Button x:Name="BtnSetupDoctor" Grid.Column="0"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Center"
+                                            ToolTip.Tip="Check that everything is installed and signed in"
+                                            Click="OnSetupDoctor">
+                                        <TextBlock x:Name="LblSetupDoctor" Text="Setup Check" FontSize="12" />
+                                    </Button>
+                                    <Button x:Name="BtnShortcuts" Grid.Column="2"
+                                            HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Center"
+                                            ToolTip.Tip="Keyboard shortcuts (F1)"
+                                            Click="OnShowShortcuts">
+                                        <TextBlock x:Name="LblShortcuts" Text="Keyboard Shortcuts" FontSize="12" />
+                                    </Button>
+                                </Grid>
+                                <StackPanel Spacing="4" Margin="0,16,0,0">
+                                    <TextBlock x:Name="LblNotifications" Text="Notifications" FontSize="13"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <CheckBox x:Name="ChkNotifyOnComplete" Content="Notify when a task finishes"
+                                              Foreground="{DynamicResource SubtleText}"
+                                              IsCheckedChanged="OnNotifySettingChanged" />
+                                    <CheckBox x:Name="ChkNotifySound" Content="Play a sound"
+                                              Foreground="{DynamicResource SubtleText}"
+                                              IsCheckedChanged="OnNotifySettingChanged" />
+                                </StackPanel>
+                                <StackPanel Spacing="4" Margin="0,12,0,0">
+                                    <TextBlock x:Name="LblCheckpoints" Text="Checkpoints" FontSize="13"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <CheckBox x:Name="ChkEnableCheckpoints" Content="Snapshot the project before each prompt"
+                                              Foreground="{DynamicResource SubtleText}"
+                                              IsCheckedChanged="OnEnableCheckpointsChanged" />
+                                </StackPanel>
+                                <StackPanel Spacing="4" Margin="0,12,0,0">
+                                    <TextBlock x:Name="LblLiveStatus" Text="Live status" FontSize="13"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <CheckBox x:Name="ChkEnableLiveStatus" Content="Show mode, activity and context left"
+                                              Foreground="{DynamicResource SubtleText}"
+                                              IsCheckedChanged="OnLiveStatusSettingChanged" />
+                                    <CheckBox x:Name="ChkEnableErrorBanner" Content="Explain errors in a banner"
+                                              Foreground="{DynamicResource SubtleText}"
+                                              IsCheckedChanged="OnLiveStatusSettingChanged" />
+                                </StackPanel>
+                                <StackPanel Spacing="4" Margin="0,12,0,0">
+                                    <TextBlock x:Name="LblPlanTier" Text="Plan" FontSize="13"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <ComboBox x:Name="CmbPlanTier" HorizontalAlignment="Stretch"
+                                              SelectionChanged="OnPlanTierChanged" />
+                                    <Button x:Name="BtnOpenCostDashboard" HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Center" Margin="0,4,0,0"
+                                            Click="OnActivityCost">
+                                        <TextBlock x:Name="LblOpenCostDashboard" Text="Tokens &amp; cost" FontSize="12" />
+                                    </Button>
+                                </StackPanel>
                                 <CheckBox x:Name="ChkShowWelcomePage" Content="Show Welcome Page"
                                           Margin="0,16,0,0"
                                           Foreground="{DynamicResource SubtleText}"
@@ -483,6 +607,27 @@
                                           VerticalScrollBarVisibility="Auto">
                                 <StackPanel x:Name="SnippetsList" Spacing="3"
                                             Margin="5,8" />
+                            </ScrollViewer>
+                        </DockPanel>
+
+                        <!-- Changed Files Panel -->
+                        <DockPanel x:Name="ChangesPanel" IsVisible="False">
+                            <Border DockPanel.Dock="Top" Padding="10,6">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="LblChangesSummary" Text=""
+                                               FontSize="11" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <Button x:Name="BtnRefreshChanges" Grid.Column="1"
+                                            Classes="icon-btn" Padding="4"
+                                            ToolTip.Tip="Refresh" Click="OnRefreshChanges">
+                                        <PathIcon Data="M17.65 6.35C16.2 4.9 14.21 4 12 4C7.58 4 4 7.58 4 12C4 16.42 7.58 20 12 20C15.73 20 18.84 17.45 19.73 14H17.65C16.83 16.33 14.61 18 12 18C8.69 18 6 15.31 6 12C6 8.69 8.69 6 12 6C13.66 6 15.14 6.69 16.22 7.78L13 11H20V4L17.65 6.35Z"
+                                                  Width="13" Height="13" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+                            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                          VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="ChangesList" Spacing="1" Margin="4,4" />
                             </ScrollViewer>
                         </DockPanel>
 
@@ -547,6 +692,33 @@
                                           Width="14" Height="14" />
                             </Button>
                         </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Advice banner: known CLI errors and the auto-compact hint -->
+                <Border x:Name="InfoBanner" DockPanel.Dock="Top" IsVisible="False"
+                        Padding="12,8" BorderThickness="0,0,0,0.5"
+                        BorderBrush="{DynamicResource DividerColor}">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                        <Border x:Name="BannerAccent" Grid.Column="0" Width="3" CornerRadius="2"
+                                Margin="0,0,10,0" />
+                        <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                            <TextBlock x:Name="BannerTitle" Text="" FontSize="12"
+                                       FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock x:Name="BannerDetail" Text="" FontSize="11"
+                                       Foreground="{DynamicResource SubtleText}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button x:Name="BtnBannerAction" Grid.Column="2" Classes="primary"
+                                Padding="10,3" Margin="8,0,4,0" IsVisible="False"
+                                VerticalAlignment="Center" Click="OnBannerAction">
+                            <TextBlock x:Name="LblBannerAction" Text="" FontSize="11" />
+                        </Button>
+                        <Button x:Name="BtnBannerDismiss" Grid.Column="3" Classes="icon-btn"
+                                Padding="4" VerticalAlignment="Center"
+                                ToolTip.Tip="Dismiss" Click="OnBannerDismiss">
+                            <PathIcon Data="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12Z"
+                                      Width="12" Height="12" />
+                        </Button>
                     </Grid>
                 </Border>
 

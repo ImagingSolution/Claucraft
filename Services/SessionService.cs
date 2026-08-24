@@ -414,6 +414,36 @@ public static class SessionService
     }
 
     /// <summary>
+    /// Session id of the newest transcript in the project folder written at or after the given time.
+    /// Used to learn the id of a session Claucraft launched itself, which the CLI only reveals by
+    /// creating the transcript file. Returns null while the CLI has not written one yet.
+    /// </summary>
+    public static string? FindSessionIdCreatedAfter(string projectFolder, DateTime after)
+    {
+        try
+        {
+            string claudeProjectsDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".claude", "projects");
+
+            if (!Directory.Exists(claudeProjectsDir)) return null;
+
+            string normalizedTarget = NormalizeFolderName(projectFolder);
+
+            return Directory.GetDirectories(claudeProjectsDir)
+                .Where(d => NormalizeFolderName(Path.GetFileName(d))
+                    .Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase))
+                .SelectMany(d => Directory.GetFiles(d, "*.jsonl"))
+                .Select(f => new FileInfo(f))
+                .Where(f => f.CreationTime >= after || f.LastWriteTime >= after)
+                .OrderByDescending(f => f.LastWriteTime)
+                .Select(f => Path.GetFileNameWithoutExtension(f.Name))
+                .FirstOrDefault();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Get the most recent project folders (up to 10) from ~/.claude/projects/ JSONL files.
     /// Returns actual folder paths extracted from session cwd fields, sorted by most recent first.
     /// </summary>

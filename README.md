@@ -25,14 +25,30 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Font Zoom (Ctrl+Scroll)** - Adjust font size in real-time with Ctrl+mouse wheel. Ctrl+0 resets to default size
 - **Expanded Input Panel** - Multi-line input mode with drag-resizable panel. Enter for newline, Ctrl+Enter to send. Collapse with Escape or button
 - **Command Palette (Ctrl+Shift+P)** - VS Code-style searchable action menu for quick access to all commands
+- **Setup Check** - One-click diagnosis of the CLI, Node.js, Git, the config folder and sign-in state, with a copyable fix command for anything missing. Runs itself on first launch and stays quiet when everything is fine
+- **Slash Command Palette (Ctrl+/)** - Every slash command the CLI understands, listed with a description instead of memorised. Custom commands from `.claude/commands/*.md` are picked up automatically
+- **Automatic Checkpoints** - Snapshots the project before each prompt so the work can be rolled back from the status bar. Git repos use `git stash create`, which builds a commit object without touching the working tree; other folders get a file snapshot
+- **Stop Button** - A stop control appears in the status bar while a session is running, for anyone who does not know Escape interrupts the AI
+- **Starter Prompt Templates** - The snippets panel starts pre-filled with common prompts in English or Japanese instead of empty
+- **Task Completion Notification** - A tray toast and a sound when a session finishes in the background, on top of the taskbar flash. Both can be turned off in Settings
+- **Keyboard Shortcut Sheet (F1)** - Every shortcut on one screen, grouped by what it acts on
+- **Named Workspaces** - Save and restore any number of layouts. Restoring reopens the same transcripts with `-r`, so the conversations come back instead of blank sessions
+- **Changed Files + Built-in Diff** - A panel listing every file the AI touched, straight from `git status`. Click one for a colour-coded diff without leaving the app
+- **Mode Badge** - Shows which mode the session is in (auto-accept / plan / bypass) right in the status bar, so nobody discovers it by accident. Click it to cycle
+- **Activity Indicator** - Says what the AI is doing while it is quiet - reading a file, running a command, searching - with the elapsed time
+- **Context Meter** - Reads the context left from the CLI's own output and shows it as a meter, with a one-click `/compact` when it runs low
+- **Usage in Plain Words** - "about 840 left, resets in 5h" instead of a bare message count, measured against the plan (Pro / Max 5x / Max 20x) chosen in Settings
+- **Permission Prompts, Explained** - The approval overlay now says what the command actually does and rates it read-only / changes files / deletes or reaches the network
+- **Error Diagnosis Banner** - Known failures (signed out, rate limited, usage limit, network down, outdated CLI) surface as a banner with the fix one click away
+- **Tokens & Cost Dashboard** - Reads `message.usage` out of the session transcripts and totals tokens and estimated cost by day, model, project and session, with CSV export
 - **Tab Management** - Right-click context menu (Close / Close Others / Close to Right / Duplicate / Export Output). Double-click to rename. Auto-names from first user input or session summary
 - **Terminal Output Export** - Save terminal output as a text file via tab context menu
 - **Dark / Light Theme** - Toggle in Settings panel. Full theme support across all UI components
 - **Usage Tracking** - Monitor daily Claude API usage with a 14-day chart view. Progress bar in status bar with color gradient (green → yellow → red)
-- **Status Bar** - Git repository name, branch, changed files count, terminal status (Running/Exited), and daily usage with progress bar
+- **Status Bar** - Git repository name, branch, changed files count, terminal status (Running/Exited), mode badge, current activity, context left, and daily usage with progress bar
 - **Task Completion Notification** - Taskbar flashes when a terminal exits while the window is in the background
 - **Workspace Save / Restore** - Save and restore open tab layout via command palette
-- **Keyboard Shortcuts** - Ctrl+N (new session), Ctrl+W (close tab), Ctrl+Tab (next tab), Ctrl+Shift+Tab (previous tab), Ctrl+Shift+E (toggle explorer), Ctrl+Shift+P (command palette), Ctrl+F (search), Ctrl+↑/↓ (prompt navigation), Ctrl+0 (reset font)
+- **Keyboard Shortcuts** - Ctrl+N (new session), Ctrl+W (close tab), Ctrl+Tab (next tab), Ctrl+Shift+Tab (previous tab), Ctrl+Shift+E (toggle explorer), Ctrl+Shift+P (command palette), Ctrl+F (search), Ctrl+↑/↓ (prompt navigation), Ctrl+0 (reset font), Ctrl+/ (slash commands), F1 (shortcut sheet)
 - **Mode Switch** - Switch Claude Code mode (Shift+Tab) from the activity bar
 - **Compact** - Send /compact command from the activity bar
 - **Settings Panel** - Configure font family, font size, language, initial prompt, and dark/light theme from the side panel
@@ -108,6 +124,8 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | Settings | `%APPDATA%\Claucraft\appsettings.json` |
 | Snippets | `%APPDATA%\Claucraft\snippets.json` |
 | Workspace | `%APPDATA%\Claucraft\workspace.json` |
+| Checkpoints | `%APPDATA%\Claucraft\checkpoints\` |
+| Slash command overrides | `%APPDATA%\Claucraft\slashcommands.json` (optional) |
 | Sessions (read/write) | `~/.claude/projects/*/sessions-index.json` |
 | Session JSONL (read-only) | `~/.claude/projects/*/*.jsonl` |
 | Usage stats (read-only) | `~/.claude/stats-cache.json` |
@@ -139,14 +157,30 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **フォントズーム (Ctrl+スクロール)** - Ctrl+マウスホイールでリアルタイムにフォントサイズを変更。Ctrl+0 でデフォルトサイズにリセット
 - **拡張入力パネル** - 複数行入力モード。ドラッグでサイズ調整可能。Enter で改行、Ctrl+Enter で送信。Escape またはボタンで縮小
 - **コマンドパレット (Ctrl+Shift+P)** - VS Code 風の検索可能なアクションメニュー。全コマンドに素早くアクセス
+- **セットアップ診断** - CLI・Node.js・Git・設定フォルダ・サインイン状態をワンクリックで診断し、足りないものにはコピーできる対処コマンドを表示。初回起動時に自動実行され、問題がなければ何も出さない
+- **スラッシュコマンドパレット（Ctrl+/）** - CLI が解釈するスラッシュコマンドを説明付きで一覧表示。`.claude/commands/*.md` のカスタムコマンドも自動で取り込む
+- **自動チェックポイント** - プロンプト送信前にプロジェクトのスナップショットを取り、ステータスバーから巻き戻し可能。Git リポジトリでは作業ツリーに触れない `git stash create` を使い、Git 管理外のフォルダはファイルコピーで保存
+- **停止ボタン** - セッション実行中はステータスバーに停止ボタンを表示。Escape で中断できることを知らなくても止められる
+- **プロンプトテンプレート同梱** - スニペットパネルが空ではなく、よく使うプロンプト（日本語／英語）が入った状態から始まる
+- **タスク完了通知** - バックグラウンドでセッションが終了したとき、タスクバー点滅に加えてトースト通知と効果音で知らせる。どちらも設定でオフにできる
+- **ショートカット一覧（F1）** - 全ショートカットを対象ごとにグループ分けして1画面で表示
+- **名前付きワークスペース** - レイアウトを任意の数だけ保存・復元。復元時は `-r` で同じセッションを再開するため、新規セッションではなく会話が戻ってくる
+- **変更ファイルパネル＋内蔵 diff** - AI が触ったファイルを `git status` から一覧表示。クリックすると色分けされた差分をアプリ内で確認できる
+- **モードバッジ** - セッションのモード（自動承認 / プラン / 権限スキップ）をステータスバーに常時表示。クリックで切り替え
+- **実行中インジケータ** - AI が黙っている間に何をしているか（ファイル読み込み・コマンド実行・検索）を経過時間付きで表示
+- **コンテキスト残量メーター** - CLI の出力から残量を読み取ってメーター表示。少なくなったらワンクリックで `/compact` を実行
+- **使用量の人間語表示** - 単なるメッセージ数ではなく「残り約 840 回・リセットまで 5 時間」と表示。設定で選んだプラン（Pro / Max 5x / Max 20x）が基準
+- **権限プロンプトの解説** - 承認オーバーレイに、そのコマンドが何をするかの平易な説明と危険度（読み取りのみ / ファイルを変更 / 削除・ネットワーク）を表示
+- **エラー診断バナー** - 既知の失敗（サインアウト・レート制限・使用量上限・ネットワーク断・CLI が古い）を検出し、対処をワンクリックで実行できるバナーを表示
+- **トークン／コストダッシュボード** - セッション記録の `message.usage` を集計し、日別・モデル別・プロジェクト別・セッション別にトークンと概算コストを表示。CSV エクスポート対応
 - **タブ管理** - 右クリックコンテキストメニュー（閉じる / 他を閉じる / 右側を閉じる / 複製 / エクスポート）。ダブルクリックでタブ名変更。最初のユーザー入力またはセッション要約から自動命名
 - **ターミナル出力のエクスポート** - タブコンテキストメニューからターミナル出力をテキストファイルに保存
 - **ダーク/ライトテーマ** - 設定パネルから切替。全UIコンポーネントのテーマに完全対応
 - **使用量トラッキング** - Claude API の日次使用量を14日間のチャートで表示。ステータスバーにプログレスバー表示（緑→黄→赤のグラデーション）
-- **ステータスバー** - Git リポジトリ名、ブランチ名、変更ファイル数、ターミナル状態（実行中/終了）、使用量プログレスバーを表示
+- **ステータスバー** - Git リポジトリ名、ブランチ名、変更ファイル数、ターミナル状態（実行中/終了）、モードバッジ、実行中の作業、コンテキスト残量、使用量プログレスバーを表示
 - **タスク完了通知** - バックグラウンドでターミナルが終了したとき、タスクバーが点滅
 - **ワークスペース保存・復元** - コマンドパレットから開いているタブのレイアウトを保存・復元
-- **キーボードショートカット** - Ctrl+N（新規セッション）、Ctrl+W（タブを閉じる）、Ctrl+Tab（次のタブ）、Ctrl+Shift+Tab（前のタブ）、Ctrl+Shift+E（エクスプローラー切替）、Ctrl+Shift+P（コマンドパレット）、Ctrl+F（検索）、Ctrl+↑/↓（プロンプトナビゲーション）、Ctrl+0（フォントリセット）
+- **キーボードショートカット** - Ctrl+N（新規セッション）、Ctrl+W（タブを閉じる）、Ctrl+Tab（次のタブ）、Ctrl+Shift+Tab（前のタブ）、Ctrl+Shift+E（エクスプローラー切替）、Ctrl+Shift+P（コマンドパレット）、Ctrl+F（検索）、Ctrl+↑/↓（プロンプトナビゲーション）、Ctrl+0（フォントリセット）、Ctrl+/（スラッシュコマンド）、F1（ショートカット一覧）
 - **モード切替** - アクティビティバーから Claude Code のモードを切替（Shift+Tab）
 - **コンパクト** - アクティビティバーから /compact コマンドを送信
 - **設定パネル** - サイドパネルからフォント、フォントサイズ、言語、初期プロンプト、ダーク/ライトテーマを設定
@@ -193,6 +227,8 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | 設定 | `%APPDATA%\Claucraft\appsettings.json` |
 | スニペット | `%APPDATA%\Claucraft\snippets.json` |
 | ワークスペース | `%APPDATA%\Claucraft\workspace.json` |
+| チェックポイント | `%APPDATA%\Claucraft\checkpoints\` |
+| スラッシュコマンド上書き | `%APPDATA%\Claucraft\slashcommands.json`（任意） |
 | セッション（読み書き） | `~/.claude/projects/*/sessions-index.json` |
 | セッション JSONL（読み取り専用） | `~/.claude/projects/*/*.jsonl` |
 | 使用量統計（読み取り専用） | `~/.claude/stats-cache.json` |
