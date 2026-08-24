@@ -34,7 +34,7 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Keyboard Shortcut Sheet (F1)** - Every shortcut on one screen, grouped by what it acts on
 - **Named Workspaces** - Save and restore any number of layouts. Restoring reopens the same transcripts with `-r`, so the conversations come back instead of blank sessions
 - **Changed Files + Built-in Diff** - A panel listing every file the AI touched, straight from `git status`. Click one for a colour-coded diff without leaving the app
-- **Mode Badge** - Shows which mode the session is in (auto-accept / plan / bypass) right in the status bar, so nobody discovers it by accident. Click it to cycle
+- **Mode Badge** - Shows which mode the session is in (auto-accept / plan / bypass) right in the status bar, so nobody discovers it by accident. Click it to cycle. If a CLI update renames the modes and the badge cannot read one, it falls back to "Switch Mode" and still sends Shift+Tab
 - **Activity Indicator** - Says what the AI is doing while it is quiet - reading a file, running a command, searching - with the elapsed time
 - **Context Meter** - Reads the context left from the CLI's own output and shows it as a meter, with a one-click `/compact` when it runs low
 - **Usage in Plain Words** - "about 840 left, resets in 5h" instead of a bare message count, measured against the plan (Pro / Max 5x / Max 20x) chosen in Settings
@@ -49,7 +49,6 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Task Completion Notification** - Taskbar flashes when a terminal exits while the window is in the background
 - **Workspace Save / Restore** - Save and restore open tab layout via command palette
 - **Keyboard Shortcuts** - Ctrl+N (new session), Ctrl+W (close tab), Ctrl+Tab (next tab), Ctrl+Shift+Tab (previous tab), Ctrl+Shift+E (toggle explorer), Ctrl+Shift+P (command palette), Ctrl+F (search), Ctrl+↑/↓ (prompt navigation), Ctrl+0 (reset font), Ctrl+/ (slash commands), F1 (shortcut sheet)
-- **Mode Switch** - Switch Claude Code mode (Shift+Tab) from the activity bar
 - **Compact** - Send /compact command from the activity bar
 - **Settings Panel** - Configure font family, font size, language, initial prompt, and dark/light theme from the side panel
 - **Initial Prompt** - Configurable initial prompt for new Claude sessions
@@ -166,7 +165,7 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **ショートカット一覧（F1）** - 全ショートカットを対象ごとにグループ分けして1画面で表示
 - **名前付きワークスペース** - レイアウトを任意の数だけ保存・復元。復元時は `-r` で同じセッションを再開するため、新規セッションではなく会話が戻ってくる
 - **変更ファイルパネル＋内蔵 diff** - AI が触ったファイルを `git status` から一覧表示。クリックすると色分けされた差分をアプリ内で確認できる
-- **モードバッジ** - セッションのモード（自動承認 / プラン / 権限スキップ）をステータスバーに常時表示。クリックで切り替え
+- **モードバッジ** - セッションのモード（自動承認 / プラン / 権限スキップ）をステータスバーに常時表示。クリックで切り替え。CLI の仕様変更でモード名を読み取れなくなった場合は「Switch Mode」表示に戻り、Shift+Tab の送信は継続
 - **実行中インジケータ** - AI が黙っている間に何をしているか（ファイル読み込み・コマンド実行・検索）を経過時間付きで表示
 - **コンテキスト残量メーター** - CLI の出力から残量を読み取ってメーター表示。少なくなったらワンクリックで `/compact` を実行
 - **使用量の人間語表示** - 単なるメッセージ数ではなく「残り約 840 回・リセットまで 5 時間」と表示。設定で選んだプラン（Pro / Max 5x / Max 20x）が基準
@@ -181,7 +180,6 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **タスク完了通知** - バックグラウンドでターミナルが終了したとき、タスクバーが点滅
 - **ワークスペース保存・復元** - コマンドパレットから開いているタブのレイアウトを保存・復元
 - **キーボードショートカット** - Ctrl+N（新規セッション）、Ctrl+W（タブを閉じる）、Ctrl+Tab（次のタブ）、Ctrl+Shift+Tab（前のタブ）、Ctrl+Shift+E（エクスプローラー切替）、Ctrl+Shift+P（コマンドパレット）、Ctrl+F（検索）、Ctrl+↑/↓（プロンプトナビゲーション）、Ctrl+0（フォントリセット）、Ctrl+/（スラッシュコマンド）、F1（ショートカット一覧）
-- **モード切替** - アクティビティバーから Claude Code のモードを切替（Shift+Tab）
 - **コンパクト** - アクティビティバーから /compact コマンドを送信
 - **設定パネル** - サイドパネルからフォント、フォントサイズ、言語、初期プロンプト、ダーク/ライトテーマを設定
 - **初期プロンプト** - 新規 Claude セッション起動時のプロンプトを設定可能

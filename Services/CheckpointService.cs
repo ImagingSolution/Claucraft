@@ -79,7 +79,23 @@ public class CheckpointService
             .OrderByDescending(c => c.CreatedAt)
             .ToList();
 
-    public Checkpoint? LatestFor(string projectFolder) => ForProject(projectFolder).FirstOrDefault();
+    /// <summary>
+    /// Newest checkpoint for a project, or null. Hand-rolled rather than ForProject().First()
+    /// because the status bar asks every 700ms and the list is never trimmed - sorting a fresh
+    /// copy each time would allocate for nothing.
+    /// </summary>
+    public Checkpoint? LatestFor(string projectFolder)
+    {
+        Checkpoint? latest = null;
+        foreach (var c in _checkpoints)
+        {
+            if (!string.Equals(c.ProjectFolder, projectFolder, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (latest == null || c.CreatedAt > latest.CreatedAt)
+                latest = c;
+        }
+        return latest;
+    }
 
     public void Load()
     {

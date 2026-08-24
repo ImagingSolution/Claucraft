@@ -367,6 +367,8 @@ public static class Loc
         ["ModePlanShort"] = new() { ["English"] = "plan", ["日本語"] = "プラン" },
         ["ModeBypassPermissionsShort"] = new() { ["English"] = "bypass", ["日本語"] = "スキップ" },
         ["ModeUnknownShort"] = new() { ["English"] = "?", ["日本語"] = "?" },
+        ["ModeSwitchFallback"] = new() { ["English"] = "Switch Mode", ["日本語"] = "モード切替" },
+        ["ModeSwitchTooltip"] = new() { ["English"] = "Switch mode (Shift+Tab) - the mode name could not be read", ["日本語"] = "モード切替 (Shift+Tab) - モード名を読み取れません" },
 
         // {0} = reset time reported by the CLI
         ["DiagUsageLimitResetSuffix"] = new() { ["English"] = "It resets at {0}.", ["日本語"] = "{0} にリセットされます。" },

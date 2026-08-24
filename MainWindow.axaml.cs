@@ -156,7 +156,13 @@ public partial class MainWindow : Window
         // Mirror what the CLI is doing into the status bar. Cheap: reads the screen buffer
         // that is already in memory, no extra process or file access.
         _insightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
-        _insightTimer.Tick += (_, _) => RefreshLiveStatus();
+        _insightTimer.Tick += (_, _) =>
+        {
+            // The run state has no event of its own that covers every transition, so poll it
+            // here too. Independent of EnableLiveStatus: Stop and Undo are not readouts.
+            UpdateTerminalStatus();
+            RefreshLiveStatus();
+        };
         _insightTimer.Start();
 
 
@@ -482,7 +488,6 @@ public partial class MainWindow : Window
         // terminal output, which breaks whenever Claude changes its renderer. The
         // handler and inline rendering are still live — restore this line and drop
         // IsVisible="False" in the axaml to bring the button back.
-        BtnActivityModeSwitch.IsVisible = features.ModeSwitchButton;
         BtnActivityCompact.IsVisible = features.CompactButton;
 
         // Launch profiles are per-CLI; a CLI that defines none keeps the picker hidden.
@@ -721,7 +726,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private void OnActivityModeSwitch(object? sender, RoutedEventArgs e)
+    /// <summary>
+    /// Cycles the CLI's mode by sending it Shift+Tab. The status bar badge is the only button
+    /// wired to this; the command palette calls it directly.
+    /// </summary>
+    private void SendModeSwitch()
     {
         if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
         {
@@ -850,8 +859,7 @@ public partial class MainWindow : Window
             var child = _children[i];
             int idx = i;
             bool isActive = i == _activeChildIndex;
-            bool isRunning = child.StatusDot.Fill is SolidColorBrush b
-                             && b.Color == Color.FromRgb(48, 209, 88);
+            bool isRunning = child.Terminal.IsProcessRunning;
 
             var dot = new Ellipse
             {
@@ -2076,8 +2084,7 @@ public partial class MainWindow : Window
         if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
         {
             var terminal = _children[_activeChildIndex].Terminal;
-            bool running = _children[_activeChildIndex].StatusDot.Fill is SolidColorBrush b
-                           && b.Color == Color.FromRgb(48, 209, 88);
+            bool running = terminal.IsProcessRunning;
             StatusTerminalDot.Fill = running
                 ? new SolidColorBrush(Color.FromRgb(48, 209, 88))
                 : new SolidColorBrush(Color.FromRgb(142, 142, 147));
@@ -2128,31 +2135,47 @@ public partial class MainWindow : Window
 
     private void ClearLiveStatus()
     {
-        StatusModeBadge.IsVisible = false;
+        // The badge stays. With the activity-bar button gone it is the only mode switch in the
+        // UI, so it has to outlive the readout toggles as well as an unreadable mode name.
+        ApplyModeBadge(null);
         StatusActivity.IsVisible = false;
         StatusContextPanel.IsVisible = false;
     }
 
+    /// <summary>
+    /// Draws the mode badge. A null mode means the screen did not say which mode the CLI is in —
+    /// the badge still shows, labelled "Switch Mode", because clicking it sends Shift+Tab either
+    /// way. Only a CLI that has no modes at all, or having no session, takes it off screen.
+    /// </summary>
+    private void ApplyModeBadge(AiMode? mode)
+    {
+        bool show = _cli.Features.ModeSwitchButton
+                    && _activeChildIndex >= 0 && _activeChildIndex < _children.Count;
+        StatusModeBadge.IsVisible = show;
+        if (!show) return;
+
+        bool known = mode is not null and not AiMode.Unknown;
+        var color = mode switch
+        {
+            AiMode.AcceptEdits => Color.FromRgb(255, 214, 10),
+            AiMode.Plan => Color.FromRgb(10, 132, 255),
+            AiMode.BypassPermissions => Color.FromRgb(255, 69, 58),
+            _ => Color.FromRgb(142, 142, 147),
+        };
+        StatusModeText.Text = known
+            ? TerminalInsight.ModeShortLabel(mode!.Value)
+            : Loc.Get("ModeSwitchFallback", "Switch Mode");
+        StatusModeText.Foreground = new SolidColorBrush(color);
+        StatusModeBadge.BorderBrush = new SolidColorBrush(color);
+        StatusModeBadge.Background = new SolidColorBrush(color, 0.14);
+        ToolTip.SetTip(StatusModeBadge, known
+            ? Loc.Get("ModeBadgeTooltip")
+            : Loc.Get("ModeSwitchTooltip", "Switch mode (Shift+Tab)"));
+    }
+
     private void ApplyLiveStatus(TerminalSnapshot snap)
     {
-        // Mode badge — only Claude Code prints the mode line this reads. Manual mode is shown
-        // too, greyed out: the badge is how the mode is cycled, so it has to stay clickable.
-        bool showMode = _cli.Features.ModeSwitchButton && snap.Mode != AiMode.Unknown;
-        StatusModeBadge.IsVisible = showMode;
-        if (showMode)
-        {
-            var color = snap.Mode switch
-            {
-                AiMode.AcceptEdits => Color.FromRgb(255, 214, 10),
-                AiMode.Plan => Color.FromRgb(10, 132, 255),
-                AiMode.BypassPermissions => Color.FromRgb(255, 69, 58),
-                _ => Color.FromRgb(142, 142, 147),
-            };
-            StatusModeText.Text = TerminalInsight.ModeShortLabel(snap.Mode);
-            StatusModeText.Foreground = new SolidColorBrush(color);
-            StatusModeBadge.BorderBrush = new SolidColorBrush(color);
-            StatusModeBadge.Background = new SolidColorBrush(color, 0.14);
-        }
+        ApplyModeBadge(snap.Mode);
 
         // What it is doing right now
         bool showActivity = _cli.Features.PermissionOverlay && snap.Activity != AiActivity.None;
@@ -2300,11 +2323,7 @@ public partial class MainWindow : Window
 
     private void OnModeBadgePressed(object? sender, PointerPressedEventArgs e)
     {
-        if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
-        {
-            _children[_activeChildIndex].Terminal.SendText("\x1b[Z"); // Shift+Tab cycles the mode
-            _children[_activeChildIndex].Terminal.FocusTerminal();
-        }
+        SendModeSwitch();
         e.Handled = true;
     }
 
@@ -2540,7 +2559,7 @@ public partial class MainWindow : Window
             ("Tile Vertically", "", () => { _layout = MdiLayout.TileVertical; ArrangeChildren(); }),
             ("Full View", "", () => { _layout = MdiLayout.Maximize; ArrangeChildren(); }),
             ("Compact (/compact)", "", () => OnActivityCompact(null, null!)),
-            ("Switch Mode (Shift+Tab)", "", () => OnActivityModeSwitch(null, null!)),
+            ("Switch Mode (Shift+Tab)", "", SendModeSwitch),
             ("Save Workspace", "", SaveWorkspace),
             ("Save Workspace As...", "", () => _ = PromptSaveWorkspaceAsync()),
             ("Restore Workspace", "", () => RestoreWorkspace()),
@@ -4314,6 +4333,9 @@ public partial class MainWindow : Window
             string fullCommand = $"cmd.exe /c chcp 65001 >nul && {cdPart}{command}";
             terminal.StartProcess(fullCommand, _projectFolder);
             terminal.FocusTerminal();
+            // The new child is already active, so nothing else will refresh the status bar
+            // for it: without this, Running / Stop / Undo stay blank until the tab is clicked.
+            UpdateTerminalStatus();
 
             if (string.IsNullOrEmpty(sessionId))
                 _ = TrackSessionIdAsync(entry, DateTime.Now.AddSeconds(-2));
@@ -4357,6 +4379,9 @@ public partial class MainWindow : Window
             _activeChildIndex--;
 
         ArrangeChildren();
+        // ArrangeChildren bails out when the last child is gone, so refresh separately or the
+        // closed session's Running / Stop / Undo linger in the status bar.
+        UpdateTerminalStatus();
     }
 
     // ── Welcome Page ──
