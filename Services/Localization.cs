@@ -211,6 +211,8 @@ public static class Loc
         ["ProjectCommands"] = new() { ["English"] = "Project commands", ["日本語"] = "プロジェクトのコマンド" },
         ["NeedsArgument"] = new() { ["English"] = "needs an argument", ["日本語"] = "引数が必要" },
         ["SlashNeedsSession"] = new() { ["English"] = "Open a session first, then pick a command to send to it.", ["日本語"] = "先にセッションを開いてから、送るコマンドを選んでください。" },
+        ["SlashPanelHint"] = new() { ["English"] = "Enter or double-click to send.", ["日本語"] = "Enter またはダブルクリックで送信します。" },
+        ["SLASH"] = new() { ["English"] = "SLASH COMMANDS", ["日本語"] = "スラッシュコマンド" },
 
         // ── Checkpoints ──
         ["Checkpoints"] = new() { ["English"] = "Checkpoints", ["日本語"] = "チェックポイント" },

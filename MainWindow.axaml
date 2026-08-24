@@ -32,7 +32,7 @@
                 BorderThickness="0,0,0,0.5">
             <StackPanel Spacing="10">
                 <!-- Row 1: Project + Row 2: Session -->
-                <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="56,*,Auto">
+                <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="56,*,Auto,Auto">
                     <!-- Row 0: Project -->
                     <TextBlock x:Name="LblProject" Grid.Row="0" Grid.Column="0"
                                Text="Project" VerticalAlignment="Center"
@@ -49,25 +49,25 @@
                               SelectionChanged="OnProjectFolderSelectionChanged"
                               KeyDown="OnProjectFolderKeyDown" />
 
-                    <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="6">
-                        <!-- Launch profile: bounds how much context a new session accumulates -->
-                        <ComboBox x:Name="CmbLaunchProfile"
-                                  Classes="modern"
-                                  MinWidth="104"
-                                  IsVisible="False"
-                                  VerticalAlignment="Center"
-                                  SelectionChanged="OnLaunchProfileChanged" />
+                    <!-- Launch profile: bounds how much context a new session accumulates.
+                         Kept in its own column so the button column is sized by New Session alone. -->
+                    <ComboBox x:Name="CmbLaunchProfile" Grid.Row="0" Grid.Column="2"
+                              Classes="modern"
+                              MinWidth="104"
+                              IsVisible="False"
+                              VerticalAlignment="Center"
+                              Margin="0,0,6,0"
+                              SelectionChanged="OnLaunchProfileChanged" />
 
-                        <Button x:Name="BtnNewClaude"
-                                Classes="primary"
-                                ToolTip.Tip="Open a new session"
-                                Click="OnNewClaude"
-                                HorizontalAlignment="Stretch"
-                                HorizontalContentAlignment="Center">
-                            <TextBlock x:Name="LblNewClaude" Text="New Session"
-                                       VerticalAlignment="Center" HorizontalAlignment="Center" />
-                        </Button>
-                    </StackPanel>
+                    <Button x:Name="BtnNewClaude" Grid.Row="0" Grid.Column="3"
+                            Classes="primary"
+                            ToolTip.Tip="Open a new session"
+                            Click="OnNewClaude"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center">
+                        <TextBlock x:Name="LblNewClaude" Text="New Session"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center" />
+                    </Button>
 
                     <!-- Row 1: Session -->
                     <TextBlock x:Name="LblSession" Grid.Row="1" Grid.Column="0"
@@ -75,7 +75,7 @@
                                FontSize="12" Foreground="{DynamicResource SubtleText}"
                                FontWeight="Normal" Margin="0,3,0,0" />
 
-                    <ComboBox x:Name="CmbSessions" Grid.Row="1" Grid.Column="1"
+                    <ComboBox x:Name="CmbSessions" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2"
                               Classes="modern"
                               VerticalAlignment="Center"
                               HorizontalAlignment="Stretch"
@@ -99,7 +99,7 @@
                         </ComboBox.ItemTemplate>
                     </ComboBox>
 
-                    <Button x:Name="BtnResumeSession" Grid.Row="1" Grid.Column="2"
+                    <Button x:Name="BtnResumeSession" Grid.Row="1" Grid.Column="3"
                             Classes="primary"
                             ToolTip.Tip="Resume selected session"
                             Click="OnResumeSession"
@@ -295,6 +295,12 @@
                             <PathIcon Data="M4 2H14L20 8V22H4V2ZM6 4V20H18V9H13V4H6ZM7 12H17V14H7V12ZM7 16H14V18H7V16Z"
                                       Width="20" Height="20" />
                         </Button>
+                        <Button x:Name="BtnActivitySlash" Classes="activity-btn"
+                                ToolTip.Tip="Slash commands (Ctrl+/)"
+                                Click="OnActivitySlashCommands">
+                            <PathIcon Data="M3 3H21V21H3V3M5 5V19H19V5H5M7.5 8.5L10.5 11.5L7.5 14.5L8.9 15.9L13.3 11.5L8.9 7.1L7.5 8.5M12.5 15H17V17H12.5V15Z"
+                                      Width="20" Height="20" />
+                        </Button>
                         <Button x:Name="BtnActivityDiagram" Classes="activity-btn"
                                 ToolTip.Tip="Diagram Viewer"
                                 IsVisible="False"
@@ -305,12 +311,6 @@
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom"
                                 Spacing="2" Margin="0,8">
-                        <Button x:Name="BtnActivitySlash" Classes="activity-btn"
-                                ToolTip.Tip="Slash commands (Ctrl+/)"
-                                Click="OnActivitySlashCommands">
-                            <PathIcon Data="M3 3H21V21H3V3M5 5V19H19V5H5M7.5 8.5L10.5 11.5L7.5 14.5L8.9 15.9L13.3 11.5L8.9 7.1L7.5 8.5M12.5 15H17V17H12.5V15Z"
-                                      Width="20" Height="20" />
-                        </Button>
                         <Button x:Name="BtnActivityCompact" Classes="activity-btn"
                                 ToolTip.Tip="Compact (/compact)"
                                 Click="OnActivityCompact">
@@ -649,6 +649,23 @@
                                       VerticalScrollBarVisibility="Auto">
                             <StackPanel x:Name="WindowsList" Spacing="2" Margin="4,8" />
                         </ScrollViewer>
+
+                        <!-- Slash Commands Panel -->
+                        <DockPanel x:Name="SlashPanel" IsVisible="False">
+                            <TextBox x:Name="TxtSlashSearch" DockPanel.Dock="Top"
+                                     FontSize="12" Padding="8,5" Margin="8,8,8,0"
+                                     CornerRadius="4"
+                                     TextChanged="OnSlashSearchChanged"
+                                     KeyDown="OnSlashSearchKeyDown" />
+                            <TextBlock x:Name="LblSlashHint" DockPanel.Dock="Bottom"
+                                       Text="" FontSize="10" TextWrapping="Wrap"
+                                       Margin="10,4,10,8"
+                                       Foreground="{DynamicResource SubtleText}" />
+                            <ListBox x:Name="SlashList" Background="Transparent"
+                                     Margin="4,4,4,0"
+                                     KeyDown="OnSlashListKeyDown"
+                                     DoubleTapped="OnSlashListDoubleTapped" />
+                        </DockPanel>
 
                     </Grid>
                 </DockPanel>

@@ -27,7 +27,7 @@ namespace Claucraft;
 public partial class MainWindow : Window
 {
     private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical, Cascade }
-    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, Changes }
+    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, Changes, Slash }
 
     private string? _projectFolder;
     private string? _gitRepoUrl;
@@ -60,6 +60,7 @@ public partial class MainWindow : Window
 
     // Sidebar state
     private SidebarPanel _activeSidePanel = SidebarPanel.None;
+    private readonly List<(SlashCommand Cmd, bool FromProject)> _slashEntries = new();
     private double _sidePanelWidth = 250;
     private bool _settingsInitialized;
     private bool _snippetsInitialized;
@@ -297,8 +298,10 @@ public partial class MainWindow : Window
         LblUndoCheckpoint.Text = Loc.Get("Undo");
         ToolTip.SetTip(BtnUndoCheckpoint, Loc.Get("UndoTooltip"));
 
-        // Slash command palette
+        // Slash command panel
         ToolTip.SetTip(BtnActivitySlash, Loc.Get("SlashCommandsTooltip"));
+        TxtSlashSearch.Watermark = Loc.Get("SearchSlashCommands");
+        if (SlashPanel.IsVisible) RefreshSlashPanel();
 
         // Setup check, shortcuts, notifications, checkpoints
         LblSetupDoctor.Text = Loc.Get("SetupDoctor");
@@ -768,6 +771,8 @@ public partial class MainWindow : Window
                 InitializeSettingsPanel();
             if (panel == SidebarPanel.Snippets && !_snippetsInitialized)
                 LoadSnippetsPanel();
+            if (panel == SidebarPanel.Slash)
+                Dispatcher.UIThread.Post(() => TxtSlashSearch.Focus());
         }
 
         UpdateActivityBarHighlight();
@@ -808,6 +813,7 @@ public partial class MainWindow : Window
         SnippetsPanel.IsVisible = panel == SidebarPanel.Snippets;
         WindowsPanel.IsVisible = panel == SidebarPanel.Windows;
         ChangesPanel.IsVisible = panel == SidebarPanel.Changes;
+        SlashPanel.IsVisible = panel == SidebarPanel.Slash;
         SidePanelTitle.Text = panel switch
         {
             SidebarPanel.Explorer => Loc.Get("EXPLORER"),
@@ -815,6 +821,7 @@ public partial class MainWindow : Window
             SidebarPanel.Snippets => Loc.Get("SNIPPETS"),
             SidebarPanel.Windows => Loc.Get("WINDOWS"),
             SidebarPanel.Changes => Loc.Get("CHANGES"),
+            SidebarPanel.Slash => Loc.Get("SLASH"),
             _ => ""
         };
         BtnBrowseFolder.IsVisible = panel == SidebarPanel.Explorer;
@@ -822,6 +829,8 @@ public partial class MainWindow : Window
             RefreshWindowsPanel();
         if (panel == SidebarPanel.Changes)
             RefreshChangesPanel();
+        if (panel == SidebarPanel.Slash)
+            RefreshSlashPanel();
     }
 
     private void UpdateActivityBarHighlight()
@@ -831,6 +840,7 @@ public partial class MainWindow : Window
         SetActivityButtonActive(BtnActivitySettings, _activeSidePanel == SidebarPanel.Settings);
         SetActivityButtonActive(BtnActivityWindows, _activeSidePanel == SidebarPanel.Windows);
         SetActivityButtonActive(BtnActivityChanges, _activeSidePanel == SidebarPanel.Changes);
+        SetActivityButtonActive(BtnActivitySlash, _activeSidePanel == SidebarPanel.Slash);
         // DocView button state is managed by OnActivityDocView, not side panel
     }
 
@@ -1867,6 +1877,7 @@ public partial class MainWindow : Window
 
         // Keep the changed-files list on the project the status bar just switched to.
         if (ChangesPanel.IsVisible) RefreshChangesPanel();
+        if (SlashPanel.IsVisible) RefreshSlashPanel();
     }
 
     private async void RefreshSessionList()
@@ -2019,7 +2030,7 @@ public partial class MainWindow : Window
         if ((e.Key == Key.OemQuestion || e.Key == Key.Divide)
             && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            ShowSlashCommandPalette();
+            ToggleSlashPanel();
             e.Handled = true;
         }
     }
@@ -2564,7 +2575,7 @@ public partial class MainWindow : Window
             ("Save Workspace As...", "", () => _ = PromptSaveWorkspaceAsync()),
             ("Restore Workspace", "", () => RestoreWorkspace()),
             ("Workspaces...", "", ShowWorkspaceList),
-            ("Slash Commands", "Ctrl+/", ShowSlashCommandPalette),
+            ("Slash Commands", "Ctrl+/", ToggleSlashPanel),
             ("Checkpoints", "", ShowCheckpointList),
             ("Stop", "Esc", () => OnStopTask(null, null!)),
             ("Setup Check", "", () => _ = ShowSetupDoctorAsync()),
@@ -2856,134 +2867,125 @@ public partial class MainWindow : Window
         _ = dialog.ShowDialog(this);
     }
 
-    // ── Slash command palette (v0.2) ──
+    // ── Slash command panel (v0.2) ──
 
-    private void OnActivitySlashCommands(object? sender, RoutedEventArgs e) => ShowSlashCommandPalette();
+    private void OnActivitySlashCommands(object? sender, RoutedEventArgs e) => ToggleSlashPanel();
 
     /// <summary>
-    /// Lists the CLI's slash commands with a description each, so they can be picked instead of
-    /// memorised. Project commands from .claude/commands are appended below the built-ins.
+    /// Opens the side panel listing the CLI's slash commands with a description each, so they can
+    /// be picked instead of memorised. Project commands from .claude/commands are appended below
+    /// the built-ins.
     /// </summary>
-    private void ShowSlashCommandPalette()
+    private void ToggleSlashPanel() => ToggleSidePanel(SidebarPanel.Slash);
+
+    /// <summary>Reloads the list for the active session's provider and project folder.</summary>
+    private void RefreshSlashPanel()
     {
+        if (!SlashPanel.IsVisible) return;
+
+        bool hasSession = _activeChildIndex >= 0 && _activeChildIndex < _children.Count;
+        var folder = hasSession ? _children[_activeChildIndex].ProjectFolder : _projectFolder;
+
+        _slashEntries.Clear();
+        foreach (var c in SlashCommandCatalog.ForProvider(_cli.ActiveId))
+            _slashEntries.Add((c, false));
+        foreach (var c in SlashCommandCatalog.ForProject(_cli.ActiveId, folder))
+            _slashEntries.Add((c, true));
+
+        LblSlashHint.Text = hasSession ? Loc.Get("SlashPanelHint") : Loc.Get("SlashNeedsSession");
+        FilterSlashList(TxtSlashSearch.Text ?? "");
+    }
+
+    private void FilterSlashList(string filter)
+    {
+        bool japanese = Loc.Language == "日本語";
+        SlashList.Items.Clear();
+
+        foreach (var (cmd, fromProject) in _slashEntries)
+        {
+            var description = japanese ? cmd.DescriptionJa : cmd.Description;
+            if (!string.IsNullOrEmpty(filter)
+                && !cmd.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                && !description.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var stack = new StackPanel { Spacing = 1 };
+            stack.Children.Add(new TextBlock
+            {
+                Text = cmd.Name,
+                FontSize = 12,
+                FontWeight = FontWeight.SemiBold,
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = cmd.NeedsArgument
+                    ? description + "  (" + Loc.Get("NeedsArgument") + ")"
+                    : description,
+                FontSize = 10,
+                Opacity = 0.6,
+                TextWrapping = TextWrapping.Wrap,
+            });
+
+            if (fromProject)
+            {
+                stack.Children.Add(new TextBlock
+                {
+                    Text = Loc.Get("ProjectCommands"),
+                    FontSize = 9,
+                    Foreground = new SolidColorBrush(Color.FromRgb(100, 165, 255)),
+                });
+            }
+
+            SlashList.Items.Add(new ListBoxItem
+            {
+                Content = stack,
+                Tag = cmd,
+                Padding = new Thickness(8, 5),
+            });
+        }
+
+        if (SlashList.ItemCount > 0) SlashList.SelectedIndex = 0;
+    }
+
+    private void SendSelectedSlashCommand()
+    {
+        if (SlashList.SelectedItem is not ListBoxItem sel || sel.Tag is not SlashCommand cmd) return;
         if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count)
         {
-            ShowMessageDialog(Loc.Get("SlashCommands"), Loc.Get("SlashNeedsSession"));
+            LblSlashHint.Text = Loc.Get("SlashNeedsSession");
             return;
         }
-
-        bool japanese = Loc.Language == "日本語";
-        var folder = _children[_activeChildIndex].ProjectFolder;
-
-        var entries = new List<(SlashCommand Cmd, bool FromProject)>();
-        foreach (var c in SlashCommandCatalog.ForProvider(_cli.ActiveId))
-            entries.Add((c, false));
-        foreach (var c in SlashCommandCatalog.ForProject(_cli.ActiveId, folder))
-            entries.Add((c, true));
-
-        var searchBox = new TextBox
-        {
-            Watermark = Loc.Get("SearchSlashCommands"),
-            FontSize = 14,
-            Padding = new Thickness(10, 8),
-            CornerRadius = new CornerRadius(0),
-            BorderThickness = new Thickness(0, 0, 0, 1),
-        };
-        var listBox = new ListBox { Background = Brushes.Transparent, Margin = new Thickness(0, 4, 0, 0) };
-
-        void UpdateList(string filter)
-        {
-            listBox.Items.Clear();
-            foreach (var (cmd, fromProject) in entries)
-            {
-                var description = japanese ? cmd.DescriptionJa : cmd.Description;
-                if (!string.IsNullOrEmpty(filter)
-                    && !cmd.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
-                    && !description.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var nameText = new TextBlock
-                {
-                    Text = cmd.Name,
-                    FontSize = 13,
-                    FontWeight = FontWeight.SemiBold,
-                    Foreground = new SolidColorBrush(DialogForeground()),
-                };
-                var descText = new TextBlock
-                {
-                    Text = cmd.NeedsArgument
-                        ? description + "  (" + Loc.Get("NeedsArgument") + ")"
-                        : description,
-                    FontSize = 11,
-                    Foreground = new SolidColorBrush(DialogSubtle()),
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                };
-                var stack = new StackPanel { Spacing = 1 };
-                stack.Children.Add(nameText);
-                stack.Children.Add(descText);
-
-                if (fromProject)
-                {
-                    stack.Children.Add(new TextBlock
-                    {
-                        Text = Loc.Get("ProjectCommands"),
-                        FontSize = 10,
-                        Foreground = new SolidColorBrush(Color.FromRgb(100, 165, 255)),
-                    });
-                }
-
-                listBox.Items.Add(new ListBoxItem { Content = stack, Tag = cmd, Padding = new Thickness(10, 6) });
-            }
-            if (listBox.Items.Count > 0) listBox.SelectedIndex = 0;
-        }
-
-        var dialog = CreateToolDialog(Loc.Get("SlashCommands"), 480, 420);
-
-        void Run()
-        {
-            if (listBox.SelectedItem is not ListBoxItem sel || sel.Tag is not SlashCommand cmd) return;
-            dialog.Close();
-            // Commands that take an argument are only typed in, so the user can finish the line.
-            SendToActiveTerminal(cmd.NeedsArgument ? cmd.Name + " " : cmd.Name + "\r");
-        }
-
-        searchBox.PropertyChanged += (_, args) =>
-        {
-            if (args.Property == TextBox.TextProperty) UpdateList(searchBox.Text ?? "");
-        };
-        searchBox.KeyDown += (_, args) =>
-        {
-            if (args.Key == Key.Escape) { dialog.Close(); args.Handled = true; }
-            else if (args.Key == Key.Down && listBox.Items.Count > 0)
-            {
-                listBox.SelectedIndex = Math.Min(listBox.SelectedIndex + 1, listBox.Items.Count - 1);
-                args.Handled = true;
-            }
-            else if (args.Key == Key.Up && listBox.Items.Count > 0)
-            {
-                listBox.SelectedIndex = Math.Max(listBox.SelectedIndex - 1, 0);
-                args.Handled = true;
-            }
-            else if (args.Key == Key.Enter) { Run(); args.Handled = true; }
-        };
-        listBox.DoubleTapped += (_, _) => Run();
-        // Escape has to work even before the search box has taken focus.
-        dialog.KeyDown += (_, args) =>
-        {
-            if (args.Key == Key.Escape) { dialog.Close(); args.Handled = true; }
-            else if (args.Key == Key.Enter) { Run(); args.Handled = true; }
-        };
-
-        var dock = new DockPanel();
-        DockPanel.SetDock(searchBox, Dock.Top);
-        dock.Children.Add(searchBox);
-        dock.Children.Add(listBox);
-        dialog.Content = dock;
-
-        UpdateList("");
-        _ = dialog.ShowDialog(this);
-        Dispatcher.UIThread.Post(() => searchBox.Focus());
+        // Commands that take an argument are only typed in, so the user can finish the line.
+        SendToActiveTerminal(cmd.NeedsArgument ? cmd.Name + " " : cmd.Name + "\r");
     }
+
+    private void OnSlashSearchChanged(object? sender, TextChangedEventArgs e)
+        => FilterSlashList(TxtSlashSearch.Text ?? "");
+
+    private void OnSlashSearchKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Down && SlashList.ItemCount > 0)
+        {
+            SlashList.SelectedIndex = Math.Min(SlashList.SelectedIndex + 1, SlashList.ItemCount - 1);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Up && SlashList.ItemCount > 0)
+        {
+            SlashList.SelectedIndex = Math.Max(SlashList.SelectedIndex - 1, 0);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter) { SendSelectedSlashCommand(); e.Handled = true; }
+        else if (e.Key == Key.Escape) { ToggleSidePanel(SidebarPanel.Slash); e.Handled = true; }
+    }
+
+    private void OnSlashListKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) { SendSelectedSlashCommand(); e.Handled = true; }
+        else if (e.Key == Key.Escape) { ToggleSidePanel(SidebarPanel.Slash); e.Handled = true; }
+    }
+
+    private void OnSlashListDoubleTapped(object? sender, TappedEventArgs e)
+        => SendSelectedSlashCommand();
 
     // ── Setup diagnostics (v0.2) ──
 

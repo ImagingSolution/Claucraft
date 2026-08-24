@@ -26,7 +26,7 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Expanded Input Panel** - Multi-line input mode with drag-resizable panel. Enter for newline, Ctrl+Enter to send. Collapse with Escape or button
 - **Command Palette (Ctrl+Shift+P)** - VS Code-style searchable action menu for quick access to all commands
 - **Setup Check** - One-click diagnosis of the CLI, Node.js, Git, the config folder and sign-in state, with a copyable fix command for anything missing. Runs itself on first launch and stays quiet when everything is fine
-- **Slash Command Palette (Ctrl+/)** - Every slash command the CLI understands, listed with a description instead of memorised. Custom commands from `.claude/commands/*.md` are picked up automatically
+- **Slash Commands Panel (Ctrl+/)** - Every slash command the CLI understands, listed with a description in the side panel next to the activity bar instead of memorised. Custom commands from `.claude/commands/*.md` are picked up automatically
 - **Automatic Checkpoints** - Snapshots the project before each prompt so the work can be rolled back from the status bar. Git repos use `git stash create`, which builds a commit object without touching the working tree; other folders get a file snapshot
 - **Stop Button** - A stop control appears in the status bar while a session is running, for anyone who does not know Escape interrupts the AI
 - **Starter Prompt Templates** - The snippets panel starts pre-filled with common prompts in English or Japanese instead of empty
@@ -157,7 +157,7 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **拡張入力パネル** - 複数行入力モード。ドラッグでサイズ調整可能。Enter で改行、Ctrl+Enter で送信。Escape またはボタンで縮小
 - **コマンドパレット (Ctrl+Shift+P)** - VS Code 風の検索可能なアクションメニュー。全コマンドに素早くアクセス
 - **セットアップ診断** - CLI・Node.js・Git・設定フォルダ・サインイン状態をワンクリックで診断し、足りないものにはコピーできる対処コマンドを表示。初回起動時に自動実行され、問題がなければ何も出さない
-- **スラッシュコマンドパレット（Ctrl+/）** - CLI が解釈するスラッシュコマンドを説明付きで一覧表示。`.claude/commands/*.md` のカスタムコマンドも自動で取り込む
+- **スラッシュコマンドパネル（Ctrl+/）** - CLI が解釈するスラッシュコマンドを、アクティビティバー右側のサイドパネルに説明付きで一覧表示。`.claude/commands/*.md` のカスタムコマンドも自動で取り込む
 - **自動チェックポイント** - プロンプト送信前にプロジェクトのスナップショットを取り、ステータスバーから巻き戻し可能。Git リポジトリでは作業ツリーに触れない `git stash create` を使い、Git 管理外のフォルダはファイルコピーで保存
 - **停止ボタン** - セッション実行中はステータスバーに停止ボタンを表示。Escape で中断できることを知らなくても止められる
 - **プロンプトテンプレート同梱** - スニペットパネルが空ではなく、よく使うプロンプト（日本語／英語）が入った状態から始まる
