@@ -2109,9 +2109,9 @@ public partial class MainWindow : Window
 
     private void ApplyLiveStatus(TerminalSnapshot snap)
     {
-        // Mode badge — only Claude Code prints the mode line this reads.
-        bool showMode = _cli.Features.ModeSwitchButton
-                        && snap.Mode is AiMode.AcceptEdits or AiMode.Plan or AiMode.BypassPermissions;
+        // Mode badge — only Claude Code prints the mode line this reads. Manual mode is shown
+        // too, greyed out: the badge is how the mode is cycled, so it has to stay clickable.
+        bool showMode = _cli.Features.ModeSwitchButton && snap.Mode != AiMode.Unknown;
         StatusModeBadge.IsVisible = showMode;
         if (showMode)
         {
@@ -2119,7 +2119,8 @@ public partial class MainWindow : Window
             {
                 AiMode.AcceptEdits => Color.FromRgb(255, 214, 10),
                 AiMode.Plan => Color.FromRgb(10, 132, 255),
-                _ => Color.FromRgb(255, 69, 58),
+                AiMode.BypassPermissions => Color.FromRgb(255, 69, 58),
+                _ => Color.FromRgb(142, 142, 147),
             };
             StatusModeText.Text = TerminalInsight.ModeShortLabel(snap.Mode);
             StatusModeText.Foreground = new SolidColorBrush(color);

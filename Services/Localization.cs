@@ -335,12 +335,12 @@ public static class Loc
         ["CostNoData"] = new() { ["English"] = "No data", ["日本語"] = "データなし" },
 
         // ── Mode labels ──
-        ["ModeNormalLabel"] = new() { ["English"] = "Normal mode", ["日本語"] = "通常モード" },
+        ["ModeNormalLabel"] = new() { ["English"] = "Manual mode - every step is approved", ["日本語"] = "手動モード - 毎回承認する" },
         ["ModeAcceptEditsLabel"] = new() { ["English"] = "Auto-accept edits", ["日本語"] = "編集自動承認" },
         ["ModePlanLabel"] = new() { ["English"] = "Plan mode", ["日本語"] = "プランモード" },
         ["ModeBypassPermissionsLabel"] = new() { ["English"] = "Bypass permissions", ["日本語"] = "権限確認スキップ" },
         ["ModeUnknownLabel"] = new() { ["English"] = "Unknown mode", ["日本語"] = "モード不明" },
-        ["ModeNormalShort"] = new() { ["English"] = "normal", ["日本語"] = "通常" },
+        ["ModeNormalShort"] = new() { ["English"] = "manual", ["日本語"] = "手動" },
         ["ModeAcceptEditsShort"] = new() { ["English"] = "auto-accept", ["日本語"] = "自動承認" },
         ["ModePlanShort"] = new() { ["English"] = "plan", ["日本語"] = "プラン" },
         ["ModeBypassPermissionsShort"] = new() { ["English"] = "bypass", ["日本語"] = "スキップ" },

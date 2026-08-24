@@ -55,6 +55,9 @@ public static class TerminalInsight
         @"(?:auto[-\s]?accept\s+edits|accept\s+edits|auto\s+mode)\s+on",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    /// <summary>Matches "⏸ manual mode on", the 2.x wording for the plain, approve-everything mode.</summary>
+    private static readonly Regex ModeManualRegex = new(@"manual\s+mode\s+on", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>Matches "⏸ plan mode on (shift+tab to cycle)".</summary>
     private static readonly Regex ModePlanRegex = new(@"plan\s+mode\s+on", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -194,6 +197,7 @@ public static class TerminalInsight
             var line = lines[i];
             if (ModeBypassRegex.IsMatch(line)) return AiMode.BypassPermissions;
             if (ModePlanRegex.IsMatch(line)) return AiMode.Plan;
+            if (ModeManualRegex.IsMatch(line)) return AiMode.Normal;
             if (ModeAcceptEditsRegex.IsMatch(line)) return AiMode.AcceptEdits;
             if (!sawInputPrompt && InputPromptRegex.IsMatch(line)) sawInputPrompt = true;
         }
