@@ -142,14 +142,6 @@
                 </StackPanel>
                 <!-- Separator -->
                 <Border Width="1" Height="12" Background="{DynamicResource DividerColor}" />
-                <!-- Terminal status -->
-                <StackPanel Orientation="Horizontal" Spacing="5">
-                    <Ellipse x:Name="StatusTerminalDot" Width="7" Height="7"
-                             Fill="{DynamicResource SubtleText}" VerticalAlignment="Center" />
-                    <TextBlock x:Name="StatusTerminalState" Text=""
-                               Foreground="{DynamicResource SubtleText}" FontSize="11"
-                               VerticalAlignment="Center" />
-                </StackPanel>
                 <!-- Which mode the AI is in (normal / accept edits / plan) -->
                 <Border x:Name="StatusModeBadge" IsVisible="False"
                         CornerRadius="4" Padding="6,1" Cursor="Hand"

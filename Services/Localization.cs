@@ -21,9 +21,6 @@ public static class Loc
         ["NoProjectFolder"] = new() { ["English"] = "No project folder selected", ["日本語"] = "プロジェクトフォルダ未選択" },
         ["Usage"] = new() { ["English"] = "Usage", ["日本語"] = "使用量" },
         ["Windows"] = new() { ["English"] = "windows", ["日本語"] = "ウィンドウ" },
-        ["Ready"] = new() { ["English"] = "Ready", ["日本語"] = "準備完了" },
-        ["Running"] = new() { ["English"] = "Running", ["日本語"] = "実行中" },
-        ["Exited"] = new() { ["English"] = "Exited", ["日本語"] = "終了" },
         ["Msgs"] = new() { ["English"] = "msgs", ["日本語"] = "メッセージ" },
         ["Sessions"] = new() { ["English"] = "sessions", ["日本語"] = "セッション" },
 

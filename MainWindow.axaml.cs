@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia;
@@ -41,6 +42,10 @@ public partial class MainWindow : Window
     private bool _suppressProfileChange;
     private bool _wasWorking;
     private bool _costRefreshInFlight;
+
+    /// <summary>Turn-end tracking for the frame blink. See NoteRunState.</summary>
+    private bool _sawWorking;
+    private int _idlePolls;
 
     /// <summary>Banner action that opens the hand-off flow rather than typing a slash command.</summary>
     private const string HandoffActionCommand = "claucraft:handoff";
@@ -1225,18 +1230,59 @@ public partial class MainWindow : Window
         catch { }
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct OpenAsInfo
+    {
+        [MarshalAs(UnmanagedType.LPWStr)] public string FileName;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? ClassName;
+        public int Flags;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int SHOpenWithDialog(IntPtr hwndParent, ref OpenAsInfo info);
+
+    /// <summary>OAIF_EXEC: open the file once an app has been picked.</summary>
+    private const int OaifExec = 0x04;
+
+    /// <summary>
+    /// OAIF_HIDE_REGISTRATION: drop the "always use this app" option. Windows 11 answers the
+    /// registration flags with a "change the default app in Settings" message box instead of
+    /// the picker, so asking for them loses the dialog entirely.
+    /// </summary>
+    private const int OaifHideRegistration = 0x20;
+
+    /// <summary>
+    /// Shows Windows' "Open with" picker. Neither obvious route works from here: rundll32
+    /// shell32,OpenAs_RunDLL(W) starts and exits without drawing anything, and ShellExecute's
+    /// "openas" verb throws SE_ERR_NOASSOC on an extension with no association at all - which is
+    /// the case the picker exists for. SHOpenWithDialog is the API behind both and copes with an
+    /// unknown extension. It blocks until dismissed and wants an STA thread, so it gets one of
+    /// its own instead of freezing the UI.
+    /// </summary>
     private static void OpenFileWith(string filePath)
     {
-        try
+        var thread = new System.Threading.Thread(() =>
         {
-            Process.Start(new ProcessStartInfo
+            try
             {
-                FileName = "rundll32.exe",
-                Arguments = $"shell32.dll,OpenAs_RunDLL \"{filePath}\"",
-                UseShellExecute = false
-            });
-        }
-        catch { }
+                var info = new OpenAsInfo
+                {
+                    FileName = filePath,
+                    ClassName = null,
+                    Flags = OaifExec | OaifHideRegistration,
+                };
+                // The result is not worth branching on: a cancelled picker and a picked app
+                // both come back S_OK here, and there is nothing to undo either way.
+                SHOpenWithDialog(IntPtr.Zero, ref info);
+            }
+            catch { }
+        });
+        // The guard is for the analyser: the project targets plain net8.0, so it cannot tell
+        // that everything here is Windows-only already.
+        if (OperatingSystem.IsWindows())
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+        thread.IsBackground = true;
+        thread.Start();
     }
 
     private static void OpenFolderInExplorer(string folderPath)
@@ -2096,18 +2142,12 @@ public partial class MainWindow : Window
         {
             var terminal = _children[_activeChildIndex].Terminal;
             bool running = terminal.IsProcessRunning;
-            StatusTerminalDot.Fill = running
-                ? new SolidColorBrush(Color.FromRgb(48, 209, 88))
-                : new SolidColorBrush(Color.FromRgb(142, 142, 147));
-            StatusTerminalState.Text = running ? Loc.Get("Running") : Loc.Get("Exited");
             BtnStopTask.IsVisible = running;
             BtnUndoCheckpoint.IsVisible = _settings.EnableCheckpoints
                 && _checkpoints.LatestFor(_children[_activeChildIndex].ProjectFolder ?? "") != null;
         }
         else
         {
-            StatusTerminalDot.Fill = new SolidColorBrush(Color.FromRgb(100, 100, 105));
-            StatusTerminalState.Text = Loc.Get("Ready");
             BtnStopTask.IsVisible = false;
             BtnUndoCheckpoint.IsVisible = false;
         }
@@ -2121,11 +2161,12 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshLiveStatus()
     {
-        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count
-            || (!_settings.EnableLiveStatus && !_settings.EnableErrorBanner))
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count)
         {
             ClearLiveStatus();
             if (_bannerKey != null) HideBanner();
+            _sawWorking = false;
+            _idlePolls = 0;
             return;
         }
 
@@ -2135,6 +2176,16 @@ public partial class MainWindow : Window
 
         _insight = TerminalInsight.Analyze(screen);
 
+        // The blink is a signal, not a readout, so it survives the status-bar toggles.
+        NoteRunState(_insight);
+
+        if (!_settings.EnableLiveStatus && !_settings.EnableErrorBanner)
+        {
+            ClearLiveStatus();
+            if (_bannerKey != null) HideBanner();
+            return;
+        }
+
         if (_settings.EnableLiveStatus)
             ApplyLiveStatus(_insight);
         else
@@ -2142,6 +2193,31 @@ public partial class MainWindow : Window
 
         RefreshCostReadout(_insight);
         UpdateAdviceBanner(_insight);
+    }
+
+    /// <summary>How many polls the idle state must hold before the turn counts as over.</summary>
+    private const int TurnEndIdlePolls = 2;
+
+    /// <summary>
+    /// Watches the working → idle edge and blinks the active window's frame when the CLI hands
+    /// the prompt back. The idle state has to hold for two polls: mid-turn the spinner can be
+    /// absent from a single frame, and blinking on that would be noise.
+    /// </summary>
+    private void NoteRunState(TerminalSnapshot snap)
+    {
+        if (snap.IsWorking)
+        {
+            _sawWorking = true;
+            _idlePolls = 0;
+            return;
+        }
+
+        if (!_sawWorking) return;
+        if (++_idlePolls < TurnEndIdlePolls) return;
+
+        _sawWorking = false;
+        _idlePolls = 0;
+        BlinkActiveFrame();
     }
 
     private void ClearLiveStatus()
@@ -4015,6 +4091,58 @@ public partial class MainWindow : Window
         }
     }
 
+    // ── Turn-end blink ──
+
+    /// <summary>Border repaints in one blink: dark, blue, dark, blue.</summary>
+    private const int BlinkPhases = 4;
+
+    private DispatcherTimer? _blinkTimer;
+    private Border? _blinkTarget;
+    private int _blinkPhase;
+
+    /// <summary>
+    /// Blinks the active window's blue frame twice, to say the turn is over and the prompt is
+    /// waiting. Only the brush changes: moving the border thickness would resize the terminal
+    /// and push a resize down the pty.
+    /// </summary>
+    private void BlinkActiveFrame()
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
+
+        _blinkTarget = _children[_activeChildIndex].Container;
+        _blinkPhase = 0;
+
+        if (_blinkTimer == null)
+        {
+            _blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(280) };
+            _blinkTimer.Tick += OnBlinkTick;
+        }
+
+        _blinkTimer.Stop();
+        _blinkTimer.Start();
+        OnBlinkTick(null, EventArgs.Empty);   // first phase now, not one interval late
+    }
+
+    private void OnBlinkTick(object? sender, EventArgs e)
+    {
+        // A window switch mid-blink leaves the old frame to UpdateStripSelection; drop out
+        // rather than paint over whichever window is now selected.
+        bool onTarget = _blinkTarget != null
+                        && _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+                        && ReferenceEquals(_children[_activeChildIndex].Container, _blinkTarget);
+
+        if (!onTarget || _blinkPhase >= BlinkPhases)
+        {
+            _blinkTimer?.Stop();
+            _blinkTarget = null;
+            UpdateStripSelection();   // hand the frame back to the selection colours
+            return;
+        }
+
+        _blinkTarget!.BorderBrush = _blinkPhase % 2 == 0 ? InactiveBorder : ActiveBorder;
+        _blinkPhase++;
+    }
+
     // ── MDI Child management ──
 
     private void CreateNewChild(string command, string tabTitle, string? firstInput = null, string? sessionId = null)
@@ -4336,7 +4464,7 @@ public partial class MainWindow : Window
             terminal.StartProcess(fullCommand, _projectFolder);
             terminal.FocusTerminal();
             // The new child is already active, so nothing else will refresh the status bar
-            // for it: without this, Running / Stop / Undo stay blank until the tab is clicked.
+            // for it: without this, Stop / Undo stay blank until the tab is clicked.
             UpdateTerminalStatus();
 
             if (string.IsNullOrEmpty(sessionId))
@@ -4382,7 +4510,7 @@ public partial class MainWindow : Window
 
         ArrangeChildren();
         // ArrangeChildren bails out when the last child is gone, so refresh separately or the
-        // closed session's Running / Stop / Undo linger in the status bar.
+        // closed session's Stop / Undo linger in the status bar.
         UpdateTerminalStatus();
     }
 
