@@ -7,8 +7,10 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -229,7 +231,7 @@ public class TerminalControl : Control, IDisposable
             Padding = new Thickness(6, 4),
             FontSize = _fontSize,
             FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
-            Watermark = "IME input here — auto-sent on commit",
+            PlaceholderText = "IME input here — auto-sent on commit",
             Focusable = true,
             AcceptsReturn = false,
         };
@@ -664,49 +666,27 @@ public class TerminalControl : Control, IDisposable
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard == null) return;
 
-        // Check for image data in clipboard (same behavior as Claude Code CLI)
+        // Check for image data in clipboard (same behavior as Claude Code CLI).
+        // TryGetBitmapAsync covers every bitmap flavour Windows offers (PNG, CF_DIB, …),
+        // so the format probing the old clipboard API needed is no longer necessary.
         try
         {
-            var formats = await clipboard.GetFormatsAsync();
-            if (formats != null)
+            var bitmap = await clipboard.TryGetBitmapAsync();
+            if (bitmap != null)
             {
-                string? imageFormat = null;
-                foreach (var f in formats)
+                var tempPath = SaveClipboardImage(bitmap);
+                if (tempPath != null)
                 {
-                    if (f is "PNG" or "image/png" or "CF_DIB" or "DeviceIndependentBitmap" or "Bitmap")
-                    {
-                        imageFormat = f;
-                        break;
-                    }
-                }
-
-                if (imageFormat != null)
-                {
-                    var data = await clipboard.GetDataAsync(imageFormat);
-                    byte[]? imageBytes = data switch
-                    {
-                        byte[] bytes => bytes,
-                        MemoryStream ms => ms.ToArray(),
-                        _ => null
-                    };
-
-                    if (imageBytes is { Length: > 0 })
-                    {
-                        var tempPath = SaveClipboardImage(imageBytes);
-                        if (tempPath != null)
-                        {
-                            var pathStr = tempPath.Contains(' ') ? $"\"{tempPath}\"" : tempPath;
-                            _pty?.WriteInput(pathStr);
-                            return;
-                        }
-                    }
+                    var pathStr = tempPath.Contains(' ') ? $"\"{tempPath}\"" : tempPath;
+                    _pty?.WriteInput(pathStr);
+                    return;
                 }
             }
         }
         catch { }
 
         // Fallback: paste text
-        var text = await clipboard.GetTextAsync();
+        var text = await clipboard.TryGetTextAsync();
         if (!string.IsNullOrEmpty(text))
         {
             if (_buffer.BracketedPasteMode)
@@ -716,7 +696,7 @@ public class TerminalControl : Control, IDisposable
         }
     }
 
-    private static string? SaveClipboardImage(byte[] imageData)
+    private static string? SaveClipboardImage(Avalonia.Media.Imaging.Bitmap image)
     {
         try
         {
@@ -724,7 +704,7 @@ public class TerminalControl : Control, IDisposable
             Directory.CreateDirectory(tempDir);
             var fileName = $"clipboard_{DateTime.Now:yyyyMMdd_HHmmss}.png";
             var filePath = Path.Combine(tempDir, fileName);
-            File.WriteAllBytes(filePath, imageData);
+            image.Save(filePath, PngBitmapEncoderOptions.Default);
             return filePath;
         }
         catch
@@ -1273,7 +1253,7 @@ public class TerminalControl : Control, IDisposable
             Padding = new Thickness(8, 6),
             FontSize = _fontSize,
             FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New, monospace"),
-            Watermark = "Multi-line input (Enter=newline, Ctrl+Enter=send)",
+            PlaceholderText = "Multi-line input (Enter=newline, Ctrl+Enter=send)",
             VerticalContentAlignment = VerticalAlignment.Top,
         };
         _expandedTextBox.AddHandler(KeyDownEvent, OnExpandedKeyDown, RoutingStrategies.Tunnel);
@@ -1476,7 +1456,7 @@ public class TerminalControl : Control, IDisposable
     {
         _searchTextBox = new TextBox
         {
-            Watermark = "Search...",
+            PlaceholderText = "Search...",
             FontSize = 12,
             MinWidth = 180,
             Padding = new Thickness(6, 3),
@@ -2725,7 +2705,7 @@ public class TerminalControl : Control, IDisposable
             }
 
             using var ms = new MemoryStream();
-            bitmap.Save(ms);
+            bitmap.Save(ms, PngBitmapEncoderOptions.Default);
             return ms.ToArray();
         }
         catch (Exception ex)
@@ -3557,7 +3537,7 @@ public class TerminalControl : Control, IDisposable
     {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard == null) return;
-        var text = await clipboard.GetTextAsync();
+        var text = await clipboard.TryGetTextAsync();
         if (string.IsNullOrEmpty(text)) return;
 
         // Insert at caret position
@@ -3580,22 +3560,23 @@ public class TerminalControl : Control, IDisposable
     /// <summary>
     /// Drag payload format used by the in-app Explorer tree: one full path per line.
     /// </summary>
-    public const string ExplorerPathFormat = "Claucraft.FilePaths";
+    public static readonly DataFormat<string> ExplorerPathFormat =
+        DataFormat.CreateStringApplicationFormat("Claucraft.FilePaths");
 
-    private static bool HasDroppablePaths(IDataObject data)
-        => data.Contains(DataFormats.Files)
+    private static bool HasDroppablePaths(IDataTransfer data)
+        => data.Contains(DataFormat.File)
         || data.Contains(ExplorerPathFormat)
-        || data.Contains(DataFormats.Text);
+        || data.Contains(DataFormat.Text);
 
     private void OnFileDragOver(object? sender, DragEventArgs e)
     {
-        e.DragEffects = HasDroppablePaths(e.Data) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.DragEffects = HasDroppablePaths(e.DataTransfer) ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
     private void OnFileDrop(object? sender, DragEventArgs e)
     {
-        var text = BuildDroppedText(e.Data);
+        var text = BuildDroppedText(e.DataTransfer);
         if (string.IsNullOrEmpty(text)) return;
 
         // Dropping onto an inactive MDI child should bring it to the front
@@ -3604,27 +3585,23 @@ public class TerminalControl : Control, IDisposable
         e.Handled = true;
     }
 
-    private static string BuildDroppedText(IDataObject data)
+    private static string BuildDroppedText(IDataTransfer data)
     {
         var paths = new List<string>();
 
-        if (data.Contains(DataFormats.Files))
+        var files = data.TryGetFiles();
+        if (files != null)
         {
-            var files = data.GetFiles();
-            if (files != null)
+            foreach (var file in files)
             {
-                foreach (var file in files)
-                {
-                    var path = file.Path?.LocalPath;
-                    if (!string.IsNullOrEmpty(path))
-                        paths.Add(TrimTrailingSeparator(path));
-                }
+                var path = file.Path?.LocalPath;
+                if (!string.IsNullOrEmpty(path))
+                    paths.Add(TrimTrailingSeparator(path));
             }
         }
 
         // Explorer-tree payload (also the fallback when the storage lookup failed)
-        if (paths.Count == 0 && data.Contains(ExplorerPathFormat)
-            && data.Get(ExplorerPathFormat) is string raw)
+        if (paths.Count == 0 && data.TryGetValue(ExplorerPathFormat) is string raw)
         {
             foreach (var line in raw.Split('\n'))
             {
@@ -3635,7 +3612,7 @@ public class TerminalControl : Control, IDisposable
         }
 
         if (paths.Count == 0)
-            return data.Contains(DataFormats.Text) ? (data.GetText() ?? "").Trim() : "";
+            return (data.TryGetText() ?? "").Trim();
 
         var sb = new System.Text.StringBuilder();
         foreach (var path in paths)

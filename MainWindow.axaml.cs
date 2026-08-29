@@ -12,6 +12,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Markup.Xaml.MarkupExtensions;
@@ -305,7 +306,7 @@ public partial class MainWindow : Window
 
         // Slash command panel
         ToolTip.SetTip(BtnActivitySlash, Loc.Get("SlashCommandsTooltip"));
-        TxtSlashSearch.Watermark = Loc.Get("SearchSlashCommands");
+        TxtSlashSearch.PlaceholderText = Loc.Get("SearchSlashCommands");
         if (SlashPanel.IsVisible) RefreshSlashPanel();
 
         // Setup check, shortcuts, notifications, checkpoints
@@ -1061,6 +1062,10 @@ public partial class MainWindow : Window
     private FileTreeNode? _treeDragCandidate;
     private bool _treeDragActive;
 
+    // DoDragDropAsync wants the press that started the gesture, but the drag only
+    // begins once the pointer has moved far enough, so the args are kept until then.
+    private PointerPressedEventArgs? _treeDragTrigger;
+
     private void HookFileTreeDrag()
     {
         // Tunnel: TreeViewItem handles pointer events for selection, so bubbling never reaches us
@@ -1072,6 +1077,7 @@ public partial class MainWindow : Window
     private void OnFileTreePointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _treeDragCandidate = null;
+        _treeDragTrigger = null;
         if (!e.GetCurrentPoint(FileTree).Properties.IsLeftButtonPressed) return;
 
         var node = FindTreeNode(e.Source);
@@ -1079,6 +1085,7 @@ public partial class MainWindow : Window
 
         _treeDragOrigin = e.GetPosition(FileTree);
         _treeDragCandidate = node;
+        _treeDragTrigger = e;
     }
 
     private async void OnFileTreePointerMoved(object? sender, PointerEventArgs e)
@@ -1096,12 +1103,16 @@ public partial class MainWindow : Window
             return;
 
         var node = _treeDragCandidate;
+        var trigger = _treeDragTrigger;
         _treeDragCandidate = null;
+        _treeDragTrigger = null;
+        if (trigger == null) return;
+
         _treeDragActive = true;
         try
         {
             var data = await BuildTreeDragDataAsync(node);
-            await DragDrop.DoDragDrop(e, data, DragDropEffects.Copy | DragDropEffects.Link);
+            await DragDrop.DoDragDropAsync(trigger, data, DragDropEffects.Copy | DragDropEffects.Link);
         }
         catch { /* drag aborted */ }
         finally { _treeDragActive = false; }
@@ -1110,15 +1121,16 @@ public partial class MainWindow : Window
     private void OnFileTreePointerReleased(object? sender, PointerReleasedEventArgs e)
         => _treeDragCandidate = null;
 
-    private async Task<DataObject> BuildTreeDragDataAsync(FileTreeNode node)
+    private async Task<DataTransfer> BuildTreeDragDataAsync(FileTreeNode node)
     {
-        var data = new DataObject();
+        var data = new DataTransfer();
+        var entry = new DataTransferItem();
         var path = node.FullPath;
 
         // Own format + plain text keep the drop working even when the storage
         // lookup below fails (UNC paths, permission issues, …)
-        data.Set(TerminalControl.ExplorerPathFormat, path);
-        data.Set(DataFormats.Text, path.Contains(' ') ? "\"" + path + "\"" : path);
+        entry.Set(TerminalControl.ExplorerPathFormat, path);
+        entry.SetText(path.Contains(' ') ? "\"" + path + "\"" : path);
 
         try
         {
@@ -1126,10 +1138,12 @@ public partial class MainWindow : Window
                 ? await StorageProvider.TryGetFolderFromPathAsync(path)
                 : await StorageProvider.TryGetFileFromPathAsync(path);
             if (item != null)
-                data.Set(DataFormats.Files, new[] { item });
+                entry.SetFile(item);
         }
         catch { /* keep the text-only payload */ }
 
+        // Added last so the item carries every format it is going to have
+        data.Add(entry);
         return data;
     }
 
@@ -1525,7 +1539,7 @@ public partial class MainWindow : Window
             BorderBrush = new SolidColorBrush(snBorder),
             Background = new SolidColorBrush(snBg),
             Foreground = new SolidColorBrush(snFg),
-            Watermark = Loc.Get("EnterSnippetText"),
+            PlaceholderText = Loc.Get("EnterSnippetText"),
             Classes = { "snippet-text" }
         };
 
@@ -2665,14 +2679,14 @@ public partial class MainWindow : Window
             Width = 450, Height = 350,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             CanResize = false,
-            SystemDecorations = SystemDecorations.BorderOnly,
+            WindowDecorations = WindowDecorations.BorderOnly,
             Background = new SolidColorBrush(Color.FromRgb(30, 30, 32)),
             Topmost = true,
         };
 
         var searchBox = new TextBox
         {
-            Watermark = Loc.Get("TypeToSearch"),
+            PlaceholderText = Loc.Get("TypeToSearch"),
             FontSize = 14,
             Padding = new Thickness(10, 8),
             Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),
@@ -3822,7 +3836,7 @@ public partial class MainWindow : Window
         var box = new TextBox
         {
             Text = initial,
-            Watermark = watermark,
+            PlaceholderText = watermark,
             FontSize = 13,
             Padding = new Thickness(8, 6),
         };

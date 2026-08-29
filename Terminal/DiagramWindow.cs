@@ -5,6 +5,7 @@ using System.IO;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -192,7 +193,7 @@ public class DiagramWindow : Window
 
     private async void OnFileDrop(object? sender, DragEventArgs e)
     {
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer.TryGetFiles();
         if (files == null) return;
         foreach (var file in files)
         {
@@ -493,7 +494,7 @@ public class DiagramCanvas : Control
                 RenderElements(ctx, _drawables, scale, offsetX, offsetY, _typeface, _isDark);
             }
             using var ms = new MemoryStream();
-            bitmap.Save(ms);
+            bitmap.Save(ms, PngBitmapEncoderOptions.Default);
             return ms.ToArray();
         }
         catch { return null; }
