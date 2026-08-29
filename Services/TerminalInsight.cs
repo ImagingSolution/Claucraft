@@ -170,6 +170,16 @@ public static class TerminalInsight
         }
     }
 
+    /// <summary>
+    /// Whether the CLI is mid-turn. Cheaper than a full <see cref="Analyze"/> when the spinner
+    /// is all that matters - a background window's progress line, say. Never throws.
+    /// </summary>
+    public static bool IsWorking(string screenText)
+    {
+        try { return DetectWorking(SplitWindow(screenText)).IsWorking; }
+        catch { return false; }
+    }
+
     /// <summary>Localized long-form display name for a mode, e.g. for a tooltip.</summary>
     public static string ModeLabel(AiMode mode) => mode switch
     {

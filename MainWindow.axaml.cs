@@ -169,6 +169,7 @@ public partial class MainWindow : Window
             // here too. Independent of EnableLiveStatus: Stop and Undo are not readouts.
             UpdateTerminalStatus();
             RefreshLiveStatus();
+            RefreshGenerationBars();
         };
         _insightTimer.Start();
 
@@ -2207,6 +2208,31 @@ public partial class MainWindow : Window
 
         RefreshCostReadout(_insight);
         UpdateAdviceBanner(_insight);
+    }
+
+    /// <summary>
+    /// Runs the progress line under the input row of every child that is mid-turn, so a window
+    /// working in the background still shows it. The active child reuses the snapshot
+    /// <see cref="RefreshLiveStatus"/> just took; the rest only need the spinner, which is
+    /// always on screen, so they read the screen without its scrollback.
+    /// </summary>
+    private void RefreshGenerationBars()
+    {
+        for (int i = 0; i < _children.Count; i++)
+        {
+            var terminal = _children[i].Terminal;
+            try
+            {
+                terminal.IsGenerating = i == _activeChildIndex
+                    ? _insight.IsWorking
+                    : TerminalInsight.IsWorking(terminal.GetScreenText(0));
+            }
+            catch
+            {
+                // The pty read thread writes the buffer this walks - same race the active
+                // child's read already lives with. Skip this child until the next poll.
+            }
+        }
     }
 
     /// <summary>How many polls the idle state must hold before the turn counts as over.</summary>
@@ -4443,6 +4469,7 @@ public partial class MainWindow : Window
         {
             dot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));   // Apple systemGray
             stripDot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));
+            terminal.IsGenerating = false;
             RefreshSessionList();
             UpdateTerminalStatus();
             // Flash the taskbar and raise a toast when the window is not focused

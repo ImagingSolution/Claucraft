@@ -55,6 +55,9 @@ public class TerminalControl : Control, IDisposable
     private const double InputBoxMargin = 2;
     private const double ExpandButtonWidth = 32;
 
+    // Indeterminate progress line pinned to the bottom edge of the input row
+    private readonly Controls.MarqueeBar _marquee;
+
     // Expanded input panel
     private Border _expandedPanel = null!;
     private TextBox _expandedTextBox = null!;
@@ -221,6 +224,9 @@ public class TerminalControl : Control, IDisposable
 
         ClipToBounds = true;
 
+        // Built here but added to the visual tree last, so it paints over the input row
+        _marquee = new Controls.MarqueeBar();
+
         // Create input TextBox at the bottom
         _inputTextBox = new TextBox
         {
@@ -276,6 +282,11 @@ public class TerminalControl : Control, IDisposable
 
         // Build search bar
         BuildSearchBar();
+
+        // Visual children paint in the order they are added, so the marquee goes last to sit
+        // on top of the input row rather than behind the text box's own background.
+        VisualChildren.Add(_marquee);
+        LogicalChildren.Add(_marquee);
 
         // Enable file drag & drop
         DragDrop.SetAllowDrop(this, true);
@@ -780,11 +791,22 @@ public class TerminalControl : Control, IDisposable
         _pty.Start(command, workingDirectory, cols, rows);
     }
 
+    /// <summary>
+    /// Whether the CLI is mid-turn. Drives the progress line under the input row; the window
+    /// does not have to be the active one for it to run.
+    /// </summary>
+    public bool IsGenerating
+    {
+        get => _marquee.IsActive;
+        set => _marquee.IsActive = value;
+    }
+
     protected override Size MeasureOverride(Size availableSize)
     {
         double tbW = Math.Max(0, availableSize.Width - ExpandButtonWidth);
         _inputTextBox.Measure(new Size(tbW, InputBoxHeight));
         _expandButton.Measure(new Size(ExpandButtonWidth, InputBoxHeight));
+        _marquee.Measure(new Size(availableSize.Width, Controls.MarqueeBar.LineHeight));
         if (_isExpanded)
             _expandedPanel.Measure(new Size(availableSize.Width, _expandedHeight));
         _searchBar?.Measure(availableSize);
@@ -820,6 +842,15 @@ public class TerminalControl : Control, IDisposable
             _inputTextBox.Arrange(new Rect(0, tbY, tbW, InputBoxHeight));
             _expandButton.Arrange(new Rect(tbW, tbY, ExpandButtonWidth, InputBoxHeight));
         }
+
+        // Always the bottom edge of the control, in both layouts. The input row is flush with
+        // that edge either way, so the line stays inside it and never shifts when the input is
+        // expanded or collapsed. It overlays rather than adds height, so the PTY is not resized.
+        _marquee.Arrange(new Rect(
+            0,
+            Math.Max(0, finalSize.Height - Controls.MarqueeBar.LineHeight),
+            finalSize.Width,
+            Controls.MarqueeBar.LineHeight));
 
         // Position document view panel (fills terminal area)
         if (_docViewPanel != null)
@@ -3685,6 +3716,7 @@ public class TerminalControl : Control, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _marquee.Stop();
         _pty?.Dispose();
     }
 }
