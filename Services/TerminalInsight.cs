@@ -28,6 +28,15 @@ public sealed class ErrorDiagnosis
 public sealed class TerminalSnapshot
 {
     public AiMode Mode { get; init; }
+
+    /// <summary>
+    /// The CLI's own wording for <see cref="Mode"/>, taken verbatim from the status line
+    /// ("accept edits", "plan mode", "bypass permissions"), with the trailing "on" dropped.
+    /// Empty when the screen did not name a mode. The badge shows this so its label cannot
+    /// drift from what the CLI prints.
+    /// </summary>
+    public string ModeText { get; init; } = "";
+
     public AiActivity Activity { get; init; }
     public string ActivityText { get; init; } = "";
     public string? ActivityTarget { get; init; }
@@ -136,7 +145,7 @@ public static class TerminalInsight
         {
             var lines = SplitWindow(screenText);
 
-            var mode = DetectMode(lines);
+            var (mode, modeText) = DetectMode(lines);
             var (isWorking, elapsed) = DetectWorking(lines);
             var (activity, target) = DetectActivity(lines, isWorking);
             var contextPct = DetectContextRemaining(lines);
@@ -145,6 +154,7 @@ public static class TerminalInsight
             return new TerminalSnapshot
             {
                 Mode = mode,
+                ModeText = modeText,
                 Activity = activity,
                 ActivityText = ActivityLabel(activity),
                 ActivityTarget = target,
@@ -189,19 +199,30 @@ public static class TerminalInsight
         return all.Length <= ScanWindowLines ? all : all[^ScanWindowLines..];
     }
 
-    private static AiMode DetectMode(string[] lines)
+    private static (AiMode Mode, string Text) DetectMode(string[] lines)
     {
         var sawInputPrompt = false;
         for (var i = lines.Length - 1; i >= 0; i--)
         {
             var line = lines[i];
-            if (ModeBypassRegex.IsMatch(line)) return AiMode.BypassPermissions;
-            if (ModePlanRegex.IsMatch(line)) return AiMode.Plan;
-            if (ModeManualRegex.IsMatch(line)) return AiMode.Normal;
-            if (ModeAcceptEditsRegex.IsMatch(line)) return AiMode.AcceptEdits;
+            Match m;
+            if ((m = ModeBypassRegex.Match(line)).Success) return (AiMode.BypassPermissions, ModePhrase(m.Value));
+            if ((m = ModePlanRegex.Match(line)).Success) return (AiMode.Plan, ModePhrase(m.Value));
+            if ((m = ModeManualRegex.Match(line)).Success) return (AiMode.Normal, ModePhrase(m.Value));
+            if ((m = ModeAcceptEditsRegex.Match(line)).Success) return (AiMode.AcceptEdits, ModePhrase(m.Value));
             if (!sawInputPrompt && InputPromptRegex.IsMatch(line)) sawInputPrompt = true;
         }
-        return sawInputPrompt ? AiMode.Normal : AiMode.Unknown;
+        return sawInputPrompt ? (AiMode.Normal, "") : (AiMode.Unknown, "");
+    }
+
+    /// <summary>Matches the trailing " on" of "accept edits on", which reads as noise on a badge.</summary>
+    private static readonly Regex ModePhraseTailRegex = new(@"\s+on$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>Tidies a matched mode phrase into a badge label: collapsed spaces, lower case, no trailing "on".</summary>
+    private static string ModePhrase(string matched)
+    {
+        var phrase = Regex.Replace(matched.Trim(), @"\s+", " ");
+        return ModePhraseTailRegex.Replace(phrase, "").ToLowerInvariant();
     }
 
     private static (bool IsWorking, int? ElapsedSeconds) DetectWorking(string[] lines)

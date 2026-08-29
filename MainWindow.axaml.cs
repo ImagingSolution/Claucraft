@@ -2247,8 +2247,11 @@ public partial class MainWindow : Window
     /// Draws the mode badge. A null mode means the screen did not say which mode the CLI is in —
     /// the badge still shows, labelled "Switch Mode", because clicking it sends Shift+Tab either
     /// way. Only a CLI that has no modes at all, or having no session, takes it off screen.
+    ///
+    /// The label is the CLI's own wording, copied from its status line, so the two never read as
+    /// different modes. The localized name moves to the tooltip, which is free to explain.
     /// </summary>
-    private void ApplyModeBadge(AiMode? mode)
+    private void ApplyModeBadge(AiMode? mode, string modeText = "")
     {
         bool show = _cli.Features.ModeSwitchButton
                     && _activeChildIndex >= 0 && _activeChildIndex < _children.Count;
@@ -2263,20 +2266,22 @@ public partial class MainWindow : Window
             AiMode.BypassPermissions => Color.FromRgb(255, 69, 58),
             _ => Color.FromRgb(142, 142, 147),
         };
-        StatusModeText.Text = known
-            ? TerminalInsight.ModeShortLabel(mode!.Value)
-            : Loc.Get("ModeSwitchFallback", "Switch Mode");
+        StatusModeText.Text = !string.IsNullOrEmpty(modeText)
+            ? modeText
+            : known
+                ? TerminalInsight.ModeShortLabel(mode!.Value)
+                : Loc.Get("ModeSwitchFallback", "Switch Mode");
         StatusModeText.Foreground = new SolidColorBrush(color);
         StatusModeBadge.BorderBrush = new SolidColorBrush(color);
         StatusModeBadge.Background = new SolidColorBrush(color, 0.14);
         ToolTip.SetTip(StatusModeBadge, known
-            ? Loc.Get("ModeBadgeTooltip")
+            ? TerminalInsight.ModeLabel(mode!.Value) + Environment.NewLine + Loc.Get("ModeBadgeTooltip")
             : Loc.Get("ModeSwitchTooltip", "Switch mode (Shift+Tab)"));
     }
 
     private void ApplyLiveStatus(TerminalSnapshot snap)
     {
-        ApplyModeBadge(snap.Mode);
+        ApplyModeBadge(snap.Mode, snap.ModeText);
 
         // What it is doing right now
         bool showActivity = _cli.Features.PermissionOverlay && snap.Activity != AiActivity.None;
