@@ -255,7 +255,8 @@ public static class Loc
         ["ContextLowTitle"] = new() { ["English"] = "Context is running low", ["日本語"] = "コンテキストが残り少なくなっています" },
         ["ContextLowDetail"] = new() { ["English"] = "About {0}% left. Running /compact now summarises the conversation and frees room.", ["日本語"] = "残り約 {0}% です。いま /compact を実行すると会話が要約され、余裕ができます。" },
         ["RunCompact"] = new() { ["English"] = "Run /compact", ["日本語"] = "/compact を実行" },
-        ["ModelTooltip"] = new() { ["English"] = "Model answering in this session", ["日本語"] = "このセッションで応答しているモデル" },
+        ["ModelTooltip"] = new() { ["English"] = "Model answering in this session. Switching also changes the default for new sessions.", ["日本語"] = "このセッションで応答しているモデル。切り替えると新規セッションの既定も変わります。" },
+        ["ModelOther"] = new() { ["English"] = "Other...", ["日本語"] = "その他..." },
         ["SessionElapsedTooltip"] = new() { ["English"] = "Time since this session started", ["日本語"] = "このセッションを開始してからの経過時間" },
 
         // ── Rate limits (the 5-hour and 7-day windows the plan is metered on) ──

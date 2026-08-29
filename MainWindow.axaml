@@ -151,10 +151,18 @@
                     <TextBlock x:Name="StatusModeText" Text="" FontSize="10"
                                FontWeight="Medium" VerticalAlignment="Center" />
                 </Border>
-                <!-- Model answering in this session -->
-                <TextBlock x:Name="StatusModelName" Text="" IsVisible="False"
-                           Foreground="{DynamicResource SubtleText}" FontSize="11"
-                           VerticalAlignment="Center" />
+                <!-- Model answering in this session - click to switch -->
+                <Button x:Name="StatusModelName" IsVisible="False"
+                        Background="Transparent" BorderThickness="0"
+                        Padding="0" Cursor="Hand" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="3">
+                        <TextBlock x:Name="StatusModelText" Text=""
+                                   Foreground="{DynamicResource SubtleText}" FontSize="11"
+                                   VerticalAlignment="Center" />
+                        <PathIcon Data="M7 10L12 15L17 10Z" Width="8" Height="8"
+                                  Foreground="{DynamicResource SubtleText}" />
+                    </StackPanel>
+                </Button>
                 <!-- Context left before auto-compact -->
                 <StackPanel x:Name="StatusContextPanel" Orientation="Horizontal" Spacing="5"
                             IsVisible="False" Cursor="Hand" VerticalAlignment="Center"

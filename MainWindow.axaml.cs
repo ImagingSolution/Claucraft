@@ -42,6 +42,14 @@ public partial class MainWindow : Window
 
     /// <summary>The account's real 5-hour and 7-day limits. See RateLimitService.</summary>
     private readonly RateLimitService _rateLimits = new();
+
+    /// <summary>
+    /// The model the user just picked, held until the transcript confirms it. The name on the
+    /// bar is read from the transcript, which only learns about a switch when the next reply
+    /// lands - without this the bar would keep naming the old model until then.
+    /// </summary>
+    private string? _pendingModelAlias;
+    private string? _pendingModelLabel;
     private List<LaunchProfile> _profiles = new();
     private bool _suppressProfileChange;
     private bool _wasWorking;
@@ -162,6 +170,7 @@ public partial class MainWindow : Window
 
         UsageTracker.DailyLimit = PlanDailyLimit(_settings.PlanTier);
         _rateLimits.Updated += OnRateLimitsUpdated;
+        BuildModelFlyout();
 
         // Mirror what the CLI is doing into the status bar. Cheap: reads the screen buffer
         // that is already in memory, no extra process or file access.
@@ -3362,6 +3371,11 @@ public partial class MainWindow : Window
         }
 
         bool attaching = !string.Equals(_costMonitor.Path, path, StringComparison.OrdinalIgnoreCase);
+        if (attaching)
+        {
+            _pendingModelAlias = null;
+            _pendingModelLabel = null;
+        }
         _costMonitor.Track(path);
 
         bool turnEnded = _wasWorking && !snap.IsWorking;
@@ -3398,10 +3412,27 @@ public partial class MainWindow : Window
         var session = _costMonitor.Current;
 
         var model = SessionCostMonitor.ModelDisplayName(session.Model);
+
+        // A switch only reaches the transcript with the next reply, so the picked name stands
+        // in until then. The alias is enough to recognise: every id in a line contains it
+        // ("opus" in "claude-opus-5").
+        if (_pendingModelAlias != null)
+        {
+            if (session.Model.Contains(_pendingModelAlias, StringComparison.OrdinalIgnoreCase))
+            {
+                _pendingModelAlias = null;
+                _pendingModelLabel = null;
+            }
+            else if (_pendingModelLabel != null)
+            {
+                model = _pendingModelLabel;
+            }
+        }
+
         StatusModelName.IsVisible = model.Length > 0;
         if (model.Length > 0)
         {
-            StatusModelName.Text = model;
+            StatusModelText.Text = model;
             ToolTip.SetTip(StatusModelName, Loc.Get("ModelTooltip"));
         }
 
@@ -3412,6 +3443,69 @@ public partial class MainWindow : Window
             StatusElapsedText.Text = FormatElapsed(span);
             ToolTip.SetTip(StatusElapsedText, Loc.Get("SessionElapsedTooltip"));
         }
+    }
+
+    /// <summary>
+    /// What the model dropdown offers, as (alias to send, id that alias resolves to today).
+    /// The alias is what gets sent - it always points at the newest release in its line, so a
+    /// new version needs no change here. The id exists only to name the entry, and it is run
+    /// through the same table the status bar reads with, which keeps the displayed names in
+    /// one place: when a line ships a new version, ModelDisplayName is the only edit.
+    /// </summary>
+    private static readonly (string Alias, string ModelId)[] SwitchableModels =
+    {
+        ("fable", "claude-fable-5"),
+        ("opus", "claude-opus-5"),
+        ("sonnet", "claude-sonnet-5"),
+        ("haiku", "claude-haiku-4-5"),
+    };
+
+    /// <summary>
+    /// Fills the model dropdown. Built once: the entries never change, and which one is active
+    /// is already on the bar next to it.
+    /// </summary>
+    private void BuildModelFlyout()
+    {
+        var flyout = new MenuFlyout { Placement = PlacementMode.Top };
+
+        foreach (var (alias, modelId) in SwitchableModels)
+        {
+            var label = SessionCostMonitor.ModelDisplayName(modelId);
+            var item = new MenuItem { Header = label };
+            var capturedAlias = alias;
+            var capturedLabel = label;
+            item.Click += (_, _) => SwitchModel(capturedAlias, capturedLabel);
+            flyout.Items.Add(item);
+        }
+
+        flyout.Items.Add(new Separator());
+
+        // Anything the list above does not cover - a preview model, a pinned version - is still
+        // reachable: a bare /model opens the CLI's own picker.
+        var other = new MenuItem { Header = Loc.Get("ModelOther") };
+        other.Click += (_, _) => SwitchModel(null, null);
+        flyout.Items.Add(other);
+
+        StatusModelName.Flyout = flyout;
+    }
+
+    /// <summary>
+    /// Switches the session's model. A null alias sends a bare /model, which hands over to the
+    /// CLI's own picker rather than choosing anything here.
+    /// </summary>
+    private void SwitchModel(string? alias, string? label)
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
+
+        _children[_activeChildIndex].Terminal.SendText(
+            alias == null ? "/model\r" : "/model " + alias + "\r");
+
+        if (alias == null || label == null) return;
+
+        _pendingModelAlias = alias;
+        _pendingModelLabel = label;
+        StatusModelText.Text = label;
+        StatusModelName.IsVisible = true;
     }
 
     /// <summary>
