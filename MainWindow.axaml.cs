@@ -3484,15 +3484,10 @@ public partial class MainWindow : Window
     private void ClearSessionReadout()
     {
         StatusModelName.IsVisible = false;
-        StatusElapsedText.IsVisible = false;
         ApplyEffortReadout();
     }
 
-    /// <summary>
-    /// The model that is answering and how long the session has been going. The elapsed figure
-    /// is wall-clock across the transcript, not the CLI's own duration total - that one counts
-    /// time actually spent working, which is a different and always smaller number.
-    /// </summary>
+    /// <summary>The model that is answering, and the effort it is answering at.</summary>
     private void ApplySessionReadout()
     {
         var session = _costMonitor.Current;
@@ -3520,14 +3515,6 @@ public partial class MainWindow : Window
         {
             StatusModelText.Text = model;
             ToolTip.SetTip(StatusModelName, Loc.Get("ModelTooltip"));
-        }
-
-        var elapsed = session.Elapsed;
-        StatusElapsedText.IsVisible = elapsed.HasValue;
-        if (elapsed is { } span)
-        {
-            StatusElapsedText.Text = FormatElapsed(span);
-            ToolTip.SetTip(StatusElapsedText, Loc.Get("SessionElapsedTooltip"));
         }
 
         ApplyEffortReadout();
@@ -3785,12 +3772,6 @@ public partial class MainWindow : Window
             : pct >= 50 ? Color.FromRgb(255, 214, 10)
             : Color.FromRgb(48, 209, 88));
     }
-
-    /// <summary>"3m45s" under the hour, "2h15m" over it.</summary>
-    private static string FormatElapsed(TimeSpan span) =>
-        span.TotalHours >= 1
-            ? string.Format(CultureInfo.InvariantCulture, "{0}h{1:00}m", (int)span.TotalHours, span.Minutes)
-            : string.Format(CultureInfo.InvariantCulture, "{0}m{1:00}s", (int)span.TotalMinutes, span.Seconds);
 
     private static string FormatUsd(double usd) =>
         usd >= 100 ? usd.ToString("N0", CultureInfo.InvariantCulture)

@@ -259,7 +259,6 @@ public static class Loc
         ["ModelOther"] = new() { ["English"] = "Other...", ["日本語"] = "その他..." },
         ["EffortTooltip"] = new() { ["English"] = "Reasoning effort this session runs at. Switching sends /effort to the terminal.", ["日本語"] = "このセッションの推論 effort。切り替えるとターミナルに /effort を送信します。" },
         ["EffortAuto"] = new() { ["English"] = "Auto", ["日本語"] = "自動" },
-        ["SessionElapsedTooltip"] = new() { ["English"] = "Time since this session started", ["日本語"] = "このセッションを開始してからの経過時間" },
 
         // ── Rate limits (the 5-hour and 7-day windows the plan is metered on) ──
         ["RateLimit5hTooltip"] = new() { ["English"] = "5-hour window: {0}% used, resets in {1}", ["日本語"] = "5時間枠: {0}% 使用・{1} 後にリセット" },

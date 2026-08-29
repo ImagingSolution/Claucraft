@@ -222,10 +222,6 @@
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
-                <!-- Time since this session started -->
-                <TextBlock x:Name="StatusElapsedText" Text="" IsVisible="False"
-                           Foreground="{DynamicResource SubtleText}" FontSize="11"
-                           VerticalAlignment="Center" />
             </StackPanel>
 
             <!-- Active AI provider + switcher -->
