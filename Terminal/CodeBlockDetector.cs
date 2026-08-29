@@ -53,7 +53,6 @@ public class CodeBlockDetector
 
     private readonly List<CodeBlockInfo> _detectedBlocks = new();
     private int _lastScannedRow;
-    private int _pendingExcalidrawRow = -1; // Row where an incomplete Excalidraw block was found
 
     public IReadOnlyList<CodeBlockInfo> DetectedBlocks => _detectedBlocks;
 
@@ -64,7 +63,6 @@ public class CodeBlockDetector
     {
         _detectedBlocks.Clear();
         _lastScannedRow = 0;
-        _pendingExcalidrawRow = -1;
 
         int totalRows = buffer.Scrollback.Count + buffer.Rows;
         ScanRange(buffer, 0, totalRows);
@@ -159,7 +157,6 @@ public class CodeBlockDetector
         // The elements JSON may span hundreds of terminal rows due to line wrapping.
         var sb = new StringBuilder();
         int lastRow = toolCallRow;
-        bool foundCheckpoint = false;
 
         for (int row = toolCallRow; row < endRow && row < toolCallRow + 500; row++)
         {
@@ -178,7 +175,6 @@ public class CodeBlockDetector
             {
                 if (CheckpointIdRegex.IsMatch(line))
                 {
-                    foundCheckpoint = true;
                     // Include a few more rows to capture the closing brace
                     for (int r2 = row + 1; r2 < endRow && r2 <= row + 3; r2++)
                     {
@@ -235,7 +231,6 @@ public class CodeBlockDetector
         // The elements value is: "[...JSON array...]\n]")
         // We need to find ]") or ]"\n) which marks the real end.
         // Strategy: find all unescaped " positions, then pick the one after the last ]
-        bool escape = false;
         int stringEnd = -1;
 
         // Find the pattern ]" followed by ) which marks the end of elements: "...]")

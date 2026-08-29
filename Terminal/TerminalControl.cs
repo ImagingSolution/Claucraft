@@ -113,7 +113,6 @@ public class TerminalControl : Control, IDisposable
     private Controls.DocumentViewPanel? _docViewPanel;
     private string? _docViewSessionPath;
     private DispatcherTimer? _permissionCheckTimer;
-    private bool _permissionPopupShown;
     private Border? _permissionOverlay;
     public bool IsDocumentView => _isDocumentView;
     public event Action<bool>? DocumentViewChanged;
@@ -2066,7 +2065,6 @@ public class TerminalControl : Control, IDisposable
         if (found && _permissionOverlay == null)
         {
             ShowPermissionOverlay(ReadPermissionPromptText());
-            _permissionPopupShown = true;
         }
         else if (!found && _permissionOverlay != null)
         {
@@ -2238,7 +2236,6 @@ public class TerminalControl : Control, IDisposable
         VisualChildren.Remove(_permissionOverlay);
         LogicalChildren.Remove(_permissionOverlay);
         _permissionOverlay = null;
-        _permissionPopupShown = false;
         InvalidateMeasure();
         InvalidateArrange();
     }

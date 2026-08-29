@@ -18,6 +18,7 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Session Index Auto-Creation** - Automatically creates and updates `sessions-index.json` for each project, enabling Claude Code CLI to populate AI-generated conversation summaries
 - **Project Context Switching** - Automatically switch project folder, explorer, and sessions when switching between MDI windows
 - **Project Explorer** - Browse project file trees with syntax-aware icons and color-coded file types (40+ file extensions). Auto-refreshes on file system changes. File preview on selection
+- **Open With** - Right-click any file in the explorer to hand it to the Windows "Open with" picker, so a file the AI just touched opens in whatever app suits it
 - **Snippets Panel** - Store and quickly send code snippets to the active console (`\r` in text sends Enter key). Drag-and-drop reordering supported. Sends to expanded input when active
 - **Windows Panel** - Side panel showing all open windows with status dots and conversation summary. Prioritizes session summary over terminal title. Terminal output preview on hover. Click to switch, × to close
 - **Prompt Navigation (Ctrl+↑/↓)** - Navigate between user questions in the terminal conversation. Displays a navigation bar with position counter (Q 2/5). Tracks input positions during the session and scans buffer separators for past conversations
@@ -31,6 +32,7 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Stop Button** - A stop control appears in the status bar while a session is running, for anyone who does not know Escape interrupts the AI
 - **Starter Prompt Templates** - The snippets panel starts pre-filled with common prompts in English or Japanese instead of empty
 - **Task Completion Notification** - A tray toast and a sound when a session finishes in the background, on top of the taskbar flash. Both can be turned off in Settings
+- **Turn-End Frame Blink** - The active window's blue frame blinks twice when the AI hands the turn back, so a finished session is visible at a glance across tiled windows
 - **Keyboard Shortcut Sheet (F1)** - Every shortcut on one screen, grouped by what it acts on
 - **Named Workspaces** - Save and restore any number of layouts. Restoring reopens the same transcripts with `-r`, so the conversations come back instead of blank sessions
 - **Changed Files + Built-in Diff** - A panel listing every file the AI touched, straight from `git status`. Click one for a colour-coded diff without leaving the app
@@ -40,6 +42,9 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Usage in Plain Words** - "about 840 left, resets in 5h" instead of a bare message count, measured against the plan (Pro / Max 5x / Max 20x) chosen in Settings
 - **Permission Prompts, Explained** - The approval overlay now says what the command actually does and rates it read-only / changes files / deletes or reaches the network
 - **Error Diagnosis Banner** - Known failures (signed out, rate limited, usage limit, network down, outdated CLI) surface as a banner with the fix one click away
+- **Launch Profiles** - Pick Light / Standard / Deep from the toolbar and new sessions start with matching flags (Light is `--model sonnet --effort low --autocompact 100k --strict-mcp-config --disable-slash-commands`). Bounding context length is what actually lowers the bill
+- **Marginal Cost Readout** - The status bar shows what the last turn cost and what the next one costs just to re-read the conversation, so a session that has grown expensive says so instead of being discovered on the invoice
+- **Session Hand-off** - When context runs low, hand off to a fresh session with a brief extracted from the transcript locally. It costs no tokens, unlike `/compact`, and the brief lands in the new session's input box so it can be edited before anything is sent
 - **Tokens & Cost Dashboard** - Reads `message.usage` out of the session transcripts and totals tokens and estimated cost by day, model, project and session, with CSV export
 - **Tab Management** - Right-click context menu (Close / Close Others / Close to Right / Duplicate / Export Output). Double-click to rename. Auto-names from first user input or session summary
 - **Terminal Output Export** - Save terminal output as a text file via tab context menu
@@ -149,6 +154,7 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **セッションインデックス自動作成** - プロジェクトごとに `sessions-index.json` を自動作成・更新。Claude Code CLI が AI 生成の会話要約を追加可能に
 - **プロジェクトコンテキスト切替** - MDI ウィンドウの切り替え時に、プロジェクトフォルダ・エクスプローラー・セッション一覧を自動切替
 - **プロジェクトエクスプローラー** - ファイルツリーを構文対応のアイコンと色分けで表示（40種類以上のファイル拡張子対応）。ファイルシステム変更時に自動リフレッシュ。ファイル選択時にプレビュー表示
+- **プログラムから開く** - エクスプローラーでファイルを右クリックすると Windows の「プログラムから開く」ダイアログを表示。AI が触ったファイルを好きなアプリで開ける
 - **スニペットパネル** - コードスニペットを保存し、アクティブなコンソールにワンクリックで送信（テキスト中の `\r` で Enter キーを送信）。ドラッグ＆ドロップによる並べ替えに対応。拡張入力有効時はそちらに送信
 - **ウィンドウパネル** - サイドパネルに開いているウィンドウの一覧を表示。状態ドットと会話要約を表示。セッション要約をターミナルタイトルより優先表示。ホバーでターミナル出力プレビュー。クリックで切替、×で閉じる
 - **プロンプトナビゲーション (Ctrl+↑/↓)** - ターミナル内の会話を質問単位で移動。ナビゲーションバーに現在位置を表示（Q 2/5）。セッション中の入力位置をトラッキングし、過去の会話はバッファ内のセパレータパターンを検出して移動
@@ -162,6 +168,7 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **停止ボタン** - セッション実行中はステータスバーに停止ボタンを表示。Escape で中断できることを知らなくても止められる
 - **プロンプトテンプレート同梱** - スニペットパネルが空ではなく、よく使うプロンプト（日本語／英語）が入った状態から始まる
 - **タスク完了通知** - バックグラウンドでセッションが終了したとき、タスクバー点滅に加えてトースト通知と効果音で知らせる。どちらも設定でオフにできる
+- **ターン終了時の枠点滅** - AI が応答を終えて入力待ちに戻ると、アクティブウィンドウの青い枠が2回点滅。タイル表示でもどのセッションが終わったか一目で分かる
 - **ショートカット一覧（F1）** - 全ショートカットを対象ごとにグループ分けして1画面で表示
 - **名前付きワークスペース** - レイアウトを任意の数だけ保存・復元。復元時は `-r` で同じセッションを再開するため、新規セッションではなく会話が戻ってくる
 - **変更ファイルパネル＋内蔵 diff** - AI が触ったファイルを `git status` から一覧表示。クリックすると色分けされた差分をアプリ内で確認できる
@@ -171,6 +178,9 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **使用量の人間語表示** - 単なるメッセージ数ではなく「残り約 840 回・リセットまで 5 時間」と表示。設定で選んだプラン（Pro / Max 5x / Max 20x）が基準
 - **権限プロンプトの解説** - 承認オーバーレイに、そのコマンドが何をするかの平易な説明と危険度（読み取りのみ / ファイルを変更 / 削除・ネットワーク）を表示
 - **エラー診断バナー** - 既知の失敗（サインアウト・レート制限・使用量上限・ネットワーク断・CLI が古い）を検出し、対処をワンクリックで実行できるバナーを表示
+- **起動プロファイル** - ツールバーで Light / Standard / Deep を選ぶと、新規セッションが対応するフラグ付きで起動する（Light は `--model sonnet --effort low --autocompact 100k --strict-mcp-config --disable-slash-commands`）。コンテキスト長を抑えることがコスト削減に直結する
+- **限界コスト表示** - 直前のターンにかかった額と、次のターンが会話を読み直すだけでかかる額をステータスバーに表示。高くなったセッションが自分から知らせる
+- **セッション引き継ぎ** - コンテキストが少なくなったら、記録からローカルで抽出したブリーフを持って新規セッションへ引き継ぐ。`/compact` と違いトークン費用はかからず、ブリーフは新規セッションの入力欄に置かれるので送信前に編集できる
 - **トークン／コストダッシュボード** - セッション記録の `message.usage` を集計し、日別・モデル別・プロジェクト別・セッション別にトークンと概算コストを表示。CSV エクスポート対応
 - **タブ管理** - 右クリックコンテキストメニュー（閉じる / 他を閉じる / 右側を閉じる / 複製 / エクスポート）。ダブルクリックでタブ名変更。最初のユーザー入力またはセッション要約から自動命名
 - **ターミナル出力のエクスポート** - タブコンテキストメニューからターミナル出力をテキストファイルに保存
