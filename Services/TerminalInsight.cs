@@ -97,7 +97,13 @@ public static class TerminalInsight
 
     // ── Context remaining ────────────────────────────────────────────────
 
-    /// <summary>Matches "Context left until auto-compact: 23%".</summary>
+    /// <summary>Matches "23% until auto-compact", the countdown the CLI prints once the session nears the limit.</summary>
+    private static readonly Regex ContextUntilCompactRegex = new(@"(\d{1,3})\s*%\s*until\s+auto-?compact", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>Matches "87% context used", printed in place of the countdown when auto-compact will not fire.</summary>
+    private static readonly Regex ContextUsedRegex = new(@"(\d{1,3})\s*%\s*context\s+used", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>Matches "Context left until auto-compact: 23%", the wording older builds used.</summary>
     private static readonly Regex ContextAutoCompactRegex = new(@"context\s+left\s+until\s+auto-?compact:?\s*(\d{1,3})\s*%", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>Matches "Context low (12% remaining)".</summary>
@@ -316,7 +322,14 @@ public static class TerminalInsight
         {
             var line = lines[i];
 
-            var m = ContextAutoCompactRegex.Match(line);
+            // "87% context used" counts the other way, so it is turned around here and the
+            // caller only ever sees one meaning: how much room is left.
+            var used = ContextUsedRegex.Match(line);
+            if (used.Success && int.TryParse(used.Groups[1].Value, out var usedPct))
+                return Math.Clamp(100 - usedPct, 0, 100);
+
+            var m = ContextUntilCompactRegex.Match(line);
+            if (!m.Success) m = ContextAutoCompactRegex.Match(line);
             if (!m.Success) m = ContextLowRegex.Match(line);
             if (!m.Success) m = ContextLeftRegex.Match(line);
             if (!m.Success) m = ContextFreeSpaceRegex.Match(line);

@@ -250,7 +250,7 @@ public static class Loc
         ["ActivitySearching"] = new() { ["English"] = "Searching…", ["日本語"] = "検索しています…" },
         ["ActivityBrowsing"] = new() { ["English"] = "Fetching from the web…", ["日本語"] = "Web を参照しています…" },
         ["ActivityWaiting"] = new() { ["English"] = "Waiting for your answer…", ["日本語"] = "あなたの回答を待っています…" },
-        ["ContextMeterTooltip"] = new() { ["English"] = "Context left before auto-compact - click to run /compact", ["日本語"] = "自動コンパクトまでのコンテキスト残量 - クリックで /compact を実行" },
+        ["ContextMeterTooltip"] = new() { ["English"] = "Context used before auto-compact - click to run /compact", ["日本語"] = "自動コンパクトまでのコンテキスト使用量 - クリックで /compact を実行" },
         ["ContextLabel"] = new() { ["English"] = "Context", ["日本語"] = "コンテキスト" },
         ["ContextLowTitle"] = new() { ["English"] = "Context is running low", ["日本語"] = "コンテキストが残り少なくなっています" },
         ["ContextLowDetail"] = new() { ["English"] = "About {0}% left. Running /compact now summarises the conversation and frees room.", ["日本語"] = "残り約 {0}% です。いま /compact を実行すると会話が要約され、余裕ができます。" },

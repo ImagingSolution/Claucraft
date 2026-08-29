@@ -196,6 +196,35 @@ public sealed class SessionCostMonitor
     }
 
     /// <summary>
+    /// Room the CLI holds back for the compaction summary. Auto-compact fires this far short of
+    /// the window, so the readout counts down to that point rather than to the window itself -
+    /// the same arithmetic behind the CLI's own "% until auto-compact".
+    /// </summary>
+    private const long AutoCompactReserveTokens = 13_000;
+
+    /// <summary>
+    /// The auto-compact window a model runs in, in tokens. Everything sits at 200k except
+    /// Sonnet 5, which compacts against its full million.
+    /// </summary>
+    public static long ContextWindowTokens(string? modelId) =>
+        modelId != null && modelId.Contains("sonnet-5", StringComparison.OrdinalIgnoreCase)
+            ? 1_000_000
+            : 200_000;
+
+    /// <summary>
+    /// How much room is left before auto-compact, as a percentage of the usable window, worked
+    /// out from the size of the conversation prefix. The CLI only prints its own figure in the
+    /// last stretch before it compacts, so this is what the status bar reads the rest of the
+    /// time. <paramref name="windowOverride"/> carries a window pinned on the command line.
+    /// </summary>
+    public static int ContextRemainingPercent(long contextTokens, string? modelId, long? windowOverride = null)
+    {
+        long window = windowOverride is > 0 ? windowOverride.Value : ContextWindowTokens(modelId);
+        long trigger = Math.Max(1, window - AutoCompactReserveTokens);
+        return (int)Math.Clamp(Math.Round((trigger - contextTokens) / (double)trigger * 100), 0, 100);
+    }
+
+    /// <summary>
     /// The name a model goes by, from the id the transcript records. An id this build has never
     /// heard of passes through unchanged, so a model released later still reads as something true.
     /// </summary>

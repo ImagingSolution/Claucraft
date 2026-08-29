@@ -175,10 +175,10 @@
                                   Foreground="{DynamicResource SubtleText}" />
                     </StackPanel>
                 </Button>
-                <!-- Context left before auto-compact -->
+                <!-- Context used before auto-compact -->
                 <StackPanel x:Name="StatusContextPanel" Orientation="Horizontal" Spacing="5"
                             IsVisible="False" Cursor="Hand" VerticalAlignment="Center"
-                            ToolTip.Tip="Context left before auto-compact - click to run /compact"
+                            ToolTip.Tip="Context used before auto-compact - click to run /compact"
                             PointerPressed="OnContextMeterPressed">
                     <TextBlock x:Name="StatusContextLabel" Text=""
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
