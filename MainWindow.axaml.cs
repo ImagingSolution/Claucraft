@@ -31,7 +31,26 @@ public partial class MainWindow : Window
     private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical, Cascade }
     private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, Changes, Slash }
 
-    private string? _projectFolder;
+    private string? _projectFolderBacking;
+
+    /// <summary>
+    /// The project the toolbar, explorer, session list and git readout are all showing.
+    ///
+    /// Five different paths move it - startup, the folder picker, activating another child,
+    /// duplicating a tab, restoring a workspace - and the file watcher is bound to whichever
+    /// folder it was given, so rebinding lives here rather than at each assignment. Missing one
+    /// of them leaves the branch readout watching a project the user has already left.
+    /// </summary>
+    private string? _projectFolder
+    {
+        get => _projectFolderBacking;
+        set
+        {
+            if (string.Equals(_projectFolderBacking, value, StringComparison.OrdinalIgnoreCase)) return;
+            _projectFolderBacking = value;
+            StartFileWatcher();
+        }
+    }
     private string? _gitRepoUrl;
     private FileSystemWatcher? _fileWatcher;
     private DispatcherTimer? _fileWatcherDebounce;
@@ -217,9 +236,6 @@ public partial class MainWindow : Window
         RefreshGitInfo();
         RefreshSessionList();
         RefreshFileTree();
-        // Only SetProjectFolder started this before, so the folder restored at launch was
-        // never watched: neither the file tree nor the branch readout followed it.
-        StartFileWatcher();
         FileTree.SelectionChanged += OnFileTreeSelectionChanged;
         HookFileTreeDrag();
 
@@ -1884,7 +1900,6 @@ public partial class MainWindow : Window
         RefreshGitInfo();
         RefreshSessionList();
         RefreshFileTree();
-        StartFileWatcher();
     }
 
     private void OnRepoNameDoubleTapped(object? sender, TappedEventArgs e)
