@@ -35,6 +35,7 @@ public partial class MainWindow : Window
     private string? _gitRepoUrl;
     private FileSystemWatcher? _fileWatcher;
     private DispatcherTimer? _fileWatcherDebounce;
+    private DispatcherTimer? _gitInfoDebounce;
     private readonly UsageTracker _usageTracker = new();
 
     /// <summary>Marginal cost of the session in the active window. See SessionCostMonitor.</summary>
@@ -216,6 +217,9 @@ public partial class MainWindow : Window
         RefreshGitInfo();
         RefreshSessionList();
         RefreshFileTree();
+        // Only SetProjectFolder started this before, so the folder restored at launch was
+        // never watched: neither the file tree nor the branch readout followed it.
+        StartFileWatcher();
         FileTree.SelectionChanged += OnFileTreeSelectionChanged;
         HookFileTreeDrag();
 
@@ -1004,8 +1008,15 @@ public partial class MainWindow : Window
             NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName
         };
 
-        void OnChanged(object s, FileSystemEventArgs e) => ScheduleFileTreeRefresh();
-        void OnRenamed(object s, RenamedEventArgs e) => ScheduleFileTreeRefresh();
+        void OnChanged(object s, FileSystemEventArgs e) => Route(e.FullPath);
+        void OnRenamed(object s, RenamedEventArgs e) => Route(e.FullPath);
+
+        // A checkout moves HEAD; everything else is the working tree.
+        void Route(string path)
+        {
+            if (IsHeadWrite(path)) ScheduleGitInfoRefresh();
+            else ScheduleFileTreeRefresh();
+        }
 
         watcher.Created += OnChanged;
         watcher.Deleted += OnChanged;
@@ -1032,6 +1043,42 @@ public partial class MainWindow : Window
             }
             _fileWatcherDebounce.Stop();
             _fileWatcherDebounce.Start();
+        });
+    }
+
+    /// <summary>
+    /// True for the file git rewrites when the checked-out branch changes. Git never writes
+    /// HEAD in place - it fills HEAD.lock and renames it over the top - so watching for names
+    /// alone catches a checkout without subscribing to content changes across the whole tree.
+    /// Matching on the name rather than on a .git path keeps it working inside a worktree,
+    /// where HEAD lives under .git/worktrees instead.
+    /// </summary>
+    private static bool IsHeadWrite(string path) =>
+        System.IO.Path.GetFileName(path).StartsWith("HEAD", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Re-reads the git readout once HEAD settles. A checkout touches HEAD two or three times
+    /// in quick succession, and each read costs two git processes, so the debounce is what
+    /// keeps a branch switch to a single refresh.
+    /// </summary>
+    private void ScheduleGitInfoRefresh()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_gitInfoDebounce == null)
+            {
+                _gitInfoDebounce = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(400)
+                };
+                _gitInfoDebounce.Tick += (_, _) =>
+                {
+                    _gitInfoDebounce.Stop();
+                    RefreshGitInfo();
+                };
+            }
+            _gitInfoDebounce.Stop();
+            _gitInfoDebounce.Start();
         });
     }
 
