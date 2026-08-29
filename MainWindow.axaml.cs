@@ -2283,13 +2283,7 @@ public partial class MainWindow : Window
         if (!show) return;
 
         bool known = mode is not null and not AiMode.Unknown;
-        var color = mode switch
-        {
-            AiMode.AcceptEdits => Color.FromRgb(255, 214, 10),
-            AiMode.Plan => Color.FromRgb(10, 132, 255),
-            AiMode.BypassPermissions => Color.FromRgb(255, 69, 58),
-            _ => Color.FromRgb(142, 142, 147),
-        };
+        var color = ModeBadgeColor(mode, modeText);
         StatusModeText.Text = !string.IsNullOrEmpty(modeText)
             ? modeText
             : known
@@ -2302,6 +2296,26 @@ public partial class MainWindow : Window
             ? TerminalInsight.ModeLabel(mode!.Value) + Environment.NewLine + Loc.Get("ModeBadgeTooltip")
             : Loc.Get("ModeSwitchTooltip", "Switch mode (Shift+Tab)"));
     }
+
+    /// <summary>
+    /// The colour the CLI prints a mode in, taken from its own dark-theme palette so the badge
+    /// and the status line read as one thing rather than two: autoAccept for "accept edits on",
+    /// warning for "auto mode on", planMode for "plan mode on".
+    ///
+    /// Auto mode and accept edits both come through as <see cref="AiMode.AcceptEdits"/> - they
+    /// let edits through the same way - but the CLI colours them apart, so the wording it printed
+    /// is what separates them here. Bypass gets no colour of its own on the status line; the red
+    /// it has always had stands in.
+    /// </summary>
+    private static Color ModeBadgeColor(AiMode? mode, string modeText) => mode switch
+    {
+        AiMode.AcceptEdits => modeText.Contains("auto mode", StringComparison.OrdinalIgnoreCase)
+            ? Color.FromRgb(255, 193, 7)
+            : Color.FromRgb(175, 135, 255),
+        AiMode.Plan => Color.FromRgb(72, 150, 140),
+        AiMode.BypassPermissions => Color.FromRgb(255, 69, 58),
+        _ => Color.FromRgb(142, 142, 147),
+    };
 
     private void ApplyLiveStatus(TerminalSnapshot snap)
     {
