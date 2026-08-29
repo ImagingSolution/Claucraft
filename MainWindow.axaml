@@ -151,44 +151,16 @@
                     <TextBlock x:Name="StatusModeText" Text="" FontSize="10"
                                FontWeight="Medium" VerticalAlignment="Center" />
                 </Border>
-                <!-- What the AI is doing right now -->
-                <TextBlock x:Name="StatusActivity" Text="" IsVisible="False"
+                <!-- Model answering in this session -->
+                <TextBlock x:Name="StatusModelName" Text="" IsVisible="False"
                            Foreground="{DynamicResource SubtleText}" FontSize="11"
-                           VerticalAlignment="Center" MaxWidth="260" TextTrimming="CharacterEllipsis" />
-                <!-- Interrupt the running task -->
-                <Button x:Name="BtnStopTask" Background="Transparent" BorderThickness="0"
-                        Padding="6,0" Cursor="Hand" VerticalAlignment="Center" IsVisible="False"
-                        ToolTip.Tip="Interrupt what the AI is doing (Esc)" Click="OnStopTask">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <PathIcon Data="M6 6H18V18H6Z" Width="9" Height="9" Foreground="#FF453A" />
-                        <TextBlock x:Name="LblStopTask" Text="Stop" FontSize="11"
-                                   Foreground="#FF453A" VerticalAlignment="Center" />
-                    </StackPanel>
-                </Button>
-                <!-- Roll the project back to the snapshot taken before the last prompt -->
-                <Button x:Name="BtnUndoCheckpoint" Background="Transparent" BorderThickness="0"
-                        Padding="6,0" Cursor="Hand" VerticalAlignment="Center" IsVisible="False"
-                        ToolTip.Tip="Roll the project back to before the last prompt"
-                        Click="OnUndoCheckpoint">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <PathIcon Data="M12.5 8C9.85 8 7.45 8.99 5.6 10.6L2 7V16H11L7.38 12.38C8.77 11.22 10.54 10.5 12.5 10.5C16.04 10.5 19.05 12.81 20.1 16L22.47 15.22C21.08 11.03 17.15 8 12.5 8Z"
-                                  Width="11" Height="11" Foreground="{DynamicResource SubtleText}" />
-                        <TextBlock x:Name="LblUndoCheckpoint" Text="Undo" FontSize="11"
-                                   Foreground="{DynamicResource SubtleText}" VerticalAlignment="Center" />
-                    </StackPanel>
-                </Button>
-                <!-- Git changes count -->
-                <TextBlock x:Name="StatusGitChanges" Text=""
-                           Foreground="#FFD60A" FontSize="11"
-                           VerticalAlignment="Center" Cursor="Hand"
-                           ToolTip.Tip="Show changed files"
-                           PointerPressed="OnGitChangesPressed" />
+                           VerticalAlignment="Center" />
                 <!-- Context left before auto-compact -->
                 <StackPanel x:Name="StatusContextPanel" Orientation="Horizontal" Spacing="5"
                             IsVisible="False" Cursor="Hand" VerticalAlignment="Center"
                             ToolTip.Tip="Context left before auto-compact - click to run /compact"
                             PointerPressed="OnContextMeterPressed">
-                    <TextBlock x:Name="StatusContextText" Text=""
+                    <TextBlock x:Name="StatusContextLabel" Text=""
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                     <Border Width="48" Height="6" CornerRadius="3" Background="#30FFFFFF"
@@ -196,31 +168,44 @@
                         <Border x:Name="StatusContextFill" Height="6" CornerRadius="3"
                                 Background="#30D158" HorizontalAlignment="Left" Width="0" />
                     </Border>
-                </StackPanel>
-                <!-- Marginal cost: what this turn cost and what the next one will cost -->
-                <StackPanel x:Name="StatusCostPanel" Orientation="Horizontal" Spacing="5"
-                            IsVisible="False" Cursor="Hand" VerticalAlignment="Center"
-                            PointerPressed="OnCostMeterPressed">
-                    <TextBlock x:Name="StatusCostText" Text=""
+                    <TextBlock x:Name="StatusContextText" Text=""
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
-                <!-- Usage progress bar -->
-                <StackPanel x:Name="StatusUsagePanel" Orientation="Horizontal" Spacing="5" Cursor="Hand"
-                            ToolTip.Tip="Click to show usage chart">
-                    <TextBlock x:Name="StatusUsageText" Text=""
+                <!-- Rate limit: the 5-hour window -->
+                <StackPanel x:Name="StatusFiveHourPanel" Orientation="Horizontal" Spacing="5"
+                            IsVisible="False" VerticalAlignment="Center">
+                    <TextBlock Text="5h"
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
-                               VerticalAlignment="Center"
-                               DoubleTapped="OnUsageDoubleTapped" />
-                    <Border x:Name="StatusUsageBarBg" Width="60" Height="6"
-                            CornerRadius="3" Background="#30FFFFFF"
-                            VerticalAlignment="Center"
-                            DoubleTapped="OnUsageDoubleTapped">
-                        <Border x:Name="StatusUsageBarFill" Height="6"
-                                CornerRadius="3" Background="#30D158"
-                                HorizontalAlignment="Left" Width="0" />
+                               VerticalAlignment="Center" />
+                    <Border Width="48" Height="6" CornerRadius="3" Background="#30FFFFFF"
+                            VerticalAlignment="Center">
+                        <Border x:Name="StatusFiveHourFill" Height="6" CornerRadius="3"
+                                Background="#30D158" HorizontalAlignment="Left" Width="0" />
                     </Border>
+                    <TextBlock x:Name="StatusFiveHourText" Text=""
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
+                               VerticalAlignment="Center" />
                 </StackPanel>
+                <!-- Rate limit: the 7-day window -->
+                <StackPanel x:Name="StatusSevenDayPanel" Orientation="Horizontal" Spacing="5"
+                            IsVisible="False" VerticalAlignment="Center">
+                    <TextBlock Text="7d"
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
+                               VerticalAlignment="Center" />
+                    <Border Width="48" Height="6" CornerRadius="3" Background="#30FFFFFF"
+                            VerticalAlignment="Center">
+                        <Border x:Name="StatusSevenDayFill" Height="6" CornerRadius="3"
+                                Background="#30D158" HorizontalAlignment="Left" Width="0" />
+                    </Border>
+                    <TextBlock x:Name="StatusSevenDayText" Text=""
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <!-- Time since this session started -->
+                <TextBlock x:Name="StatusElapsedText" Text="" IsVisible="False"
+                           Foreground="{DynamicResource SubtleText}" FontSize="11"
+                           VerticalAlignment="Center" />
             </StackPanel>
 
             <!-- Active AI provider + switcher -->

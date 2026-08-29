@@ -180,7 +180,6 @@ public static class Loc
 
         // ── Stop button ──
         ["StopTask"] = new() { ["English"] = "Stop", ["日本語"] = "停止" },
-        ["StopTaskTooltip"] = new() { ["English"] = "Interrupt what the AI is doing (Esc)", ["日本語"] = "AI の処理を中断する（Esc）" },
 
         // ── Shortcut cheat sheet ──
         ["Shortcuts"] = new() { ["English"] = "Keyboard Shortcuts", ["日本語"] = "キーボードショートカット" },
@@ -217,7 +216,6 @@ public static class Loc
         // ── Checkpoints ──
         ["Checkpoints"] = new() { ["English"] = "Checkpoints", ["日本語"] = "チェックポイント" },
         ["Undo"] = new() { ["English"] = "Undo", ["日本語"] = "元に戻す" },
-        ["UndoTooltip"] = new() { ["English"] = "Roll the project back to before the last prompt", ["日本語"] = "直前のプロンプト送信前の状態に戻す" },
         ["EnableCheckpoints"] = new() { ["English"] = "Snapshot the project before each prompt", ["日本語"] = "プロンプト送信前にスナップショットを取る" },
         ["NoCheckpoints"] = new() { ["English"] = "No checkpoints yet", ["日本語"] = "チェックポイントはまだありません" },
         ["CheckpointRestored"] = new() { ["English"] = "Restored.", ["日本語"] = "復元しました。" },
@@ -253,10 +251,17 @@ public static class Loc
         ["ActivityBrowsing"] = new() { ["English"] = "Fetching from the web…", ["日本語"] = "Web を参照しています…" },
         ["ActivityWaiting"] = new() { ["English"] = "Waiting for your answer…", ["日本語"] = "あなたの回答を待っています…" },
         ["ContextMeterTooltip"] = new() { ["English"] = "Context left before auto-compact - click to run /compact", ["日本語"] = "自動コンパクトまでのコンテキスト残量 - クリックで /compact を実行" },
-        ["ContextLeftFormat"] = new() { ["English"] = "{0}% context", ["日本語"] = "コンテキスト {0}%" },
+        ["ContextLabel"] = new() { ["English"] = "Context", ["日本語"] = "コンテキスト" },
         ["ContextLowTitle"] = new() { ["English"] = "Context is running low", ["日本語"] = "コンテキストが残り少なくなっています" },
         ["ContextLowDetail"] = new() { ["English"] = "About {0}% left. Running /compact now summarises the conversation and frees room.", ["日本語"] = "残り約 {0}% です。いま /compact を実行すると会話が要約され、余裕ができます。" },
         ["RunCompact"] = new() { ["English"] = "Run /compact", ["日本語"] = "/compact を実行" },
+        ["ModelTooltip"] = new() { ["English"] = "Model answering in this session", ["日本語"] = "このセッションで応答しているモデル" },
+        ["SessionElapsedTooltip"] = new() { ["English"] = "Time since this session started", ["日本語"] = "このセッションを開始してからの経過時間" },
+
+        // ── Rate limits (the 5-hour and 7-day windows the plan is metered on) ──
+        ["RateLimit5hTooltip"] = new() { ["English"] = "5-hour window: {0}% used, resets in {1}", ["日本語"] = "5時間枠: {0}% 使用・{1} 後にリセット" },
+        ["RateLimit7dTooltip"] = new() { ["English"] = "7-day window: {0}% used, resets in {1}", ["日本語"] = "7日枠: {0}% 使用・{1} 後にリセット" },
+        ["RateLimitUnknownReset"] = new() { ["English"] = "unknown", ["日本語"] = "不明" },
 
         // ── Launch profiles ──
         ["LaunchProfile"] = new() { ["English"] = "Profile", ["日本語"] = "プロファイル" },
@@ -264,10 +269,6 @@ public static class Loc
         ["ProfileLightDesc"] = new() { ["English"] = "Sonnet, low effort, context capped at 100k, MCP and skills off. For lookups and single fixes.", ["日本語"] = "Sonnet・低 effort・コンテキスト上限 100k・MCP とスキルを無効。調査や単発修正向け。" },
         ["ProfileStandardDesc"] = new() { ["English"] = "Context capped at 200k with better cache reuse. Everyday work.", ["日本語"] = "コンテキスト上限 200k、キャッシュ再利用を改善。通常作業向け。" },
         ["ProfileDeepDesc"] = new() { ["English"] = "Opus at high effort, nothing restricted. Design and review.", ["日本語"] = "Opus・高 effort・制限なし。設計やレビュー向け。" },
-
-        // ── Marginal cost ──
-        ["CostMeterFormat"] = new() { ["English"] = "${0} turn / ${1} next", ["日本語"] = "${0}/ターン・次 ${1}" },
-        ["CostMeterTooltipFormat"] = new() { ["English"] = "This turn cost ${0}. The conversation is now {1} tokens, so the next turn costs about ${2} just to re-read it. Session so far: ${3} over {4} turns.\nClick to open the cost dashboard.", ["日本語"] = "このターンは ${0}。会話は現在 {1} トークンあり、次のターンは読み直すだけで約 ${2} かかります。セッション累計 ${3}（{4} ターン）。\nクリックでコストダッシュボードを開きます。" },
 
         // ── Hand-off ──
         ["HandoffAction"] = new() { ["English"] = "Hand off to a new session", ["日本語"] = "引き継いで新規セッション" },
@@ -335,8 +336,6 @@ public static class Loc
         ["PlanPro"] = new() { ["English"] = "Pro", ["日本語"] = "Pro" },
         ["PlanMax5x"] = new() { ["English"] = "Max 5x", ["日本語"] = "Max 5x" },
         ["PlanMax20x"] = new() { ["English"] = "Max 20x", ["日本語"] = "Max 20x" },
-        ["UsageRemainingFormat"] = new() { ["English"] = "about {0} left, resets in {1}h", ["日本語"] = "残り約 {0} 回・リセットまで {1} 時間" },
-        ["UsageTooltipFormat"] = new() { ["English"] = "{0} of about {1} messages today ({2}) - double-click for the chart", ["日本語"] = "本日 {0} / 約 {1} メッセージ（{2}）- ダブルクリックでグラフ" },
         ["CostTooltip"] = new() { ["English"] = "Tokens & cost", ["日本語"] = "トークンとコスト" },
         ["CostDashboard"] = new() { ["English"] = "Tokens & cost", ["日本語"] = "トークンとコスト" },
         ["CostDashboardTitle"] = new() { ["English"] = "Token / Cost Dashboard", ["日本語"] = "トークン/コスト ダッシュボード" },

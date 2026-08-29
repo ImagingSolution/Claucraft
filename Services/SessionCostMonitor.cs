@@ -27,6 +27,19 @@ public sealed class TurnCost
 
     public string Model { get; set; } = "";
 
+    /// <summary>Timestamp on the first record of the transcript.</summary>
+    public DateTimeOffset? StartedAt { get; set; }
+
+    /// <summary>Timestamp on the most recent record.</summary>
+    public DateTimeOffset? LastActivityAt { get; set; }
+
+    /// <summary>
+    /// Wall-clock span the transcript covers. This is not the CLI's own duration figure, which
+    /// accumulates time actually spent working; this one is simply first record to last.
+    /// </summary>
+    public TimeSpan? Elapsed =>
+        StartedAt is { } start && LastActivityAt is { } last && last > start ? last - start : null;
+
     public bool HasData => Turns > 0;
 }
 
@@ -132,15 +145,19 @@ public sealed class SessionCostMonitor
         var root = doc.RootElement;
         if (root.ValueKind != JsonValueKind.Object) return false;
 
-        if (!root.TryGetProperty("type", out var typeProp) || typeProp.GetString() != "assistant") return false;
-        if (!root.TryGetProperty("message", out var msgProp) || msgProp.ValueKind != JsonValueKind.Object) return false;
-        if (!msgProp.TryGetProperty("usage", out var usageProp) || usageProp.ValueKind != JsonValueKind.Object) return false;
+        // Every record carries a timestamp, user turns included, so the session starts at the
+        // first line of the file rather than at the first reply.
+        bool changed = ReadTimestamp(root);
+
+        if (!root.TryGetProperty("type", out var typeProp) || typeProp.GetString() != "assistant") return changed;
+        if (!root.TryGetProperty("message", out var msgProp) || msgProp.ValueKind != JsonValueKind.Object) return changed;
+        if (!msgProp.TryGetProperty("usage", out var usageProp) || usageProp.ValueKind != JsonValueKind.Object) return changed;
 
         long input = ReadLong(usageProp, "input_tokens");
         long output = ReadLong(usageProp, "output_tokens");
         long cacheRead = ReadLong(usageProp, "cache_read_input_tokens");
         long cacheCreation = ReadLong(usageProp, "cache_creation_input_tokens");
-        if (input == 0 && output == 0 && cacheRead == 0 && cacheCreation == 0) return false;
+        if (input == 0 && output == 0 && cacheRead == 0 && cacheCreation == 0) return changed;
 
         string model = msgProp.TryGetProperty("model", out var modelProp) && modelProp.ValueKind == JsonValueKind.String
             ? modelProp.GetString() ?? "unknown"
@@ -165,6 +182,48 @@ public sealed class SessionCostMonitor
         _state.NextTurnUsd = CostAnalytics.EstimateNextTurnCostUsd(model, _state.ContextTokens);
         return true;
     }
+
+    private bool ReadTimestamp(JsonElement root)
+    {
+        if (!root.TryGetProperty("timestamp", out var prop) || prop.ValueKind != JsonValueKind.String)
+            return false;
+        if (!DateTimeOffset.TryParse(prop.GetString(), out var at)) return false;
+
+        _state.StartedAt ??= at;
+        if (_state.LastActivityAt is { } last && last >= at) return false;
+        _state.LastActivityAt = at;
+        return true;
+    }
+
+    /// <summary>
+    /// The name a model goes by, from the id the transcript records. An id this build has never
+    /// heard of passes through unchanged, so a model released later still reads as something true.
+    /// </summary>
+    public static string ModelDisplayName(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId) || modelId == "unknown") return "";
+
+        var id = modelId.Trim();
+        foreach (var (prefix, name) in ModelNames)
+        {
+            if (id.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return name;
+        }
+        return id;
+    }
+
+    /// <summary>Longest ids first - "claude-opus-4-8" must not be caught by a shorter prefix.</summary>
+    private static readonly (string Prefix, string Name)[] ModelNames =
+    {
+        ("claude-sonnet-4-6", "Sonnet 4.6"),
+        ("claude-haiku-4-5", "Haiku 4.5"),
+        ("claude-opus-4-8", "Opus 4.8"),
+        ("claude-opus-4-7", "Opus 4.7"),
+        ("claude-opus-4-6", "Opus 4.6"),
+        ("claude-mythos-5", "Mythos 5"),
+        ("claude-sonnet-5", "Sonnet 5"),
+        ("claude-fable-5", "Fable 5"),
+        ("claude-opus-5", "Opus 5"),
+    };
 
     private static long ReadLong(JsonElement obj, string name)
     {

@@ -39,6 +39,9 @@ public partial class MainWindow : Window
 
     /// <summary>Marginal cost of the session in the active window. See SessionCostMonitor.</summary>
     private readonly SessionCostMonitor _costMonitor = new();
+
+    /// <summary>The account's real 5-hour and 7-day limits. See RateLimitService.</summary>
+    private readonly RateLimitService _rateLimits = new();
     private List<LaunchProfile> _profiles = new();
     private bool _suppressProfileChange;
     private bool _wasWorking;
@@ -157,17 +160,14 @@ public partial class MainWindow : Window
         BuildProviderRadios();
         InitializeProviderFieldHandlers();
 
-        _usageTracker.Updated += OnUsageUpdated;
         UsageTracker.DailyLimit = PlanDailyLimit(_settings.PlanTier);
+        _rateLimits.Updated += OnRateLimitsUpdated;
 
         // Mirror what the CLI is doing into the status bar. Cheap: reads the screen buffer
         // that is already in memory, no extra process or file access.
         _insightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
         _insightTimer.Tick += (_, _) =>
         {
-            // The run state has no event of its own that covers every transition, so poll it
-            // here too. Independent of EnableLiveStatus: Stop and Undo are not readouts.
-            UpdateTerminalStatus();
             RefreshLiveStatus();
             RefreshGenerationBars();
         };
@@ -299,12 +299,6 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnLayoutCascade, Loc.Get("CascadeWindows"));
         ToolTip.SetTip(BtnLayoutMaximize, Loc.Get("FullView"));
 
-        // Stop / undo in the status bar
-        LblStopTask.Text = Loc.Get("StopTask");
-        ToolTip.SetTip(BtnStopTask, Loc.Get("StopTaskTooltip"));
-        LblUndoCheckpoint.Text = Loc.Get("Undo");
-        ToolTip.SetTip(BtnUndoCheckpoint, Loc.Get("UndoTooltip"));
-
         // Slash command panel
         ToolTip.SetTip(BtnActivitySlash, Loc.Get("SlashCommandsTooltip"));
         TxtSlashSearch.PlaceholderText = Loc.Get("SearchSlashCommands");
@@ -325,7 +319,6 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnActivityChanges, Loc.Get("ChangesTooltip"));
         ToolTip.SetTip(BtnActivityCost, Loc.Get("CostTooltip"));
         ToolTip.SetTip(BtnRefreshChanges, Loc.Get("Refresh"));
-        ToolTip.SetTip(StatusGitChanges, Loc.Get("ChangesTooltip"));
         ToolTip.SetTip(StatusModeBadge, Loc.Get("ModeBadgeTooltip"));
         ToolTip.SetTip(StatusContextPanel, Loc.Get("ContextMeterTooltip"));
         ToolTip.SetTip(BtnBannerDismiss, Loc.Get("Dismiss"));
@@ -514,17 +507,17 @@ public partial class MainWindow : Window
         }
         _suppressProfileChange = false;
 
-        // Usage tracking reads Claude Code's transcripts, so it only runs for Claude
-        StatusUsagePanel.IsVisible = features.UsageTracker;
+        // Both readouts are Claude-account specific: the tracker reads Claude Code's own
+        // transcripts, the rate limits belong to the signed-in Claude plan.
         if (features.UsageTracker)
         {
             _usageTracker.Start();
+            _rateLimits.Start();
         }
         else
         {
             _usageTracker.Stop();
-            StatusUsageText.Text = "";
-            StatusUsageBarFill.Width = 0;
+            _rateLimits.Stop();
         }
 
         // Settings panel
@@ -1915,24 +1908,6 @@ public partial class MainWindow : Window
 
             if (!string.IsNullOrEmpty(branch))
                 StatusBranchName.Text = branch;
-
-            // Get changed files count
-            var statusInfo = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = "status --porcelain",
-                WorkingDirectory = _projectFolder,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var statusProc = Process.Start(statusInfo);
-            var statusOutput = statusProc?.StandardOutput.ReadToEnd() ?? "";
-            statusProc?.WaitForExit();
-
-            var changedCount = statusOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
-            StatusGitChanges.Text = changedCount > 0 ? $"+{changedCount}" : "";
         }
         catch { }
 
@@ -2098,45 +2073,6 @@ public partial class MainWindow : Window
 
     // ── Status Bar Updates ──
 
-    private void OnUsageUpdated()
-    {
-        Dispatcher.UIThread.Post(() =>
-        {
-            var today = _usageTracker.GetTodayActivity();
-            if (today != null && today.TodayMessages > 0)
-            {
-                // "about 840 left, resets in 5h" reads better than a bare message count.
-                int limit = PlanDailyLimit(_settings.PlanTier);
-                int left = Math.Max(0, limit - today.TodayMessages);
-                int hours = Math.Max(1, (int)Math.Ceiling((DateTime.Today.AddDays(1) - DateTime.Now).TotalHours));
-                StatusUsageText.Text = string.Format(Loc.Get("UsageRemainingFormat"), left, hours);
-                ToolTip.SetTip(StatusUsagePanel, string.Format(
-                    Loc.Get("UsageTooltipFormat"),
-                    today.TodayMessages, limit, Loc.Get("Plan" + _settings.PlanTier)));
-                // Update progress bar
-                double pct = Math.Min(1.0, (double)today.TodayMessages / Math.Max(1, limit));
-                StatusUsageBarFill.Width = 60 * Math.Min(1.0, pct);
-                StatusUsageBarFill.Background = pct < 0.5
-                    ? new SolidColorBrush(Color.FromRgb(48, 209, 88))    // Green
-                    : pct < 0.8
-                        ? new SolidColorBrush(Color.FromRgb(255, 214, 10)) // Yellow
-                        : new SolidColorBrush(Color.FromRgb(255, 69, 58)); // Red
-            }
-            else
-            {
-                StatusUsageText.Text = "";
-                StatusUsageBarFill.Width = 0;
-            }
-        });
-    }
-
-    private void OnUsageDoubleTapped(object? sender, TappedEventArgs e)
-    {
-        var chart = new UsageChartWindow();
-        chart.Show(this);
-        e.Handled = true;
-    }
-
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool FlashWindow(IntPtr hWnd, bool invert);
@@ -2149,23 +2085,6 @@ public partial class MainWindow : Window
                 FlashWindow(handle.Handle, true);
         }
         catch { }
-    }
-
-    private void UpdateTerminalStatus()
-    {
-        if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
-        {
-            var terminal = _children[_activeChildIndex].Terminal;
-            bool running = terminal.IsProcessRunning;
-            BtnStopTask.IsVisible = running;
-            BtnUndoCheckpoint.IsVisible = _settings.EnableCheckpoints
-                && _checkpoints.LatestFor(_children[_activeChildIndex].ProjectFolder ?? "") != null;
-        }
-        else
-        {
-            BtnStopTask.IsVisible = false;
-            BtnUndoCheckpoint.IsVisible = false;
-        }
     }
 
     // ── Live Status: mode, activity, context, error diagnosis ──
@@ -2206,7 +2125,7 @@ public partial class MainWindow : Window
         else
             ClearLiveStatus();
 
-        RefreshCostReadout(_insight);
+        RefreshSessionReadout(_insight);
         UpdateAdviceBanner(_insight);
     }
 
@@ -2265,7 +2184,6 @@ public partial class MainWindow : Window
         // The badge stays. With the activity-bar button gone it is the only mode switch in the
         // UI, so it has to outlive the readout toggles as well as an unreadable mode name.
         ApplyModeBadge(null);
-        StatusActivity.IsVisible = false;
         StatusContextPanel.IsVisible = false;
     }
 
@@ -2309,26 +2227,14 @@ public partial class MainWindow : Window
     {
         ApplyModeBadge(snap.Mode, snap.ModeText);
 
-        // What it is doing right now
-        bool showActivity = _cli.Features.PermissionOverlay && snap.Activity != AiActivity.None;
-        StatusActivity.IsVisible = showActivity;
-        if (showActivity)
-        {
-            var text = snap.ActivityText;
-            if (!string.IsNullOrEmpty(snap.ActivityTarget))
-                text += "  " + snap.ActivityTarget;
-            if (snap.ElapsedSeconds is int secs && secs > 0)
-                text += $"  ({secs}s)";
-            StatusActivity.Text = text;
-        }
-
         // Context left before auto-compact
         bool showContext = _cli.Features.CompactButton && snap.ContextRemainingPercent.HasValue;
         StatusContextPanel.IsVisible = showContext;
         if (showContext)
         {
             int pct = Math.Clamp(snap.ContextRemainingPercent!.Value, 0, 100);
-            StatusContextText.Text = string.Format(Loc.Get("ContextLeftFormat"), pct);
+            StatusContextLabel.Text = Loc.Get("ContextLabel");
+            StatusContextText.Text = pct + "%";
             StatusContextFill.Width = 48 * (pct / 100.0);
             StatusContextFill.Background = new SolidColorBrush(
                 pct > 40 ? Color.FromRgb(48, 209, 88)
@@ -2479,15 +2385,6 @@ public partial class MainWindow : Window
     private void OnRefreshChanges(object? sender, RoutedEventArgs e)
     {
         RefreshChangesPanel();
-    }
-
-    private void OnGitChangesPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (_activeSidePanel == SidebarPanel.Changes)
-            RefreshChangesPanel();
-        else
-            ToggleSidePanel(SidebarPanel.Changes);
-        e.Handled = true;
     }
 
     private async void RefreshChangesPanel()
@@ -2655,7 +2552,6 @@ public partial class MainWindow : Window
         _settings.PlanTier = PlanTierIds[idx];
         _settings.Save();
         UsageTracker.DailyLimit = PlanDailyLimit(_settings.PlanTier);
-        OnUsageUpdated();
     }
 
     private void OnLiveStatusSettingChanged(object? sender, RoutedEventArgs e)
@@ -2699,6 +2595,7 @@ public partial class MainWindow : Window
             ("Slash Commands", "Ctrl+/", ToggleSlashPanel),
             ("Checkpoints", "", ShowCheckpointList),
             ("Stop", "Esc", () => OnStopTask(null, null!)),
+            ("Usage Chart", "", () => new UsageChartWindow().Show(this)),
             ("Setup Check", "", () => _ = ShowSetupDoctorAsync()),
             ("Keyboard Shortcuts", "F1", ShowShortcutSheet),
             ("Command Palette", "Ctrl+Shift+P", ShowCommandPalette),
@@ -2863,7 +2760,6 @@ public partial class MainWindow : Window
 
         _settings.EnableCheckpoints = ChkEnableCheckpoints.IsChecked == true;
         _settings.Save();
-        UpdateTerminalStatus();
     }
 
     /// <summary>
@@ -2893,13 +2789,10 @@ public partial class MainWindow : Window
 
         try
         {
-            if (await _checkpoints.CreateAsync(folder, label) != null)
-                UpdateTerminalStatus();
+            await _checkpoints.CreateAsync(folder, label);
         }
         catch { }
     }
-
-    private void OnUndoCheckpoint(object? sender, RoutedEventArgs e) => ShowCheckpointList();
 
     private void ShowCheckpointList()
     {
@@ -3449,21 +3342,22 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Keeps the cost readout in step with the active session. New usage only reaches the
-    /// transcript when a turn ends, so the file is re-read on that edge rather than every tick.
+    /// Keeps the session readout - which model is answering, and how long the session has been
+    /// running - in step with the active transcript. New usage only reaches the file when a turn
+    /// ends, so it is re-read on that edge rather than every tick.
     /// </summary>
-    private async void RefreshCostReadout(TerminalSnapshot snap)
+    private async void RefreshSessionReadout(TerminalSnapshot snap)
     {
-        if (!_settings.ShowMarginalCost || !_cli.Features.CompactButton)
+        if (!_cli.Features.CompactButton)
         {
-            StatusCostPanel.IsVisible = false;
+            ClearSessionReadout();
             return;
         }
 
         string? path = ResolveActiveSessionPath();
         if (path == null)
         {
-            StatusCostPanel.IsVisible = false;
+            ClearSessionReadout();
             return;
         }
 
@@ -3475,7 +3369,7 @@ public partial class MainWindow : Window
 
         if (!attaching && !turnEnded)
         {
-            ApplyCostReadout();
+            ApplySessionReadout();
             return;
         }
 
@@ -3485,28 +3379,84 @@ public partial class MainWindow : Window
         catch { /* a transcript that cannot be read just leaves the readout as it was */ }
         finally { _costRefreshInFlight = false; }
 
-        ApplyCostReadout();
+        ApplySessionReadout();
     }
 
-    private void ApplyCostReadout()
+    private void ClearSessionReadout()
     {
-        var cost = _costMonitor.Current;
-        StatusCostPanel.IsVisible = cost.HasData;
-        if (!cost.HasData) return;
-
-        StatusCostText.Text = string.Format(Loc.Get("CostMeterFormat"),
-            FormatUsd(cost.LastTurnUsd), FormatUsd(cost.NextTurnUsd));
-
-        ToolTip.SetTip(StatusCostPanel, string.Format(Loc.Get("CostMeterTooltipFormat"),
-            FormatUsd(cost.LastTurnUsd), FormatTokens(cost.ContextTokens),
-            FormatUsd(cost.NextTurnUsd), FormatUsd(cost.SessionUsd), cost.Turns));
+        StatusModelName.IsVisible = false;
+        StatusElapsedText.IsVisible = false;
     }
 
-    private void OnCostMeterPressed(object? sender, PointerPressedEventArgs e)
+    /// <summary>
+    /// The model that is answering and how long the session has been going. The elapsed figure
+    /// is wall-clock across the transcript, not the CLI's own duration total - that one counts
+    /// time actually spent working, which is a different and always smaller number.
+    /// </summary>
+    private void ApplySessionReadout()
     {
-        new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this);
-        e.Handled = true;
+        var session = _costMonitor.Current;
+
+        var model = SessionCostMonitor.ModelDisplayName(session.Model);
+        StatusModelName.IsVisible = model.Length > 0;
+        if (model.Length > 0)
+        {
+            StatusModelName.Text = model;
+            ToolTip.SetTip(StatusModelName, Loc.Get("ModelTooltip"));
+        }
+
+        var elapsed = session.Elapsed;
+        StatusElapsedText.IsVisible = elapsed.HasValue;
+        if (elapsed is { } span)
+        {
+            StatusElapsedText.Text = FormatElapsed(span);
+            ToolTip.SetTip(StatusElapsedText, Loc.Get("SessionElapsedTooltip"));
+        }
     }
+
+    /// <summary>
+    /// Draws the two rate-limit windows. A null readout means the limits could not be read at
+    /// all - no credentials, an expired token, an endpoint that moved - and showing nothing is
+    /// the honest answer there, not a number that might be stale or wrong.
+    /// </summary>
+    private void OnRateLimitsUpdated(RateLimitInfo? info)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            ApplyRateLimitWindow(info?.FiveHour, StatusFiveHourPanel, StatusFiveHourText,
+                StatusFiveHourFill, "RateLimit5hTooltip");
+            ApplyRateLimitWindow(info?.SevenDay, StatusSevenDayPanel, StatusSevenDayText,
+                StatusSevenDayFill, "RateLimit7dTooltip");
+        });
+    }
+
+    private void ApplyRateLimitWindow(RateLimitWindow? window, StackPanel panel, TextBlock text,
+        Border fill, string tooltipKey)
+    {
+        panel.IsVisible = window != null;
+        if (window == null) return;
+
+        int pct = window.UtilizationPercent;
+        string resetsIn = window.ResetsIn;
+
+        text.Text = resetsIn.Length > 0 ? $"{pct}% ({resetsIn})" : $"{pct}%";
+        ToolTip.SetTip(panel, string.Format(Loc.Get(tooltipKey), pct,
+            resetsIn.Length > 0 ? resetsIn : Loc.Get("RateLimitUnknownReset")));
+
+        // This bar fills as the window is spent, the opposite of the context meter beside it,
+        // so the colours run the other way too.
+        fill.Width = 48 * (pct / 100.0);
+        fill.Background = new SolidColorBrush(
+            pct >= 80 ? Color.FromRgb(255, 69, 58)
+            : pct >= 50 ? Color.FromRgb(255, 214, 10)
+            : Color.FromRgb(48, 209, 88));
+    }
+
+    /// <summary>"3m45s" under the hour, "2h15m" over it.</summary>
+    private static string FormatElapsed(TimeSpan span) =>
+        span.TotalHours >= 1
+            ? string.Format(CultureInfo.InvariantCulture, "{0}h{1:00}m", (int)span.TotalHours, span.Minutes)
+            : string.Format(CultureInfo.InvariantCulture, "{0}m{1:00}s", (int)span.TotalMinutes, span.Seconds);
 
     private static string FormatUsd(double usd) =>
         usd >= 100 ? usd.ToString("N0", CultureInfo.InvariantCulture)
@@ -4085,7 +4035,6 @@ public partial class MainWindow : Window
         }
 
         UpdateStripSelection();
-        UpdateTerminalStatus();
 
         // Switch project context to match the active child
         var childFolder = _children[index].ProjectFolder;
@@ -4471,7 +4420,6 @@ public partial class MainWindow : Window
             stripDot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));
             terminal.IsGenerating = false;
             RefreshSessionList();
-            UpdateTerminalStatus();
             // Flash the taskbar and raise a toast when the window is not focused
             if (!IsActive)
             {
@@ -4511,7 +4459,6 @@ public partial class MainWindow : Window
             terminal.FocusTerminal();
             // The new child is already active, so nothing else will refresh the status bar
             // for it: without this, Stop / Undo stay blank until the tab is clicked.
-            UpdateTerminalStatus();
 
             if (string.IsNullOrEmpty(sessionId))
                 _ = TrackSessionIdAsync(entry, DateTime.Now.AddSeconds(-2));
@@ -4557,7 +4504,6 @@ public partial class MainWindow : Window
         ArrangeChildren();
         // ArrangeChildren bails out when the last child is gone, so refresh separately or the
         // closed session's Stop / Undo linger in the status bar.
-        UpdateTerminalStatus();
     }
 
     // ── Welcome Page ──
@@ -4885,6 +4831,7 @@ public partial class MainWindow : Window
             child.Terminal.Dispose();
         }
         _usageTracker.Dispose();
+        _rateLimits.Dispose();
         _fileWatcher?.Dispose();
         _notifications.Dispose();
         _checkpoints.Save();
