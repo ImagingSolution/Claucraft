@@ -170,12 +170,6 @@ public partial class MainWindow : Window
         /// by the status bar dropdown. A level typed straight into the terminal goes unseen.
         /// </summary>
         public string? Effort { get; set; }
-
-        /// <summary>
-        /// Auto-compact window this window was launched with, in tokens, when its launch profile
-        /// pinned one. Null leaves the window to the CLI's own default for the model.
-        /// </summary>
-        public long? ContextWindow { get; set; }
     };
 
     public MainWindow()
@@ -2326,43 +2320,31 @@ public partial class MainWindow : Window
     private void ApplyLiveStatus(TerminalSnapshot snap)
     {
         ApplyModeBadge(snap.Mode, snap.ModeText);
-        ApplyContextMeter(snap.ContextRemainingPercent);
+        ApplyContextMeter();
     }
 
     /// <summary>
-    /// How much of the context window has been spent before auto-compact.
+    /// How much of the context window the session has filled.
     ///
-    /// The CLI puts its own figure on screen only once the session is within about 20k tokens of
-    /// compacting - the rest of the time it prints nothing at all, which is most of a session.
-    /// So the transcript stands in: every turn records the size of the conversation prefix it
-    /// was billed for, and that is the number the CLI itself counts down. Its figure still wins
-    /// whenever it is on screen, since it knows the window that was actually resolved.
+    /// Read off the transcript, not the screen. The CLI prints a context figure of its own only
+    /// in the last stretch before it compacts, and the one it prints there counts down to the
+    /// compaction trigger rather than up through the window - so scraping it would leave the
+    /// meter blank for most of a session and then bring it back on a different scale. The
+    /// transcript carries the size of the conversation prefix each turn was billed for, which
+    /// is the figure the CLI divides by the window for its own status line, so the number here
+    /// and the number on the line above it stay the same number.
     /// </summary>
-    private void ApplyContextMeter(int? screenPct)
+    private void ApplyContextMeter()
     {
-        int? remaining = screenPct;
-
-        if (remaining == null)
-        {
-            var session = _costMonitor.Current;
-            if (session.HasData && session.ContextTokens > 0)
-            {
-                long? window = _activeChildIndex >= 0 && _activeChildIndex < _children.Count
-                    ? _children[_activeChildIndex].ContextWindow
-                    : null;
-                remaining = SessionCostMonitor.ContextRemainingPercent(
-                    session.ContextTokens, session.Model, window);
-            }
-        }
-
-        bool showContext = _cli.Features.CompactButton && remaining.HasValue;
+        var session = _costMonitor.Current;
+        bool showContext = _cli.Features.CompactButton && session.HasData && session.ContextTokens > 0;
         StatusContextPanel.IsVisible = showContext;
         if (!showContext) return;
 
         // Reported as context used rather than context left. The two rate-limit meters beside
         // it fill as their window is spent, and a row of bars where one grows the opposite way
         // to its neighbours is read wrong at a glance however it is labelled.
-        int used = 100 - Math.Clamp(remaining!.Value, 0, 100);
+        int used = SessionCostMonitor.ContextUsedPercent(session.ContextTokens, session.Model);
         StatusContextLabel.Text = Loc.Get("ContextLabel");
         StatusContextText.Text = used + "%";
         StatusContextFill.Width = 48 * (used / 100.0);
@@ -3724,30 +3706,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// The auto-compact window a new window starts on, when its launch profile pinned one with
-    /// --autocompact. Sizes read the way the CLI reads them: a "k" or "m" suffix scales, and a
-    /// bare 100-1000 is taken as thousands. "auto" pins nothing, and neither does anything
-    /// unparseable - the readout then assumes the CLI's default window for the model.
-    /// </summary>
-    private static long? StartingContextWindow(string command)
-    {
-        var pinned = Regex.Match(command, @"--autocompact[= ]+([0-9.]+)\s*([kKmM]?)");
-        if (!pinned.Success) return null;
-        if (!double.TryParse(pinned.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
-            return null;
-
-        double scale = pinned.Groups[2].Value.ToLowerInvariant() switch
-        {
-            "m" => 1_000_000,
-            "k" => 1_000,
-            _ => value is >= 100 and <= 1000 ? 1_000 : 1,
-        };
-
-        long tokens = (long)Math.Round(value * scale);
-        return tokens > 0 ? tokens : null;
-    }
-
-    /// <summary>
     /// The effort the CLI would start a model on, out of the user's settings.json. It keeps two
     /// records: a per-model level under modelSettings, written whenever an effort is saved as
     /// the default, and a plain effortLevel behind that. Read afresh for every window rather
@@ -4653,8 +4611,7 @@ public partial class MainWindow : Window
             ProjectFolder = _projectFolder,
             FirstInput = firstInput,
             SessionId = sessionId,
-            Effort = StartingEffort(command),
-            ContextWindow = StartingContextWindow(command)
+            Effort = StartingEffort(command)
         };
 
         // Set FirstUserInput on terminal if provided (e.g. from resumed session)

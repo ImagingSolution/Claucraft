@@ -195,33 +195,42 @@ public sealed class SessionCostMonitor
         return true;
     }
 
-    /// <summary>
-    /// Room the CLI holds back for the compaction summary. Auto-compact fires this far short of
-    /// the window, so the readout counts down to that point rather than to the window itself -
-    /// the same arithmetic behind the CLI's own "% until auto-compact".
-    /// </summary>
-    private const long AutoCompactReserveTokens = 13_000;
+    /// <summary>The window the CLI assumes for a model it does not recognise.</summary>
+    private const long DefaultContextWindowTokens = 200_000;
 
     /// <summary>
-    /// The auto-compact window a model runs in, in tokens. Everything sits at 200k except
-    /// Sonnet 5, which compacts against its full million.
+    /// Model lines that answer in a million tokens. Everything else - Haiku, and anything this
+    /// build has never heard of - takes <see cref="DefaultContextWindowTokens"/>, which is the
+    /// fallback the CLI itself uses.
     /// </summary>
-    public static long ContextWindowTokens(string? modelId) =>
-        modelId != null && modelId.Contains("sonnet-5", StringComparison.OrdinalIgnoreCase)
-            ? 1_000_000
-            : 200_000;
-
-    /// <summary>
-    /// How much room is left before auto-compact, as a percentage of the usable window, worked
-    /// out from the size of the conversation prefix. The CLI only prints its own figure in the
-    /// last stretch before it compacts, so this is what the status bar reads the rest of the
-    /// time. <paramref name="windowOverride"/> carries a window pinned on the command line.
-    /// </summary>
-    public static int ContextRemainingPercent(long contextTokens, string? modelId, long? windowOverride = null)
+    private static readonly string[] MillionTokenModels =
     {
-        long window = windowOverride is > 0 ? windowOverride.Value : ContextWindowTokens(modelId);
-        long trigger = Math.Max(1, window - AutoCompactReserveTokens);
-        return (int)Math.Clamp(Math.Round((trigger - contextTokens) / (double)trigger * 100), 0, 100);
+        "fable-5", "mythos-5", "opus-5", "opus-4-8", "opus-4-7", "opus-4-6", "sonnet-5", "sonnet-4-6",
+    };
+
+    /// <summary>The context window a model answers in, in tokens.</summary>
+    public static long ContextWindowTokens(string? modelId)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return DefaultContextWindowTokens;
+        foreach (var line in MillionTokenModels)
+        {
+            if (modelId.Contains(line, StringComparison.OrdinalIgnoreCase)) return 1_000_000;
+        }
+        return DefaultContextWindowTokens;
+    }
+
+    /// <summary>
+    /// How much of the context window the conversation prefix fills, as a percentage.
+    ///
+    /// This is deliberately the CLI's own arithmetic, down to the rounding: it hands its status
+    /// line round(tokens / window * 100) clamped to 0-100, over the model's full window with no
+    /// allowance for the reserve auto-compact keeps back. Anything cleverer here would put a
+    /// different number on the status bar than the one sitting on the status line above it.
+    /// </summary>
+    public static int ContextUsedPercent(long contextTokens, string? modelId)
+    {
+        long window = Math.Max(1, ContextWindowTokens(modelId));
+        return (int)Math.Clamp(Math.Round(contextTokens / (double)window * 100), 0, 100);
     }
 
     /// <summary>
