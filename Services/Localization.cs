@@ -257,6 +257,8 @@ public static class Loc
         ["RunCompact"] = new() { ["English"] = "Run /compact", ["日本語"] = "/compact を実行" },
         ["ModelTooltip"] = new() { ["English"] = "Model answering in this session. Switching also changes the default for new sessions.", ["日本語"] = "このセッションで応答しているモデル。切り替えると新規セッションの既定も変わります。" },
         ["ModelOther"] = new() { ["English"] = "Other...", ["日本語"] = "その他..." },
+        ["EffortTooltip"] = new() { ["English"] = "Reasoning effort this session runs at. Switching sends /effort to the terminal.", ["日本語"] = "このセッションの推論 effort。切り替えるとターミナルに /effort を送信します。" },
+        ["EffortAuto"] = new() { ["English"] = "Auto", ["日本語"] = "自動" },
         ["SessionElapsedTooltip"] = new() { ["English"] = "Time since this session started", ["日本語"] = "このセッションを開始してからの経過時間" },
 
         // ── Rate limits (the 5-hour and 7-day windows the plan is metered on) ──

@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia;
@@ -162,6 +163,13 @@ public partial class MainWindow : Window
 
         /// <summary>Session this window resumed, so the Session box can show it as selected.</summary>
         public string? SessionId { get; set; }
+
+        /// <summary>
+        /// Reasoning effort this window is running at. Effort never reaches the transcript, so
+        /// this is the only record of it there is: seeded from the launch arguments, then moved
+        /// by the status bar dropdown. A level typed straight into the terminal goes unseen.
+        /// </summary>
+        public string? Effort { get; set; }
     };
 
     public MainWindow()
@@ -191,6 +199,7 @@ public partial class MainWindow : Window
         UsageTracker.DailyLimit = PlanDailyLimit(_settings.PlanTier);
         _rateLimits.Updated += OnRateLimitsUpdated;
         BuildModelFlyout();
+        BuildEffortFlyout();
 
         // Mirror what the CLI is doing into the status bar. Cheap: reads the screen buffer
         // that is already in memory, no extra process or file access.
@@ -3462,6 +3471,7 @@ public partial class MainWindow : Window
     {
         StatusModelName.IsVisible = false;
         StatusElapsedText.IsVisible = false;
+        ApplyEffortReadout();
     }
 
     /// <summary>
@@ -3505,6 +3515,8 @@ public partial class MainWindow : Window
             StatusElapsedText.Text = FormatElapsed(span);
             ToolTip.SetTip(StatusElapsedText, Loc.Get("SessionElapsedTooltip"));
         }
+
+        ApplyEffortReadout();
     }
 
     /// <summary>
@@ -3568,6 +3580,158 @@ public partial class MainWindow : Window
         _pendingModelLabel = label;
         StatusModelText.Text = label;
         StatusModelName.IsVisible = true;
+    }
+
+    /// <summary>
+    /// What the effort dropdown offers, as (level to send, name to show). The CLI takes these
+    /// verbatim after /effort. "auto" is listed apart from them because it pins nothing - it
+    /// hands the choice back to the CLI for every turn.
+    /// </summary>
+    private static readonly (string Level, string Label)[] SwitchableEfforts =
+    {
+        ("low", "Low"),
+        ("medium", "Medium"),
+        ("high", "High"),
+        ("xhigh", "XHigh"),
+        ("max", "Max"),
+    };
+
+    /// <summary>
+    /// Fills the effort dropdown. Built once: the levels are fixed, and which one is running is
+    /// already on the bar next to it.
+    /// </summary>
+    private void BuildEffortFlyout()
+    {
+        var flyout = new MenuFlyout { Placement = PlacementMode.Top };
+
+        foreach (var (level, label) in SwitchableEfforts)
+        {
+            var item = new MenuItem { Header = label };
+            var capturedLevel = level;
+            item.Click += (_, _) => SwitchEffort(capturedLevel);
+            flyout.Items.Add(item);
+        }
+
+        flyout.Items.Add(new Separator());
+
+        var auto = new MenuItem { Header = Loc.Get("EffortAuto") };
+        auto.Click += (_, _) => SwitchEffort("auto");
+        flyout.Items.Add(auto);
+
+        StatusEffortName.Flyout = flyout;
+    }
+
+    /// <summary>
+    /// Switches the session's reasoning effort. The picked level goes straight onto the bar:
+    /// nothing ever comes back to confirm it the way a model switch shows up in the transcript.
+    /// </summary>
+    private void SwitchEffort(string level)
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
+
+        _children[_activeChildIndex].Terminal.SendText("/effort " + level + "\r");
+        _children[_activeChildIndex].Effort = level;
+        ApplyEffortReadout();
+    }
+
+    /// <summary>
+    /// Draws the effort of the window in front. Hidden for a CLI that has no such notion, and
+    /// hidden until there is a window to speak for.
+    /// </summary>
+    private void ApplyEffortReadout()
+    {
+        string? effort = _cli.Features.CompactButton
+                         && _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+            ? _children[_activeChildIndex].Effort
+            : null;
+
+        StatusEffortName.IsVisible = effort != null;
+        if (effort == null) return;
+
+        StatusEffortText.Text = EffortDisplayName(effort);
+        ToolTip.SetTip(StatusEffortName, Loc.Get("EffortTooltip"));
+    }
+
+    /// <summary>
+    /// The name a level goes by. A level this build has never heard of passes through unchanged,
+    /// so one added later still reads as something true.
+    /// </summary>
+    private static string EffortDisplayName(string level)
+    {
+        foreach (var (candidate, label) in SwitchableEfforts)
+        {
+            if (string.Equals(candidate, level, StringComparison.OrdinalIgnoreCase)) return label;
+        }
+        return string.Equals(level, "auto", StringComparison.OrdinalIgnoreCase)
+            ? Loc.Get("EffortAuto")
+            : level;
+    }
+
+    /// <summary>
+    /// The effort a new window starts at: whatever its launch profile pinned on the command
+    /// line, else the default the CLI would pick up for itself for the model it is starting on.
+    /// </summary>
+    private static string? StartingEffort(string command)
+    {
+        var pinned = Regex.Match(command, "--effort[= ]+([A-Za-z]+)");
+        if (pinned.Success) return pinned.Groups[1].Value.ToLowerInvariant();
+
+        var model = Regex.Match(command, "--model[= ]+([A-Za-z0-9.-]+)");
+        return DefaultEffort(model.Success ? model.Groups[1].Value : null);
+    }
+
+    /// <summary>
+    /// The effort the CLI would start a model on, out of the user's settings.json. It keeps two
+    /// records: a per-model level under modelSettings, written whenever an effort is saved as
+    /// the default, and a plain effortLevel behind that. Read afresh for every window rather
+    /// than cached once, because the CLI rewrites the file as either of them moves.
+    /// </summary>
+    private static string? DefaultEffort(string? modelAlias)
+    {
+        try
+        {
+            string path = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".claude", "settings.json");
+            if (!File.Exists(path)) return null;
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var root = doc.RootElement;
+
+            string? modelId = ModelIdForAlias(modelAlias ?? ReadSetting(root, "model"));
+            if (modelId != null
+                && root.TryGetProperty("modelSettings", out var perModel)
+                && perModel.ValueKind == JsonValueKind.Object
+                && perModel.TryGetProperty(modelId, out var entry)
+                && ReadSetting(entry, "effortLevel") is { } perModelLevel)
+            {
+                return perModelLevel;
+            }
+
+            return ReadSetting(root, "effortLevel");
+        }
+        catch { return null; }
+    }
+
+    private static string? ReadSetting(JsonElement obj, string name) =>
+        obj.ValueKind == JsonValueKind.Object
+        && obj.TryGetProperty(name, out var prop)
+        && prop.ValueKind == JsonValueKind.String
+            ? prop.GetString()
+            : null;
+
+    /// <summary>
+    /// The id an alias stands for, so a per-model entry can be found from the alias a launch
+    /// line or a settings file carries. Anything already an id passes through unchanged.
+    /// </summary>
+    private static string? ModelIdForAlias(string? alias)
+    {
+        if (string.IsNullOrWhiteSpace(alias)) return null;
+        foreach (var (candidate, modelId) in SwitchableModels)
+        {
+            if (string.Equals(candidate, alias, StringComparison.OrdinalIgnoreCase)) return modelId;
+        }
+        return alias;
     }
 
     /// <summary>
@@ -4191,6 +4355,7 @@ public partial class MainWindow : Window
         }
 
         UpdateStripSelection();
+        ApplyEffortReadout();
 
         // Switch project context to match the active child
         var childFolder = _children[index].ProjectFolder;
@@ -4426,7 +4591,8 @@ public partial class MainWindow : Window
         {
             ProjectFolder = _projectFolder,
             FirstInput = firstInput,
-            SessionId = sessionId
+            SessionId = sessionId,
+            Effort = StartingEffort(command)
         };
 
         // Set FirstUserInput on terminal if provided (e.g. from resumed session)
