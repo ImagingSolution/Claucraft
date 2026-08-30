@@ -51,6 +51,11 @@ public class TerminalControl : Control, IDisposable
     // Input TextBox at bottom
     private readonly TextBox _inputTextBox;
     private readonly Button _expandButton;
+
+    /// <summary>Interrupts the turn. One for each input layout; only one is ever on screen.</summary>
+    private readonly Button _stopButton;
+    private Button _expandedStopButton = null!;
+
     private const double InputBoxHeight = 28;
     private const double InputBoxMargin = 2;
     private const double ExpandButtonWidth = 32;
@@ -270,11 +275,22 @@ public class TerminalControl : Control, IDisposable
         ToolTip.SetTip(_expandButton, "Expand input (multi-line)");
         _expandButton.Click += (_, _) => ToggleExpandedMode();
 
+        // Stop, for the collapsed input row. Sits at the right end of the text box and only
+        // while this session is mid-turn - it belongs to the window that is working, which is
+        // not always the one the status bar is describing.
+        _stopButton = NewStopButton(new Thickness(8, 0));
+        _stopButton.Height = InputBoxHeight;
+        _stopButton.CornerRadius = new CornerRadius(0);
+        _stopButton.BorderThickness = new Thickness(0, 1, 0, 0);
+        _stopButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58));
+
         // Build expanded input panel
         BuildExpandedPanel();
 
         VisualChildren.Add(_inputTextBox);
         LogicalChildren.Add(_inputTextBox);
+        VisualChildren.Add(_stopButton);
+        LogicalChildren.Add(_stopButton);
         VisualChildren.Add(_expandButton);
         LogicalChildren.Add(_expandButton);
         VisualChildren.Add(_expandedPanel);
@@ -801,12 +817,55 @@ public class TerminalControl : Control, IDisposable
     public bool IsGenerating
     {
         get => _marquee.IsActive;
-        set => _marquee.IsActive = value;
+        set
+        {
+            if (_marquee.IsActive == value) return;
+            _marquee.IsActive = value;
+
+            // Stop only exists while there is something to stop. The collapsed one takes width
+            // from the text box, so the row has to be laid out again either way.
+            _stopButton.IsVisible = value;
+            _expandedStopButton.IsVisible = value;
+            InvalidateMeasure();
+            InvalidateArrange();
+        }
+    }
+
+    /// <summary>
+    /// Escape is what actually interrupts the CLI; this is the same key with a label on it, for
+    /// anyone who does not know that. Focus goes back to the terminal so the next keystroke
+    /// lands where the user expects rather than on the button.
+    /// </summary>
+    private Button NewStopButton(Thickness padding)
+    {
+        var button = new Button
+        {
+            Content = "■ " + Services.Loc.Get("StopTask", "Stop"),
+            FontSize = 10,
+            Padding = padding,
+            Background = new SolidColorBrush(Color.FromArgb(36, 255, 69, 58)),
+            Foreground = new SolidColorBrush(Color.FromRgb(255, 69, 58)),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            VerticalAlignment = VerticalAlignment.Center,
+            Focusable = false,
+            IsVisible = false,
+        };
+        ToolTip.SetTip(button, Services.Loc.Get("StopTaskTooltip", "Stop what the AI is doing (Esc)"));
+        button.Click += (_, _) =>
+        {
+            SendText("\x1b");
+            FocusTerminal();
+        };
+        return button;
     }
 
     protected override Size MeasureOverride(Size availableSize)
     {
-        double tbW = Math.Max(0, availableSize.Width - ExpandButtonWidth);
+        _stopButton.Measure(new Size(availableSize.Width, InputBoxHeight));
+        double stopW = _stopButton.IsVisible ? _stopButton.DesiredSize.Width : 0;
+        double tbW = Math.Max(0, availableSize.Width - ExpandButtonWidth - stopW);
         _inputTextBox.Measure(new Size(tbW, InputBoxHeight));
         _expandButton.Measure(new Size(ExpandButtonWidth, InputBoxHeight));
         _marquee.Measure(new Size(availableSize.Width, Controls.MarqueeBar.LineHeight));
@@ -830,20 +889,25 @@ public class TerminalControl : Control, IDisposable
     {
         if (_isExpanded)
         {
-            // Expanded: panel at bottom, hide input row
+            // Expanded: panel at bottom, hide input row. Stop rides along in the panel's own
+            // bottom-right button row, so the loose one is parked off-screen with the rest.
             double epY = finalSize.Height - _expandedHeight;
             _expandedPanel.Arrange(new Rect(0, epY, finalSize.Width, _expandedHeight));
             // Move input row off-screen
             _inputTextBox.Arrange(new Rect(0, finalSize.Height, 0, 0));
+            _stopButton.Arrange(new Rect(0, finalSize.Height, 0, 0));
             _expandButton.Arrange(new Rect(0, finalSize.Height, 0, 0));
         }
         else
         {
-            // Normal: input row at bottom
+            // Normal: input row at bottom, with Stop between the text box and the expander so
+            // the expander keeps the far-right position it holds when nothing is running.
             double tbY = finalSize.Height - InputBoxHeight;
-            double tbW = Math.Max(0, finalSize.Width - ExpandButtonWidth);
+            double stopW = _stopButton.IsVisible ? _stopButton.DesiredSize.Width : 0;
+            double tbW = Math.Max(0, finalSize.Width - ExpandButtonWidth - stopW);
             _inputTextBox.Arrange(new Rect(0, tbY, tbW, InputBoxHeight));
-            _expandButton.Arrange(new Rect(tbW, tbY, ExpandButtonWidth, InputBoxHeight));
+            _stopButton.Arrange(new Rect(tbW, tbY, stopW, InputBoxHeight));
+            _expandButton.Arrange(new Rect(tbW + stopW, tbY, ExpandButtonWidth, InputBoxHeight));
         }
 
         // Always the bottom edge of the control, in both layouts. The input row is flush with
@@ -1329,6 +1393,10 @@ public class TerminalControl : Control, IDisposable
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 4, 8, 4),
         };
+        // Stop leads the row so Send keeps the far-right spot it has always had.
+        _expandedStopButton = NewStopButton(new Thickness(8, 4));
+        _expandedStopButton.Margin = new Thickness(0, 0, 4, 0);
+        buttonPanel.Children.Add(_expandedStopButton);
         buttonPanel.Children.Add(_collapseButton);
         buttonPanel.Children.Add(_sendButton);
 

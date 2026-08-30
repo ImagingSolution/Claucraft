@@ -376,8 +376,6 @@ public partial class MainWindow : Window
         LblOpenUsageChart.Text = Loc.Get("PaletteUsageChart");
         LblOpenCheckpoints.Text = Loc.Get("Checkpoints");
         ToolTip.SetTip(BtnWorkspaces, Loc.Get("Workspaces"));
-        LblStatusStop.Text = Loc.Get("StopTask");
-        ToolTip.SetTip(BtnStatusStop, Loc.Get("StopTaskTooltip"));
         if (_settingsInitialized) FillPlanTierCombo();
 
         // Window title, the labels that embed the AI name, plus feature gating
@@ -2292,7 +2290,6 @@ public partial class MainWindow : Window
         StatusContextPanel.IsVisible = false;
         StatusRunSeparator.IsVisible = false;
         StatusActivityText.IsVisible = false;
-        BtnStatusStop.IsVisible = false;
     }
 
     /// <summary>
@@ -2371,7 +2368,6 @@ public partial class MainWindow : Window
         StatusRunSeparator.IsVisible = running;
         StatusActivityText.IsVisible = running && text.Length > 0;
         StatusActivityText.Text = text;
-        BtnStatusStop.IsVisible = running;
     }
 
     private static string FormatElapsed(int seconds) =>

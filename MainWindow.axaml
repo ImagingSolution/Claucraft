@@ -238,26 +238,14 @@
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
-                <!-- Activity and stop are the only readouts that come and go mid-session, so
-                     they sit at the end of the row: a turn starting or ending never shifts
-                     the badges and meters to their left. -->
+                <!-- The activity readout comes and goes mid-session, so it sits at the end of
+                     the row: a turn starting or ending never shifts the badges and meters to
+                     its left. Stop lives on the input row of the window that is working. -->
                 <Border x:Name="StatusRunSeparator" Width="1" Height="12" IsVisible="False"
                         Background="{DynamicResource DividerColor}" />
                 <TextBlock x:Name="StatusActivityText" Text="" IsVisible="False"
                            Foreground="{DynamicResource SubtleText}" FontSize="11"
                            VerticalAlignment="Center" />
-                <Button x:Name="BtnStatusStop" IsVisible="False"
-                        Background="Transparent" BorderThickness="0"
-                        Padding="0" Cursor="Hand" VerticalAlignment="Center"
-                        Click="OnStopTask">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <PathIcon Data="M6 6H18V18H6Z" Width="9" Height="9"
-                                  Foreground="#FF453A" />
-                        <TextBlock x:Name="LblStatusStop" Text=""
-                                   Foreground="#FF453A" FontSize="11"
-                                   VerticalAlignment="Center" />
-                    </StackPanel>
-                </Button>
             </StackPanel>
             </Border>
 
