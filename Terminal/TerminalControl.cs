@@ -278,8 +278,10 @@ public class TerminalControl : Control, IDisposable
         // Stop, for the collapsed input row. Sits at the right end of the text box and only
         // while this session is mid-turn - it belongs to the window that is working, which is
         // not always the one the status bar is describing.
+        // Stretch rather than a fixed height: the button then fills the arranged row exactly as
+        // the expander beside it does, instead of sitting short with a gap above it.
         _stopButton = NewStopButton(new Thickness(8, 0));
-        _stopButton.Height = InputBoxHeight;
+        _stopButton.VerticalAlignment = VerticalAlignment.Stretch;
         _stopButton.CornerRadius = new CornerRadius(0);
         _stopButton.BorderThickness = new Thickness(0, 1, 0, 0);
         _stopButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58));
@@ -849,6 +851,10 @@ public class TerminalControl : Control, IDisposable
             CornerRadius = new CornerRadius(4),
             Cursor = new Cursor(StandardCursorType.Hand),
             VerticalAlignment = VerticalAlignment.Center,
+            // Avalonia's default leaves the label at the top of the button box, which reads as
+            // the whole control sitting high in the input row.
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
             Focusable = false,
             IsVisible = false,
         };
