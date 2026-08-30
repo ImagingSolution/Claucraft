@@ -60,13 +60,25 @@ public class DiffWindow : Window
             ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel()),
             Background = new SolidColorBrush(isDark ? Color.FromRgb(24, 24, 26) : Color.FromRgb(250, 250, 252)),
         };
-        ScrollViewer.SetHorizontalScrollBarVisibility(itemsControl, ScrollBarVisibility.Auto);
-        ScrollViewer.SetVerticalScrollBarVisibility(itemsControl, ScrollBarVisibility.Auto);
+        // Rows are virtualized, so the panel only knows how wide the lines it has realized are:
+        // left alone, the horizontal extent would grow and shrink as the user scrolls past long
+        // lines and the view would jump sideways. Measuring the longest line once pins it.
+        itemsControl.MinWidth = MeasureWidestLine(lines);
+
+        // A bare ItemsControl has no ScrollViewer in its template, so the attached
+        // ScrollBarVisibility properties that used to be set here did nothing and a diff taller
+        // or wider than the window was simply clipped with no way to reach the rest of it.
+        var scroller = new ScrollViewer
+        {
+            Content = itemsControl,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
 
         var dock = new DockPanel();
         DockPanel.SetDock(toolbarBorder, Dock.Top);
         dock.Children.Add(toolbarBorder);
-        dock.Children.Add(itemsControl);
+        dock.Children.Add(scroller);
 
         Content = dock;
 
@@ -75,6 +87,33 @@ public class DiffWindow : Window
             if (e.Key == Key.Escape) Close();
         };
     }
+
+    /// <summary>
+    /// How wide the longest line renders, plus the padding a row carries. The font is
+    /// monospaced, so the longest line by character count is also the widest one, and only that
+    /// one has to be measured.
+    /// </summary>
+    private double MeasureWidestLine(string[] lines)
+    {
+        var widest = "";
+        foreach (var line in lines)
+        {
+            if (line.Length > widest.Length) widest = line;
+        }
+        if (widest.Length == 0) return 0;
+
+        var text = new FormattedText(
+            widest,
+            System.Globalization.CultureInfo.CurrentCulture,
+            FlowDirection.LeftToRight,
+            _typeface,
+            12,
+            Brushes.White);
+
+        return text.WidthIncludingTrailingWhitespace + LinePadding.Left + LinePadding.Right;
+    }
+
+    private static readonly Thickness LinePadding = new(8, 0, 24, 0);
 
     private Control BuildLineControl(string line)
     {
@@ -85,7 +124,7 @@ public class DiffWindow : Window
             FontSize = 12,
             TextWrapping = TextWrapping.NoWrap,
             Foreground = new SolidColorBrush(LineColor(line)),
-            Padding = new Thickness(8, 0, 24, 0),
+            Padding = LinePadding,
         };
     }
 
