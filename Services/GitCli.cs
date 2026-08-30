@@ -8,9 +8,26 @@ using System.Threading.Tasks;
 namespace Claucraft.Services;
 
 /// <summary>
-/// The plumbing the git-reading services share: launching the CLI, finding the top of a working
-/// tree, naming a path so git cannot mistake it for a pattern, and capping diff text. Read-only
-/// throughout -- nothing here writes to a repository.
+/// What one git invocation did: whether it succeeded, and whatever it had to say on either
+/// stream. Writes need all of it - a failed commit or push is only useful to the user if the
+/// reason git gave comes back with it.
+/// </summary>
+public sealed record GitResult(int ExitCode, string StdOut, string StdErr)
+{
+    public bool Ok => ExitCode == 0;
+
+    /// <summary>git's own words, for showing when something failed. Falls back to stdout.</summary>
+    public string Message =>
+        !string.IsNullOrWhiteSpace(StdErr) ? StdErr.Trim()
+        : !string.IsNullOrWhiteSpace(StdOut) ? StdOut.Trim()
+        : "";
+
+    public static GitResult Failed(string message) => new(-1, "", message);
+}
+
+/// <summary>
+/// The plumbing the git services share: launching the CLI, finding the top of a working tree,
+/// naming a path so git cannot mistake it for a pattern, and capping diff text.
 /// </summary>
 public static class GitCli
 {
@@ -25,6 +42,14 @@ public static class GitCli
 
     /// <summary>Runs git with the given arguments (no shell quoting needed) and returns stdout.</summary>
     public static string Run(string workingDirectory, params string[] args)
+        => Execute(workingDirectory, null, args).StdOut;
+
+    /// <summary>
+    /// Runs git and reports how it went. <paramref name="stdin"/> is written to the process and
+    /// the stream closed - that is how a commit message travels, so it never has to survive
+    /// command-line quoting or the console code page.
+    /// </summary>
+    public static GitResult Execute(string workingDirectory, string? stdin, params string[] args)
     {
         try
         {
@@ -38,12 +63,21 @@ public static class GitCli
                 CreateNoWindow = true,
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8,
+                RedirectStandardInput = stdin != null,
             };
+            if (stdin != null)
+                psi.StandardInputEncoding = new UTF8Encoding(false);
             foreach (var a in args)
                 psi.ArgumentList.Add(a);
 
             using var proc = Process.Start(psi);
-            if (proc == null) return "";
+            if (proc == null) return GitResult.Failed("git could not be started");
+
+            if (stdin != null)
+            {
+                proc.StandardInput.Write(stdin);
+                proc.StandardInput.Close();
+            }
 
             // Both pipes have to be drained at once. Reading one to the end while the other
             // fills its buffer wedges git on its next write and this thread on a read that
@@ -62,14 +96,14 @@ public static class GitCli
                 {
                     // Nothing further can be done about a process that will not die.
                 }
-                return "";
+                return GitResult.Failed("git timed out");
             }
 
-            return stdout.Result;
+            return new GitResult(proc.ExitCode, stdout.Result, stderr.Result);
         }
-        catch
+        catch (Exception ex)
         {
-            return "";
+            return GitResult.Failed(ex.Message);
         }
     }
 

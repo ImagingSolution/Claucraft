@@ -364,6 +364,11 @@ public partial class MainWindow : Window
         // Changed files, tokens & cost, and the live status readouts
         ToolTip.SetTip(BtnActivityChanges, Loc.Get("ChangesTooltip"));
         ToolTip.SetTip(StatusBranchName, Loc.Get("CommitGraphTooltip"));
+        ToolTip.SetTip(BtnBranchSwitch, Loc.Get("BranchSwitchTooltip"));
+        ToolTip.SetTip(ChkStageAll, Loc.Get("StageAll"));
+        TxtCommitMessage.PlaceholderText = Loc.Get("CommitMessage");
+        LblCommit.Text = Loc.Get("CommitAction");
+        LblPush.Text = Loc.Get("PushAction");
         ToolTip.SetTip(BtnActivityCost, Loc.Get("CostTooltip"));
         ToolTip.SetTip(BtnRefreshChanges, Loc.Get("Refresh"));
         ToolTip.SetTip(StatusModeBadge, Loc.Get("ModeBadgeTooltip"));
@@ -1948,6 +1953,7 @@ public partial class MainWindow : Window
     {
         StatusRepoName.Text = "";
         StatusBranchName.Text = "";
+        BtnBranchSwitch.IsVisible = false;
         _gitRepoUrl = null;
 
         if (string.IsNullOrEmpty(_projectFolder) || !Directory.Exists(_projectFolder))
@@ -2011,7 +2017,10 @@ public partial class MainWindow : Window
             branchProc?.WaitForExit();
 
             if (!string.IsNullOrEmpty(branch))
+            {
                 StatusBranchName.Text = branch;
+                BtnBranchSwitch.IsVisible = true;
+            }
         }
         catch { }
 
@@ -2566,6 +2575,8 @@ public partial class MainWindow : Window
         if (string.IsNullOrEmpty(repo) || !GitChangeService.IsGitRepository(repo))
         {
             LblChangesSummary.Text = Loc.Get("NotAGitRepo");
+            _changes = new List<GitChange>();
+            ApplyCommitBoxState(repo ?? "");
             return;
         }
 
@@ -2595,6 +2606,208 @@ public partial class MainWindow : Window
 
         foreach (var change in _changes)
             ChangesList.Children.Add(BuildChangeRow(repo, change));
+
+        ApplyCommitBoxState(repo);
+    }
+
+    // ── Git write: stage, commit, branch, push ──
+
+    /// <summary>Set while the "stage all" box is being brought in line with the list.</summary>
+    private bool _suppressStageAll;
+
+    /// <summary>One git write at a time: the panel is rebuilt from the result of each.</summary>
+    private bool _gitWriteBusy;
+
+    private BranchState _branchState = BranchState.None;
+
+    /// <summary>
+    /// Turns the commit controls on for a repository and off for anything else, and says what
+    /// they would act on - how many files are staged, and how far the branch has run ahead of
+    /// what it tracks.
+    /// </summary>
+    private async void ApplyCommitBoxState(string repo)
+    {
+        bool isRepo = !string.IsNullOrEmpty(repo) && GitChangeService.IsGitRepository(repo);
+        CommitBox.IsVisible = isRepo;
+        ChkStageAll.IsVisible = isRepo && _changes.Count > 0;
+        if (!isRepo)
+        {
+            _branchState = BranchState.None;
+            BtnBranchSwitch.IsVisible = false;
+            return;
+        }
+
+        int staged = _changes.Count(c => c.Staged);
+
+        _suppressStageAll = true;
+        ChkStageAll.IsChecked = _changes.Count > 0 && staged == _changes.Count;
+        _suppressStageAll = false;
+
+        BtnCommit.IsEnabled = staged > 0 && !_gitWriteBusy;
+
+        var state = await GitWriteService.GetBranchStateAsync(repo);
+
+        // The project can change while git is running; a stale answer must not land.
+        if (!string.Equals(repo, _projectFolder, StringComparison.OrdinalIgnoreCase)) return;
+
+        _branchState = state;
+        BtnPush.IsEnabled = state.Current.Length > 0 && !_gitWriteBusy;
+        LblPush.Text = state.Ahead > 0
+            ? Loc.Get("PushAction") + " ↑" + state.Ahead
+            : Loc.Get("PushAction");
+    }
+
+    private async void OnStageAllChanged(object? sender, RoutedEventArgs e)
+    {
+        if (_suppressStageAll || _gitWriteBusy) return;
+
+        var repo = _projectFolder;
+        if (string.IsNullOrEmpty(repo)) return;
+
+        bool stage = ChkStageAll.IsChecked == true;
+        var paths = _changes
+            .Where(c => c.Staged != stage)
+            .Select(c => c.Path)
+            .ToList();
+        if (paths.Count == 0) return;
+
+        await RunGitWriteAsync(stage
+            ? GitWriteService.StageAsync(repo, paths)
+            : GitWriteService.UnstageAsync(repo, paths));
+    }
+
+    private async void OnCommit(object? sender, RoutedEventArgs e)
+    {
+        var repo = _projectFolder;
+        if (string.IsNullOrEmpty(repo) || _gitWriteBusy) return;
+
+        if (!_changes.Any(c => c.Staged))
+        {
+            ShowMessageDialog(Loc.Get("CommitAction"), Loc.Get("NothingStaged"));
+            return;
+        }
+
+        var message = TxtCommitMessage.Text ?? "";
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            ShowMessageDialog(Loc.Get("CommitAction"), Loc.Get("NoCommitMessage"));
+            TxtCommitMessage.Focus();
+            return;
+        }
+
+        if (await RunGitWriteAsync(GitWriteService.CommitAsync(repo, message)))
+            TxtCommitMessage.Text = "";
+    }
+
+    private async void OnPush(object? sender, RoutedEventArgs e)
+    {
+        var repo = _projectFolder;
+        if (string.IsNullOrEmpty(repo) || _gitWriteBusy) return;
+
+        var state = _branchState;
+        if (state.Current.Length == 0) return;
+
+        if (state.HasUpstream && state.Ahead == 0)
+        {
+            ShowMessageDialog(Loc.Get("PushAction"), Loc.Get("NothingToPush"));
+            return;
+        }
+
+        // Publishing is outward-facing and awkward to walk back, so it is always confirmed.
+        var detail = state.HasUpstream
+            ? string.Format(Loc.Get("PushConfirmFmt"),
+                string.Format(Loc.Get("BranchAheadFmt"), state.Ahead), state.Current)
+            : Loc.Get("PushConfirmNewUpstream");
+
+        if (!await ShowConfirmDialog(Loc.Get("PushConfirmTitle"), detail)) return;
+
+        await RunGitWriteAsync(GitWriteService.PushAsync(repo, state));
+    }
+
+    private async void OnBranchSwitch(object? sender, RoutedEventArgs e)
+    {
+        var repo = _projectFolder;
+        if (string.IsNullOrEmpty(repo)) return;
+
+        var (branches, current) = await GitWriteService.GetBranchesAsync(repo);
+        if (!string.Equals(repo, _projectFolder, StringComparison.OrdinalIgnoreCase)) return;
+
+        // Rebuilt on every click: branches come and go, unlike the fixed model and effort lists.
+        var flyout = new MenuFlyout { Placement = PlacementMode.Top };
+        foreach (var branch in branches)
+        {
+            var name = branch;
+            var item = new MenuItem
+            {
+                Header = name == current ? "✓ " + name : "   " + name,
+                IsEnabled = name != current,
+            };
+            item.Click += (_, _) => _ = SwitchBranchAsync(name);
+            flyout.Items.Add(item);
+        }
+
+        if (branches.Count > 0) flyout.Items.Add(new Separator());
+
+        var create = new MenuItem { Header = Loc.Get("NewBranch") };
+        create.Click += (_, _) => _ = CreateBranchAsync();
+        flyout.Items.Add(create);
+
+        flyout.ShowAt(BtnBranchSwitch);
+    }
+
+    private async Task SwitchBranchAsync(string branch)
+    {
+        var repo = _projectFolder;
+        if (string.IsNullOrEmpty(repo)) return;
+
+        if (!await ShowConfirmDialog(
+                Loc.Get("SwitchBranchConfirmTitle"),
+                string.Format(Loc.Get("SwitchBranchConfirmFmt"), branch)))
+            return;
+
+        // git switch refuses on conflicting local changes rather than carrying them across, so
+        // a dirty tree surfaces as git's own message instead of silently moving the work.
+        await RunGitWriteAsync(GitWriteService.CheckoutBranchAsync(repo, branch));
+    }
+
+    private async Task CreateBranchAsync()
+    {
+        var repo = _projectFolder;
+        if (string.IsNullOrEmpty(repo)) return;
+
+        var name = await ShowTextInputDialog(Loc.Get("NewBranch"), Loc.Get("NewBranchPrompt"), "");
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        await RunGitWriteAsync(GitWriteService.CreateBranchAsync(repo, name.Trim()));
+    }
+
+    /// <summary>
+    /// Runs one git write, shows git's own words when it refuses, and rebuilds everything the
+    /// result could have changed. Returns whether it succeeded.
+    /// </summary>
+    private async Task<bool> RunGitWriteAsync(Task<GitResult> work)
+    {
+        _gitWriteBusy = true;
+        BtnCommit.IsEnabled = false;
+        BtnPush.IsEnabled = false;
+        try
+        {
+            var result = await work;
+            if (!result.Ok)
+            {
+                var detail = result.Message;
+                ShowMessageDialog(Loc.Get("GitFailedTitle"),
+                    detail.Length > 0 ? detail : Loc.Get("GitFailedTitle"));
+            }
+
+            return result.Ok;
+        }
+        finally
+        {
+            _gitWriteBusy = false;
+            RefreshGitInfo();
+            RefreshChangesPanel();
+        }
     }
 
     private Control BuildChangeRow(string repo, GitChange change)
@@ -2608,7 +2821,28 @@ public partial class MainWindow : Window
             _ => Color.FromRgb(255, 214, 10),
         };
 
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*") };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*") };
+
+        // Staged state is git's, not the panel's: the box shows what the index already holds and
+        // a click asks git to change it, so the two can never drift.
+        var stage = new CheckBox
+        {
+            IsChecked = change.Staged,
+            MinWidth = 0,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0, 0, 4, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(stage, Loc.Get(change.Staged ? "UnstageFile" : "StageFile"));
+        stage.IsCheckedChanged += (_, _) =>
+        {
+            bool want = stage.IsChecked == true;
+            if (want == change.Staged || _gitWriteBusy) return;
+            var one = new List<string> { change.Path };
+            _ = RunGitWriteAsync(want
+                ? GitWriteService.StageAsync(repo, one)
+                : GitWriteService.UnstageAsync(repo, one));
+        };
 
         var glyph = new TextBlock
         {
@@ -2635,9 +2869,11 @@ public partial class MainWindow : Window
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        Grid.SetColumn(glyph, 0);
-        Grid.SetColumn(name, 1);
-        Grid.SetColumn(dir, 2);
+        Grid.SetColumn(stage, 0);
+        Grid.SetColumn(glyph, 1);
+        Grid.SetColumn(name, 2);
+        Grid.SetColumn(dir, 3);
+        grid.Children.Add(stage);
         grid.Children.Add(glyph);
         grid.Children.Add(name);
         grid.Children.Add(dir);

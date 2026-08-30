@@ -453,6 +453,27 @@ public static class Loc
         ["PaletteSwitchMode"] = new() { ["English"] = "Switch Mode (Shift+Tab)", ["日本語"] = "モード切替 (Shift+Tab)" },
         ["MarginalCostTooltip"] = new() { ["English"] = "Last turn, then what the next turn costs just to re-read the conversation.", ["日本語"] = "直前のターンの費用と、次のターンが会話を読み直すだけでかかる費用。" },
         ["StopTaskTooltip"] = new() { ["English"] = "Stop what the AI is doing (Esc)", ["日本語"] = "AI の実行を中断（Esc）" },
+
+        // -- Git write operations --
+        ["StageAll"] = new() { ["English"] = "Stage all", ["日本語"] = "すべてステージ" },
+        ["StageFile"] = new() { ["English"] = "Click to stage", ["日本語"] = "クリックでステージ" },
+        ["UnstageFile"] = new() { ["English"] = "Staged - click to unstage", ["日本語"] = "ステージ済み - クリックで取り消し" },
+        ["CommitAction"] = new() { ["English"] = "Commit", ["日本語"] = "コミット" },
+        ["CommitMessage"] = new() { ["English"] = "Commit message", ["日本語"] = "コミットメッセージ" },
+        ["PushAction"] = new() { ["English"] = "Push", ["日本語"] = "プッシュ" },
+        ["NothingStaged"] = new() { ["English"] = "Stage a file before committing.", ["日本語"] = "コミットするには先にファイルをステージしてください。" },
+        ["NoCommitMessage"] = new() { ["English"] = "Write a commit message first.", ["日本語"] = "先にコミットメッセージを入力してください。" },
+        ["GitFailedTitle"] = new() { ["English"] = "Git could not do that", ["日本語"] = "Git の実行に失敗しました" },
+        ["BranchSwitchTooltip"] = new() { ["English"] = "Switch branch", ["日本語"] = "ブランチを切り替え" },
+        ["NewBranch"] = new() { ["English"] = "New branch...", ["日本語"] = "新しいブランチ..." },
+        ["NewBranchPrompt"] = new() { ["English"] = "Branch name", ["日本語"] = "ブランチ名" },
+        ["PushConfirmTitle"] = new() { ["English"] = "Push to the remote?", ["日本語"] = "リモートへプッシュしますか？" },
+        ["PushConfirmFmt"] = new() { ["English"] = "{0} will be pushed to {1}.", ["日本語"] = "{0} を {1} へプッシュします。" },
+        ["PushConfirmNewUpstream"] = new() { ["English"] = "This branch has no upstream yet. It will be published to origin.", ["日本語"] = "このブランチにはまだ upstream がありません。origin に新規作成します。" },
+        ["SwitchBranchConfirmTitle"] = new() { ["English"] = "Switch branch?", ["日本語"] = "ブランチを切り替えますか？" },
+        ["SwitchBranchConfirmFmt"] = new() { ["English"] = "Switch the working tree to {0}?", ["日本語"] = "作業ツリーを {0} に切り替えますか？" },
+        ["NothingToPush"] = new() { ["English"] = "Nothing to push.", ["日本語"] = "プッシュするコミットがありません。" },
+        ["BranchAheadFmt"] = new() { ["English"] = "{0} ahead", ["日本語"] = "{0} 件先行" },
     };
 
     public static string Get(string key)

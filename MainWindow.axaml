@@ -145,6 +145,16 @@
                                VerticalAlignment="Center" Cursor="Hand"
                                ToolTip.Tip="Current branch - double-click for the commit graph"
                                DoubleTapped="OnBranchNameDoubleTapped" />
+                    <!-- Its own control rather than a click on the name: the name already
+                         answers to a double-click, and a menu opening under every first click
+                         would make reaching the commit graph a fight. -->
+                    <Button x:Name="BtnBranchSwitch" IsVisible="False"
+                            Background="Transparent" BorderThickness="0"
+                            Padding="0" Cursor="Hand" VerticalAlignment="Center"
+                            Click="OnBranchSwitch">
+                        <PathIcon Data="M7 10L12 15L17 10Z" Width="8" Height="8"
+                                  Foreground="{DynamicResource SubtleText}" />
+                    </Button>
                 </StackPanel>
                 <!-- Separator -->
                 <Border Width="1" Height="12" Background="{DynamicResource DividerColor}" />
@@ -668,17 +678,47 @@
                         <!-- Changed Files Panel -->
                         <DockPanel x:Name="ChangesPanel" IsVisible="False">
                             <Border DockPanel.Dock="Top" Padding="10,6">
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock x:Name="LblChangesSummary" Text=""
+                                <Grid ColumnDefinitions="Auto,*,Auto">
+                                    <CheckBox x:Name="ChkStageAll" Grid.Column="0"
+                                              Margin="0,0,4,0" Padding="0" MinWidth="0"
+                                              IsVisible="False"
+                                              ToolTip.Tip="Stage all"
+                                              IsCheckedChanged="OnStageAllChanged" />
+                                    <TextBlock x:Name="LblChangesSummary" Grid.Column="1" Text=""
                                                FontSize="11" VerticalAlignment="Center"
                                                Foreground="{DynamicResource SubtleText}" />
-                                    <Button x:Name="BtnRefreshChanges" Grid.Column="1"
+                                    <Button x:Name="BtnRefreshChanges" Grid.Column="2"
                                             Classes="icon-btn" Padding="4"
                                             ToolTip.Tip="Refresh" Click="OnRefreshChanges">
                                         <PathIcon Data="M17.65 6.35C16.2 4.9 14.21 4 12 4C7.58 4 4 7.58 4 12C4 16.42 7.58 20 12 20C15.73 20 18.84 17.45 19.73 14H17.65C16.83 16.33 14.61 18 12 18C8.69 18 6 15.31 6 12C6 8.69 8.69 6 12 6C13.66 6 15.14 6.69 16.22 7.78L13 11H20V4L17.65 6.35Z"
                                                   Width="13" Height="13" />
                                     </Button>
                                 </Grid>
+                            </Border>
+                            <!-- Commit and push, below the list they act on. -->
+                            <Border x:Name="CommitBox" DockPanel.Dock="Bottom" Padding="8,8"
+                                    IsVisible="False"
+                                    BorderThickness="0,0.5,0,0"
+                                    BorderBrush="{DynamicResource DividerColor}">
+                                <StackPanel Spacing="6">
+                                    <TextBox x:Name="TxtCommitMessage"
+                                             AcceptsReturn="True" TextWrapping="Wrap"
+                                             MinHeight="52" MaxHeight="120" FontSize="12"
+                                             PlaceholderText="Commit message" />
+                                    <Grid ColumnDefinitions="*,6,Auto">
+                                        <Button x:Name="BtnCommit" Grid.Column="0"
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Center"
+                                                Click="OnCommit">
+                                            <TextBlock x:Name="LblCommit" Text="Commit" FontSize="12" />
+                                        </Button>
+                                        <Button x:Name="BtnPush" Grid.Column="2"
+                                                HorizontalContentAlignment="Center"
+                                                Click="OnPush">
+                                            <TextBlock x:Name="LblPush" Text="Push" FontSize="12" />
+                                        </Button>
+                                    </Grid>
+                                </StackPanel>
                             </Border>
                             <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                                           VerticalScrollBarVisibility="Auto">
