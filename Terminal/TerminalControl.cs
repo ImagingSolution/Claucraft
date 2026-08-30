@@ -69,6 +69,7 @@ public class TerminalControl : Control, IDisposable
     private Border _dragHandle = null!;
     private Button _collapseButton = null!;
     private Button _sendButton = null!;
+    private Button _attachButton = null!;
     private bool _isExpanded;
     private double _expandedHeight; // absolute pixels
     private bool _isDragResizing;
@@ -1361,6 +1362,7 @@ public class TerminalControl : Control, IDisposable
             VerticalContentAlignment = VerticalAlignment.Top,
         };
         _expandedTextBox.AddHandler(KeyDownEvent, OnExpandedKeyDown, RoutingStrategies.Tunnel);
+        _expandedTextBox.TextChanged += (_, _) => OnExpandedTextChanged();
 
         // Collapse button (▼)
         _collapseButton = new Button
@@ -1399,6 +1401,26 @@ public class TerminalControl : Control, IDisposable
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 4, 8, 4),
         };
+        // Attach (+): the CLI takes files as paths on the prompt, so picking one only has to
+        // write its path into the box - the same shape a pasted screenshot arrives in.
+        _attachButton = new Button
+        {
+            Content = "+", FontSize = 13,
+            Padding = new Thickness(9, 1),
+            Background = new SolidColorBrush(Color.FromRgb(50, 50, 52)),
+            Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(4),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Margin = new Thickness(0, 0, 4, 0),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            Focusable = false,
+        };
+        ToolTip.SetTip(_attachButton, Services.Loc.Get("AttachFiles", "Attach files"));
+        _attachButton.Click += (_, _) => _ = AttachFilesAsync();
+        buttonPanel.Children.Add(_attachButton);
+
         // Stop leads the row so Send keeps the far-right spot it has always had.
         _expandedStopButton = NewStopButton(new Thickness(8, 4));
         _expandedStopButton.Margin = new Thickness(0, 0, 4, 0);
@@ -1506,6 +1528,14 @@ public class TerminalControl : Control, IDisposable
 
     private void OnExpandedKeyDown(object? sender, KeyEventArgs e)
     {
+        // The completion list owns the keys it needs while it is up, so Enter picks a file
+        // rather than breaking the line and Escape closes the list rather than the panel.
+        if (_completionPopup is { IsOpen: true } && HandleCompletionKey(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
         // Ctrl+Enter: send
         if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
@@ -1521,6 +1551,264 @@ public class TerminalControl : Control, IDisposable
             return;
         }
         // Enter without modifiers: just newline (AcceptsReturn handles it)
+    }
+
+    // ── @ completion ───────────────────────────────────────────────────
+
+    private Popup? _completionPopup;
+    private ListBox? _completionList;
+
+    /// <summary>Where the '@' that opened the list sits in the text box.</summary>
+    private int _completionAnchor = -1;
+
+    /// <summary>Guards the text box's own change event while the completion rewrites it.</summary>
+    private bool _completionInserting;
+
+    /// <summary>
+    /// Watches what is being typed and offers the project's files after an '@'. The trigger is
+    /// the same one the CLI uses, so a completed reference is exactly what would have been
+    /// typed by hand.
+    /// </summary>
+    private void OnExpandedTextChanged()
+    {
+        if (_completionInserting) return;
+
+        var text = _expandedTextBox.Text ?? "";
+        int caret = Math.Clamp(_expandedTextBox.CaretIndex, 0, text.Length);
+
+        int at = FindCompletionAnchor(text, caret);
+        if (at < 0)
+        {
+            CloseCompletion();
+            return;
+        }
+
+        _completionAnchor = at;
+        _ = ShowCompletionAsync(text.Substring(at + 1, caret - at - 1));
+    }
+
+    /// <summary>
+    /// The '@' the caret is currently attached to, or -1. It has to start a word and there can
+    /// be no whitespace between it and the caret - an '@' in an email address or one the user
+    /// has already typed past is not an invitation to complete anything.
+    /// </summary>
+    private static int FindCompletionAnchor(string text, int caret)
+    {
+        for (int i = caret - 1; i >= 0; i--)
+        {
+            char c = text[i];
+            if (c == '@')
+                return i == 0 || char.IsWhiteSpace(text[i - 1]) ? i : -1;
+            if (char.IsWhiteSpace(c)) return -1;
+        }
+        return -1;
+    }
+
+    private async Task ShowCompletionAsync(string query)
+    {
+        var files = await Services.ProjectFileIndex.ListAsync(_workingDirectory);
+        if (files.Count == 0)
+        {
+            CloseCompletion();
+            return;
+        }
+
+        // The caret has moved on while the walk was running - whatever it is doing now, this
+        // answer is no longer about it.
+        if (_completionAnchor < 0) return;
+
+        var matches = Services.ProjectFileIndex.Rank(files, query, 12);
+        if (matches.Count == 0)
+        {
+            CloseCompletion();
+            return;
+        }
+
+        EnsureCompletionPopup();
+        _completionList!.ItemsSource = matches;
+        _completionList.SelectedIndex = 0;
+        _completionPopup!.IsOpen = true;
+    }
+
+    private void EnsureCompletionPopup()
+    {
+        if (_completionPopup != null) return;
+
+        _completionList = new ListBox
+        {
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            MaxHeight = 240,
+            Focusable = false,
+        };
+        _completionList.DoubleTapped += (_, _) => AcceptCompletion();
+
+        _completionPopup = new Popup
+        {
+            PlacementTarget = _expandedTextBox,
+            Placement = PlacementMode.TopEdgeAlignedLeft,
+            IsLightDismissEnabled = true,
+            Child = new Border
+            {
+                Background = new SolidColorBrush(_isDark ? Color.FromRgb(40, 40, 42) : Color.FromRgb(250, 250, 252)),
+                BorderBrush = new SolidColorBrush(_isDark ? Color.FromRgb(70, 70, 74) : Color.FromRgb(200, 200, 205)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(2),
+                MinWidth = 320,
+                Child = _completionList,
+            },
+        };
+        _completionPopup.Closed += (_, _) => _completionAnchor = -1;
+
+        VisualChildren.Add(_completionPopup);
+        LogicalChildren.Add(_completionPopup);
+    }
+
+    /// <summary>Returns true when the key belonged to the completion list.</summary>
+    private bool HandleCompletionKey(KeyEventArgs e)
+    {
+        var list = _completionList;
+        if (list == null || list.ItemCount == 0) return false;
+
+        switch (e.Key)
+        {
+            case Key.Down:
+                list.SelectedIndex = (list.SelectedIndex + 1) % list.ItemCount;
+                return true;
+            case Key.Up:
+                list.SelectedIndex = (list.SelectedIndex - 1 + list.ItemCount) % list.ItemCount;
+                return true;
+            case Key.Enter:
+            case Key.Tab:
+                AcceptCompletion();
+                return true;
+            case Key.Escape:
+                CloseCompletion();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void AcceptCompletion()
+    {
+        var path = _completionList?.SelectedItem as string;
+        if (path == null || _completionAnchor < 0)
+        {
+            CloseCompletion();
+            return;
+        }
+
+        var text = _expandedTextBox.Text ?? "";
+        int caret = Math.Clamp(_expandedTextBox.CaretIndex, 0, text.Length);
+        int start = _completionAnchor;
+        if (start >= text.Length || caret < start) { CloseCompletion(); return; }
+
+        // A path with a space in it has to survive the CLI's own argument splitting.
+        var inserted = "@" + (path.Contains(' ') ? "\"" + path + "\"" : path) + " ";
+
+        _completionInserting = true;
+        try
+        {
+            _expandedTextBox.Text = text[..start] + inserted + text[caret..];
+            _expandedTextBox.CaretIndex = start + inserted.Length;
+        }
+        finally
+        {
+            _completionInserting = false;
+        }
+
+        CloseCompletion();
+    }
+
+    private void CloseCompletion()
+    {
+        _completionAnchor = -1;
+        if (_completionPopup != null) _completionPopup.IsOpen = false;
+    }
+
+    /// <summary>
+    /// Picks files to hand to the AI. The CLI reads them off the prompt as paths, which is the
+    /// same thing a pasted screenshot ends up as, so this only has to put the path in the box.
+    /// </summary>
+    private async Task AttachFilesAsync()
+    {
+        var storage = TopLevel.GetTopLevel(this)?.StorageProvider;
+        if (storage == null) return;
+
+        var options = new Avalonia.Platform.Storage.FilePickerOpenOptions
+        {
+            Title = Services.Loc.Get("AttachFiles", "Attach files"),
+            AllowMultiple = true,
+        };
+
+        if (!string.IsNullOrEmpty(_workingDirectory) && Directory.Exists(_workingDirectory))
+        {
+            try { options.SuggestedStartLocation = await storage.TryGetFolderFromPathAsync(_workingDirectory); }
+            catch { /* an unreachable folder just means the picker opens wherever it likes */ }
+        }
+
+        var picked = await storage.OpenFilePickerAsync(options);
+        if (picked.Count == 0) return;
+
+        var parts = new List<string>();
+        foreach (var file in picked)
+        {
+            var path = file.TryGetLocalPath();
+            if (string.IsNullOrEmpty(path)) continue;
+
+            path = RelativeToWorkingDirectory(path);
+            parts.Add(path.Contains(' ') ? "\"" + path + "\"" : path);
+        }
+        if (parts.Count == 0) return;
+
+        InsertIntoExpandedInput(string.Join(" ", parts) + " ");
+    }
+
+    /// <summary>
+    /// Names a file the way the session would: relative when it is inside the folder the CLI is
+    /// running in, absolute when it is not. The session's own files then read the same whether
+    /// they were picked or completed with an @.
+    /// </summary>
+    private string RelativeToWorkingDirectory(string path)
+    {
+        if (string.IsNullOrEmpty(_workingDirectory)) return path;
+
+        try
+        {
+            var root = Path.GetFullPath(_workingDirectory);
+            var full = Path.GetFullPath(path);
+            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return path;
+
+            var relative = Path.GetRelativePath(root, full);
+            return relative.StartsWith("..", StringComparison.Ordinal)
+                ? path
+                : relative.Replace('\\', '/');
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
+    private void InsertIntoExpandedInput(string snippet)
+    {
+        var text = _expandedTextBox.Text ?? "";
+        int caret = Math.Clamp(_expandedTextBox.CaretIndex, 0, text.Length);
+
+        _completionInserting = true;
+        try
+        {
+            _expandedTextBox.Text = text[..caret] + snippet + text[caret..];
+            _expandedTextBox.CaretIndex = caret + snippet.Length;
+        }
+        finally
+        {
+            _completionInserting = false;
+        }
+
+        _expandedTextBox.Focus();
     }
 
     private void OnDragHandlePressed(object? sender, PointerPressedEventArgs e)

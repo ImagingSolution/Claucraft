@@ -457,6 +457,7 @@ public static class Loc
         // -- Git write operations --
 
         // -- Isolated sessions (git worktree) --
+        ["AttachFiles"] = new() { ["English"] = "Attach files", ["日本語"] = "ファイルを添付" },
         ["IsolateSession"] = new() { ["English"] = "Isolate", ["日本語"] = "隔離" },
         ["IsolateTooltip"] = new() { ["English"] = "Open the next session in its own git worktree, so two windows cannot edit the same files", ["日本語"] = "次のセッションを専用の git worktree で開きます。複数ウィンドウが同じファイルを編集しなくなります" },
         ["WorktreeFailedTitle"] = new() { ["English"] = "The isolated checkout could not be created", ["日本語"] = "隔離チェックアウトを作成できませんでした" },
