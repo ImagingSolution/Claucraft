@@ -62,14 +62,21 @@
                     <!-- Gives the next session its own checkout. Off by default: it changes
                          where the session's files live, which is not something to inherit
                          without asking for it. -->
+                    <!-- Left-aligned with a zero left margin so it starts where the launch
+                         profile above it starts. FlowDirection puts the box after the label;
+                         the label carries its own so its text is not mirrored with it. -->
                     <CheckBox x:Name="ChkIsolate" Grid.Row="1" Grid.Column="2"
                               IsVisible="False"
                               VerticalAlignment="Center"
-                              HorizontalAlignment="Right"
+                              HorizontalAlignment="Left"
                               Margin="0,3,6,0"
                               FontSize="11"
-                              Content="Isolate"
-                              IsCheckedChanged="OnIsolateChanged" />
+                              FlowDirection="RightToLeft"
+                              IsCheckedChanged="OnIsolateChanged">
+                        <TextBlock x:Name="LblIsolate" Text="Isolate"
+                                   FlowDirection="LeftToRight"
+                                   VerticalAlignment="Center" />
+                    </CheckBox>
 
                     <Button x:Name="BtnNewClaude" Grid.Row="0" Grid.Column="3"
                             Classes="primary"

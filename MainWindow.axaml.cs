@@ -378,7 +378,7 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnActivityChanges, Loc.Get("ChangesTooltip"));
         ToolTip.SetTip(StatusBranchName, Loc.Get("CommitGraphTooltip"));
         ToolTip.SetTip(BtnBranchSwitch, Loc.Get("BranchSwitchTooltip"));
-        ChkIsolate.Content = Loc.Get("IsolateSession");
+        LblIsolate.Text = Loc.Get("IsolateSession");
         ToolTip.SetTip(ChkIsolate, Loc.Get("IsolateTooltip"));
         ToolTip.SetTip(ChkStageAll, Loc.Get("StageAll"));
         TxtCommitMessage.PlaceholderText = Loc.Get("CommitMessage");
