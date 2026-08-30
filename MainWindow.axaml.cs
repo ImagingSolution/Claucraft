@@ -373,6 +373,11 @@ public partial class MainWindow : Window
         ChkEnableErrorBanner.Content = Loc.Get("EnableErrorBanner");
         LblPlanTier.Text = Loc.Get("PlanTier");
         LblOpenCostDashboard.Text = Loc.Get("CostDashboard");
+        LblOpenUsageChart.Text = Loc.Get("PaletteUsageChart");
+        LblOpenCheckpoints.Text = Loc.Get("Checkpoints");
+        ToolTip.SetTip(BtnWorkspaces, Loc.Get("Workspaces"));
+        LblStatusStop.Text = Loc.Get("StopTask");
+        ToolTip.SetTip(BtnStatusStop, Loc.Get("StopTaskTooltip"));
         if (_settingsInitialized) FillPlanTierCombo();
 
         // Window title, the labels that embed the AI name, plus feature gating
@@ -2285,6 +2290,9 @@ public partial class MainWindow : Window
         // UI, so it has to outlive the readout toggles as well as an unreadable mode name.
         ApplyModeBadge(null);
         StatusContextPanel.IsVisible = false;
+        StatusRunSeparator.IsVisible = false;
+        StatusActivityText.IsVisible = false;
+        BtnStatusStop.IsVisible = false;
     }
 
     /// <summary>
@@ -2341,7 +2349,33 @@ public partial class MainWindow : Window
     {
         ApplyModeBadge(snap.Mode, snap.ModeText);
         ApplyContextMeter();
+        ApplyRunReadout(snap);
     }
+
+    /// <summary>
+    /// What the AI is doing right now, with the elapsed time, and the stop control beside it.
+    /// Both belong to a turn in flight, so they share one visibility and vanish together when
+    /// the prompt comes back.
+    /// </summary>
+    private void ApplyRunReadout(TerminalSnapshot snap)
+    {
+        bool running = snap.IsWorking;
+
+        string text = snap.ActivityText;
+        if (snap.ElapsedSeconds is int secs && secs > 0)
+        {
+            var elapsed = FormatElapsed(secs);
+            text = text.Length > 0 ? text + "  " + elapsed : elapsed;
+        }
+
+        StatusRunSeparator.IsVisible = running;
+        StatusActivityText.IsVisible = running && text.Length > 0;
+        StatusActivityText.Text = text;
+        BtnStatusStop.IsVisible = running;
+    }
+
+    private static string FormatElapsed(int seconds) =>
+        seconds < 60 ? seconds + "s" : (seconds / 60) + "m" + (seconds % 60).ToString("00") + "s";
 
     /// <summary>
     /// How much of the context window the session has filled.
@@ -2708,35 +2742,39 @@ public partial class MainWindow : Window
 
     private void ShowCommandPalette()
     {
-        var commands = new List<(string Name, string Shortcut, Action Execute)>
+        // English stays alongside the localized label so the palette answers to either. Someone
+        // running the Japanese UI who has learnt "tile" from the docs still finds the entry, and
+        // the Japanese label is what makes the palette usable at all in that language.
+        var commands = new List<(string Key, string English, string Shortcut, Action Execute)>
         {
-            ("New Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
-            ("Changed Files", "", () => ToggleSidePanel(SidebarPanel.Changes)),
-            ("Tokens & Cost", "", () => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this)),
-            ("Close Tab", "Ctrl+W", () => { if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count) CloseChild(_children[_activeChildIndex]); }),
-            ("Next Tab", "Ctrl+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex + 1) % _children.Count); }),
-            ("Previous Tab", "Ctrl+Shift+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex - 1 + _children.Count) % _children.Count); }),
-            ("Toggle Explorer", "Ctrl+Shift+E", () => ToggleSidePanel(SidebarPanel.Explorer)),
-            ("Toggle Snippets", "", () => ToggleSidePanel(SidebarPanel.Snippets)),
-            ("Toggle Settings", "", () => ToggleSidePanel(SidebarPanel.Settings)),
-            ("Tile Windows", "", () => { _layout = MdiLayout.Tile; ArrangeChildren(); }),
-            ("Cascade Windows", "", () => { _layout = MdiLayout.Cascade; ArrangeChildren(); }),
-            ("Tile Horizontally", "", () => { _layout = MdiLayout.TileHorizontal; ArrangeChildren(); }),
-            ("Tile Vertically", "", () => { _layout = MdiLayout.TileVertical; ArrangeChildren(); }),
-            ("Full View", "", () => { _layout = MdiLayout.Maximize; ArrangeChildren(); }),
-            ("Compact (/compact)", "", () => OnActivityCompact(null, null!)),
-            ("Switch Mode (Shift+Tab)", "", SendModeSwitch),
-            ("Save Workspace", "", SaveWorkspace),
-            ("Save Workspace As...", "", () => _ = PromptSaveWorkspaceAsync()),
-            ("Restore Workspace", "", () => RestoreWorkspace()),
-            ("Workspaces...", "", ShowWorkspaceList),
-            ("Slash Commands", "Ctrl+/", ToggleSlashPanel),
-            ("Checkpoints", "", ShowCheckpointList),
-            ("Stop", "Esc", () => OnStopTask(null, null!)),
-            ("Usage Chart", "", () => new UsageChartWindow().Show(this)),
-            ("Setup Check", "", () => _ = ShowSetupDoctorAsync()),
-            ("Keyboard Shortcuts", "F1", ShowShortcutSheet),
-            ("Command Palette", "Ctrl+Shift+P", ShowCommandPalette),
+            ("NewSession", "New Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
+            ("PaletteChangedFiles", "Changed Files", "", () => ToggleSidePanel(SidebarPanel.Changes)),
+            ("CostDashboard", "Tokens & Cost", "", () => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this)),
+            ("PaletteCloseTab", "Close Tab", "Ctrl+W", () => { if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count) CloseChild(_children[_activeChildIndex]); }),
+            ("PaletteNextTab", "Next Tab", "Ctrl+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex + 1) % _children.Count); }),
+            ("PalettePrevTab", "Previous Tab", "Ctrl+Shift+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex - 1 + _children.Count) % _children.Count); }),
+            ("PaletteToggleExplorer", "Toggle Explorer", "Ctrl+Shift+E", () => ToggleSidePanel(SidebarPanel.Explorer)),
+            ("PaletteToggleSnippets", "Toggle Snippets", "", () => ToggleSidePanel(SidebarPanel.Snippets)),
+            ("PaletteToggleWindows", "Toggle Windows Panel", "", () => ToggleSidePanel(SidebarPanel.Windows)),
+            ("PaletteToggleSettings", "Toggle Settings", "", () => ToggleSidePanel(SidebarPanel.Settings)),
+            ("TileWindows", "Tile Windows", "", () => { _layout = MdiLayout.Tile; ArrangeChildren(); }),
+            ("CascadeWindows", "Cascade Windows", "", () => { _layout = MdiLayout.Cascade; ArrangeChildren(); }),
+            ("TileHorizontally", "Tile Horizontally", "", () => { _layout = MdiLayout.TileHorizontal; ArrangeChildren(); }),
+            ("TileVertically", "Tile Vertically", "", () => { _layout = MdiLayout.TileVertical; ArrangeChildren(); }),
+            ("FullView", "Full View", "", () => { _layout = MdiLayout.Maximize; ArrangeChildren(); }),
+            ("RunCompact", "Compact (/compact)", "", () => OnActivityCompact(null, null!)),
+            ("PaletteSwitchMode", "Switch Mode (Shift+Tab)", "", SendModeSwitch),
+            ("SaveWorkspace", "Save Workspace", "", SaveWorkspace),
+            ("SaveWorkspaceAs", "Save Workspace As...", "", () => _ = PromptSaveWorkspaceAsync()),
+            ("RestoreWorkspace", "Restore Workspace", "", () => RestoreWorkspace()),
+            ("Workspaces", "Workspaces...", "", ShowWorkspaceList),
+            ("SlashCommands", "Slash Commands", "Ctrl+/", ToggleSlashPanel),
+            ("Checkpoints", "Checkpoints", "", ShowCheckpointList),
+            ("StopTask", "Stop", "Esc", () => OnStopTask(null, null!)),
+            ("PaletteUsageChart", "Usage Chart", "", () => new UsageChartWindow().Show(this)),
+            ("SetupDoctor", "Setup Check", "", () => _ = ShowSetupDoctorAsync()),
+            ("Shortcuts", "Keyboard Shortcuts", "F1", ShowShortcutSheet),
+            ("CommandPalette", "Command Palette", "Ctrl+Shift+P", ShowCommandPalette),
         };
 
         var dialog = new Window
@@ -2773,11 +2811,14 @@ public partial class MainWindow : Window
             listBox.Items.Clear();
             foreach (var cmd in commands)
             {
+                var label = Loc.Get(cmd.Key, cmd.English);
+
                 if (!string.IsNullOrEmpty(filter) &&
-                    !cmd.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                    !label.Contains(filter, StringComparison.OrdinalIgnoreCase) &&
+                    !cmd.English.Contains(filter, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var nameText = new TextBlock { Text = cmd.Name, FontSize = 13, Foreground = new SolidColorBrush(Color.FromRgb(220, 220, 225)) };
+                var nameText = new TextBlock { Text = label, FontSize = 13, Foreground = new SolidColorBrush(Color.FromRgb(220, 220, 225)) };
                 var shortcutText = new TextBlock { Text = cmd.Shortcut, FontSize = 11, Foreground = new SolidColorBrush(Color.FromRgb(120, 120, 125)), VerticalAlignment = VerticalAlignment.Center };
                 var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("*,Auto") };
                 Grid.SetColumn(nameText, 0);
@@ -2871,6 +2912,15 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Escape is what every supported CLI reads as "stop what you are doing".</summary>
+    // Three windows that used to be reachable only by typing their name into the command
+    // palette. Each now sits next to the setting or the buttons it belongs with.
+    private void OnShowCheckpoints(object? sender, RoutedEventArgs e) => ShowCheckpointList();
+
+    private void OnShowUsageChart(object? sender, RoutedEventArgs e)
+        => new UsageChartWindow().Show(this);
+
+    private void OnShowWorkspaces(object? sender, RoutedEventArgs e) => ShowWorkspaceList();
+
     private void OnStopTask(object? sender, RoutedEventArgs e)
     {
         if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
@@ -3528,8 +3578,27 @@ public partial class MainWindow : Window
     private void ClearSessionReadout()
     {
         StatusModelName.IsVisible = false;
+        StatusCostPanel.IsVisible = false;
         ApplyEffortReadout();
     }
+
+    /// <summary>
+    /// The two numbers that say whether a session has grown expensive: what the last turn cost,
+    /// and what the next one costs before it has done any work at all. A session that has become
+    /// expensive to continue says so here instead of turning up on the invoice.
+    /// </summary>
+    private void ApplyMarginalCost(TurnCost session)
+    {
+        bool show = _settings.ShowMarginalCost && session.HasData;
+        StatusCostPanel.IsVisible = show;
+        if (!show) return;
+
+        StatusCostText.Text = "$" + FormatUsd(session.LastTurnUsd) + " → $" + FormatUsd(session.NextTurnUsd);
+        ToolTip.SetTip(StatusCostPanel, Loc.Get("MarginalCostTooltip"));
+    }
+
+    private void OnStatusCostPressed(object? sender, PointerPressedEventArgs e)
+        => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this);
 
     /// <summary>The model that is answering, and the effort it is answering at.</summary>
     private void ApplySessionReadout()
@@ -3561,6 +3630,7 @@ public partial class MainWindow : Window
             ToolTip.SetTip(StatusModelName, Loc.Get("ModelTooltip"));
         }
 
+        ApplyMarginalCost(session);
         ApplyEffortReadout();
     }
 

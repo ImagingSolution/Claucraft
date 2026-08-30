@@ -122,7 +122,11 @@
                 Padding="16,6" BorderBrush="{DynamicResource DividerColor}"
                 BorderThickness="0,0.5,0,0">
           <Grid ColumnDefinitions="*,Auto">
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+            <!-- Clips rather than overlaps: the readouts grow with the session (mode, model,
+                 effort, three meters, cost, activity) and on a narrow window the row would
+                 otherwise run straight over the provider selector on its right. -->
+            <Border Grid.Column="0" ClipToBounds="True" HorizontalAlignment="Stretch">
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                 <!-- Git repo icon + name -->
                 <StackPanel Orientation="Horizontal" Spacing="5">
                     <PathIcon Data="M8 0C3.58 0 0 3.58 0 8C0 11.54 2.29 14.53 5.47 15.59C5.87 15.66 6.02 15.42 6.02 15.21C6.02 15.02 6.01 14.39 6.01 13.72C4 14.09 3.48 13.23 3.32 12.78C3.23 12.55 2.84 11.84 2.5 11.65C2.22 11.5 1.82 11.13 2.49 11.12C3.12 11.11 3.57 11.7 3.72 11.94C4.44 13.15 5.59 12.81 6.05 12.6C6.12 12.08 6.33 11.73 6.56 11.53C4.78 11.33 2.92 10.64 2.92 7.58C2.92 6.71 3.23 5.99 3.74 5.43C3.66 5.23 3.38 4.41 3.82 3.31C3.82 3.31 4.49 3.1 6.02 4.13C6.66 3.95 7.34 3.86 8.02 3.86C8.7 3.86 9.38 3.95 10.02 4.13C11.55 3.09 12.22 3.31 12.22 3.31C12.66 4.41 12.38 5.23 12.3 5.43C12.81 5.99 13.12 6.7 13.12 7.58C13.12 10.65 11.25 11.33 9.47 11.53C9.76 11.78 10.01 12.26 10.01 13.01C10.01 14.08 10 14.94 10 15.21C10 15.42 10.15 15.67 10.55 15.59C13.71 14.53 16 11.53 16 8C16 3.58 12.42 0 8 0Z"
@@ -225,7 +229,37 @@
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
+                <!-- What the last turn cost and what the next one costs just to re-read the
+                     conversation. Next to the context meter because both move every turn. -->
+                <StackPanel x:Name="StatusCostPanel" Orientation="Horizontal" Spacing="4"
+                            IsVisible="False" Cursor="Hand" VerticalAlignment="Center"
+                            PointerPressed="OnStatusCostPressed">
+                    <TextBlock x:Name="StatusCostText" Text=""
+                               Foreground="{DynamicResource SubtleText}" FontSize="11"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <!-- Activity and stop are the only readouts that come and go mid-session, so
+                     they sit at the end of the row: a turn starting or ending never shifts
+                     the badges and meters to their left. -->
+                <Border x:Name="StatusRunSeparator" Width="1" Height="12" IsVisible="False"
+                        Background="{DynamicResource DividerColor}" />
+                <TextBlock x:Name="StatusActivityText" Text="" IsVisible="False"
+                           Foreground="{DynamicResource SubtleText}" FontSize="11"
+                           VerticalAlignment="Center" />
+                <Button x:Name="BtnStatusStop" IsVisible="False"
+                        Background="Transparent" BorderThickness="0"
+                        Padding="0" Cursor="Hand" VerticalAlignment="Center"
+                        Click="OnStopTask">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <PathIcon Data="M6 6H18V18H6Z" Width="9" Height="9"
+                                  Foreground="#FF453A" />
+                        <TextBlock x:Name="LblStatusStop" Text=""
+                                   Foreground="#FF453A" FontSize="11"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
+            </Border>
 
             <!-- Active AI provider + switcher -->
             <Button x:Name="BtnAiSelector" Grid.Column="1"
@@ -517,7 +551,7 @@
                                         </Button>
                                     </StackPanel>
                                 </Border>
-                                <CheckBox x:Name="ChkEnableCharts" Content="Enable Chart/Diagram Rendering"
+                                <CheckBox x:Name="ChkEnableCharts" Content="Render diagrams in the terminal"
                                           Margin="0,12,0,0"
                                           Foreground="{DynamicResource SubtleText}"
                                           IsCheckedChanged="OnEnableChartsChanged" />
@@ -570,6 +604,11 @@
                                     <CheckBox x:Name="ChkEnableCheckpoints" Content="Snapshot the project before each prompt"
                                               Foreground="{DynamicResource SubtleText}"
                                               IsCheckedChanged="OnEnableCheckpointsChanged" />
+                                    <Button x:Name="BtnOpenCheckpoints" HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Center" Margin="0,4,0,0"
+                                            Click="OnShowCheckpoints">
+                                        <TextBlock x:Name="LblOpenCheckpoints" Text="Checkpoints" FontSize="12" />
+                                    </Button>
                                 </StackPanel>
                                 <StackPanel Spacing="4" Margin="0,12,0,0">
                                     <TextBlock x:Name="LblLiveStatus" Text="Live status" FontSize="13"
@@ -586,11 +625,20 @@
                                                Foreground="{DynamicResource SubtleText}" />
                                     <ComboBox x:Name="CmbPlanTier" HorizontalAlignment="Stretch"
                                               SelectionChanged="OnPlanTierChanged" />
-                                    <Button x:Name="BtnOpenCostDashboard" HorizontalAlignment="Stretch"
-                                            HorizontalContentAlignment="Center" Margin="0,4,0,0"
-                                            Click="OnActivityCost">
-                                        <TextBlock x:Name="LblOpenCostDashboard" Text="Tokens &amp; cost" FontSize="12" />
-                                    </Button>
+                                    <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0">
+                                        <Button x:Name="BtnOpenCostDashboard" Grid.Column="0"
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Center"
+                                                Click="OnActivityCost">
+                                            <TextBlock x:Name="LblOpenCostDashboard" Text="Tokens &amp; cost" FontSize="12" />
+                                        </Button>
+                                        <Button x:Name="BtnOpenUsageChart" Grid.Column="2"
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Center"
+                                                Click="OnShowUsageChart">
+                                            <TextBlock x:Name="LblOpenUsageChart" Text="Usage Chart" FontSize="12" />
+                                        </Button>
+                                    </Grid>
                                 </StackPanel>
                                 <CheckBox x:Name="ChkShowWelcomePage" Content="Show Welcome Page"
                                           Margin="0,16,0,0"
@@ -714,6 +762,15 @@
                                     ToolTip.Tip="Full view"
                                     Click="OnLayoutMaximize">
                                 <PathIcon Data="M3 3H21V21H3ZM5 5V19H19V5Z"
+                                          Width="14" Height="14" />
+                            </Button>
+                            <Border Width="1" Background="{DynamicResource DividerColor}" Margin="0,4" />
+                            <!-- Saved layouts belong with the layout buttons, not buried in the
+                                 command palette: restoring one is the same kind of act. -->
+                            <Button x:Name="BtnWorkspaces" Classes="icon-btn"
+                                    ToolTip.Tip="Workspaces"
+                                    Click="OnShowWorkspaces">
+                                <PathIcon Data="M4 3H17L20 6V20C20 20.55 19.55 21 19 21H5C4.45 21 4 20.55 4 20V4C4 3.45 4.45 3 5 3ZM7 3V9H15V3ZM12 4V8H14V4ZM7 13H17V19H7Z"
                                           Width="14" Height="14" />
                             </Button>
                         </StackPanel>

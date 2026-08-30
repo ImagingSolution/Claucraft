@@ -789,6 +789,9 @@ public class TerminalControl : Control, IDisposable
         };
 
         _pty.Start(command, workingDirectory, cols, rows);
+
+        // Claude Code only — other CLIs prompt differently, and the flag is off for them.
+        StartPermissionWatch();
     }
 
     /// <summary>
@@ -2027,16 +2030,6 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.StartPolling();
             }
 
-            // Start permission check timer (Claude Code only — other CLIs prompt differently)
-            if (EnablePermissionOverlay)
-            {
-                if (_permissionCheckTimer == null)
-                {
-                    _permissionCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
-                    _permissionCheckTimer.Tick += OnPermissionCheckTick;
-                }
-                _permissionCheckTimer.Start();
-            }
         }
         else
         {
@@ -2045,8 +2038,6 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.IsVisible = false;
                 _docViewPanel.StopPolling();
             }
-            _permissionCheckTimer?.Stop();
-            HidePermissionOverlay();
         }
 
         InvalidateMeasure();
@@ -2055,23 +2046,27 @@ public class TerminalControl : Control, IDisposable
         DocumentViewChanged?.Invoke(_isDocumentView);
     }
 
+    /// <summary>
+    /// Runs for the life of the session, not just while the chat view is up. The overlay is a
+    /// card floating above the input row in either view, so the terminal's own prompt stays
+    /// readable behind it.
+    /// </summary>
+    private void StartPermissionWatch()
+    {
+        if (!EnablePermissionOverlay) return;
+        if (_permissionCheckTimer == null)
+        {
+            _permissionCheckTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            _permissionCheckTimer.Tick += OnPermissionCheckTick;
+        }
+        _permissionCheckTimer.Start();
+    }
+
     private void OnPermissionCheckTick(object? sender, EventArgs e)
     {
-        if (!_isDocumentView || !EnablePermissionOverlay) return;
+        if (!EnablePermissionOverlay) return;
 
-        // Scan last 10 rows of terminal buffer for permission prompts
-        int totalRows = _buffer.Scrollback.Count + _buffer.Rows;
-        bool found = false;
-
-        for (int i = Math.Max(0, totalRows - 10); i < totalRows; i++)
-        {
-            var text = GetRowText(i).TrimEnd();
-            if (text.Contains("Esc to cancel") || text.Contains("Do you want to proceed"))
-            {
-                found = true;
-                break;
-            }
-        }
+        bool found = IsPermissionPromptOnScreen();
 
         if (found && _permissionOverlay == null)
         {
@@ -2081,6 +2076,35 @@ public class TerminalControl : Control, IDisposable
         {
             HidePermissionOverlay();
         }
+    }
+
+    /// <summary>
+    /// True only when the CLI is sitting on a numbered permission prompt. The question line
+    /// alone is not enough: the watch now runs during ordinary work as well, so a stray match
+    /// would throw the card up over a session that is not waiting on anything. Requiring the
+    /// numbered choices next to the question is what keeps that from happening.
+    /// </summary>
+    private bool IsPermissionPromptOnScreen()
+    {
+        int totalRows = _buffer.Scrollback.Count + _buffer.Rows;
+        bool question = false, choices = false;
+
+        for (int i = Math.Max(0, totalRows - 14); i < totalRows; i++)
+        {
+            var text = GetRowText(i).TrimEnd();
+            if (text.Length == 0) continue;
+
+            if (text.Contains("Do you want") || text.Contains("Esc to cancel"))
+                question = true;
+
+            // "❯ 1. Yes", "  1. Yes, and don't ask again", "1. Yes" — the marker is a leading
+            // "1." once the box drawing and the selection caret are stripped off.
+            var bare = text.TrimStart(' ', '│', '|', '❯', '>', '*');
+            if (bare.StartsWith("1.") || bare.StartsWith("1)"))
+                choices = true;
+        }
+
+        return question && choices;
     }
 
     /// <summary>Grabs the text of the permission prompt so it can be explained in plain words.</summary>
@@ -3717,6 +3741,7 @@ public class TerminalControl : Control, IDisposable
         if (_disposed) return;
         _disposed = true;
         _marquee.Stop();
+        _permissionCheckTimer?.Stop();
         _pty?.Dispose();
     }
 }

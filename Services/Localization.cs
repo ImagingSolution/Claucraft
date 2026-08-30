@@ -121,16 +121,12 @@ public static class Loc
         ["WINDOWS"] = new() { ["English"] = "WINDOWS", ["日本語"] = "ウィンドウ" },
 
         // ── Chart/Diagram Rendering ──
-        ["EnableCharts"] = new() { ["English"] = "Enable Chart/Diagram Rendering", ["日本語"] = "チャート/図の描画を有効にする" },
+        ["EnableCharts"] = new() { ["English"] = "Render diagrams in the terminal", ["日本語"] = "ターミナル内の図を描画する" },
         ["ChartPreview"] = new() { ["English"] = "Chart Preview", ["日本語"] = "チャートプレビュー" },
         ["SaveImage"] = new() { ["English"] = "Save Image", ["日本語"] = "画像を保存" },
         ["CopyImage"] = new() { ["English"] = "Copy Image", ["日本語"] = "画像をコピー" },
         ["MermaidDiagram"] = new() { ["English"] = "Mermaid Diagram", ["日本語"] = "Mermaid 図" },
         ["ExcalidrawDiagram"] = new() { ["English"] = "Excalidraw Diagram", ["日本語"] = "Excalidraw 図" },
-        ["BarChart"] = new() { ["English"] = "Bar Chart", ["日本語"] = "棒グラフ" },
-        ["LineChart"] = new() { ["English"] = "Line Chart", ["日本語"] = "折れ線グラフ" },
-        ["PieChart"] = new() { ["English"] = "Pie Chart", ["日本語"] = "円グラフ" },
-        ["ClickToRender"] = new() { ["English"] = "Click to render", ["日本語"] = "クリックして描画" },
         ["OpenInWindow"] = new() { ["English"] = "Open in Window", ["日本語"] = "ウィンドウで開く" },
         ["SaveAsArtifact"] = new() { ["English"] = "Save as Artifact", ["日本語"] = "アーティファクトとして保存" },
         ["OpenArtifact"] = new() { ["English"] = "Open File", ["日本語"] = "ファイルを開く" },
@@ -443,6 +439,20 @@ public static class Loc
         ["CmdExplainZipDetail"] = new() { ["English"] = "Creates or extracts a compressed archive of files.", ["日本語"] = "ファイルの圧縮アーカイブを作成・展開します。" },
         ["CmdExplainFindDetail"] = new() { ["English"] = "Searches for files matching a pattern. It does not change anything by default.", ["日本語"] = "パターンに一致するファイルを検索します。既定では何も変更しません。" },
         ["CmdExplainEchoDetail"] = new() { ["English"] = "Prints text to the terminal. It does not change anything unless combined with a redirect.", ["日本語"] = "テキストをターミナルに出力します。リダイレクトと組み合わせない限り何も変更しません。" },
+
+        // -- Command palette: entries with no label of their own elsewhere --
+        ["PaletteChangedFiles"] = new() { ["English"] = "Changed Files", ["日本語"] = "変更ファイル" },
+        ["PaletteCloseTab"] = new() { ["English"] = "Close Tab", ["日本語"] = "タブを閉じる" },
+        ["PaletteNextTab"] = new() { ["English"] = "Next Tab", ["日本語"] = "次のタブ" },
+        ["PalettePrevTab"] = new() { ["English"] = "Previous Tab", ["日本語"] = "前のタブ" },
+        ["PaletteToggleExplorer"] = new() { ["English"] = "Toggle Explorer", ["日本語"] = "エクスプローラーを開閉" },
+        ["PaletteToggleSnippets"] = new() { ["English"] = "Toggle Snippets", ["日本語"] = "スニペットを開閉" },
+        ["PaletteToggleSettings"] = new() { ["English"] = "Toggle Settings", ["日本語"] = "設定を開閉" },
+        ["PaletteToggleWindows"] = new() { ["English"] = "Toggle Windows Panel", ["日本語"] = "ウィンドウ一覧を開閉" },
+        ["PaletteUsageChart"] = new() { ["English"] = "Usage Chart", ["日本語"] = "使用量チャート" },
+        ["PaletteSwitchMode"] = new() { ["English"] = "Switch Mode (Shift+Tab)", ["日本語"] = "モード切替 (Shift+Tab)" },
+        ["MarginalCostTooltip"] = new() { ["English"] = "Last turn, then what the next turn costs just to re-read the conversation.", ["日本語"] = "直前のターンの費用と、次のターンが会話を読み直すだけでかかる費用。" },
+        ["StopTaskTooltip"] = new() { ["English"] = "Stop what the AI is doing (Esc)", ["日本語"] = "AI の実行を中断（Esc）" },
     };
 
     public static string Get(string key)
