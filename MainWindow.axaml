@@ -62,14 +62,15 @@
                     <!-- Gives the next session its own checkout. Off by default: it changes
                          where the session's files live, which is not something to inherit
                          without asking for it. -->
-                    <!-- Left-aligned with a zero left margin so it starts where the launch
-                         profile above it starts. FlowDirection puts the box after the label;
-                         the label carries its own so its text is not mirrored with it. -->
+                    <!-- The left margin is the launch profile's own border plus padding (1 + 10),
+                         so this label starts where that combo's text starts rather than where its
+                         box does. FlowDirection puts the check after the label; the label carries
+                         its own so its text is not mirrored with it. -->
                     <CheckBox x:Name="ChkIsolate" Grid.Row="1" Grid.Column="2"
                               IsVisible="False"
                               VerticalAlignment="Center"
                               HorizontalAlignment="Left"
-                              Margin="0,3,6,0"
+                              Margin="11,3,6,0"
                               FontSize="11"
                               FlowDirection="RightToLeft"
                               IsCheckedChanged="OnIsolateChanged">
