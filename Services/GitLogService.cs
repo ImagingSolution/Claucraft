@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace Claucraft.Services;
@@ -54,7 +52,14 @@ public sealed class GitCommit : IGraphNode
 
     public string AuthorEmail { get; init; } = "";
 
+    /// <summary>When the work was authored, which a rebase or a cherry-pick carries over unchanged.</summary>
     public DateTimeOffset Date { get; init; }
+
+    /// <summary>
+    /// When the commit was written to this history. The log is walked in this order, so this is
+    /// the date the listing is sorted by and the one the Date column shows.
+    /// </summary>
+    public DateTimeOffset CommitDate { get; init; }
 
     /// <summary>First line of the commit message.</summary>
     public string Subject { get; init; } = "";
@@ -82,14 +87,12 @@ public static class GitLogService
     /// <summary>Separates log records, so a multi-line commit body stays in one piece.</summary>
     public const char RecordSep = '';
 
-    private const int MaxDiffLines = 5000;
-
     /// <summary>
-    /// Hash, parents, author, email, ISO date, decoration, subject, body -- in that order,
-    /// wrapped in the separators <see cref="ParseLog"/> splits on.
+    /// Hash, parents, author, email, ISO author date, ISO commit date, decoration, subject,
+    /// body -- in that order, wrapped in the separators <see cref="ParseLog"/> splits on.
     /// </summary>
     private const string LogFormat =
-        "%x1f%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%D%x1f%s%x1f%b%x1e";
+        "%x1f%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%D%x1f%s%x1f%b%x1e";
 
     /// <summary>
     /// Reads the most recent <paramref name="maxCount"/> commits reachable from any branch, tag,
@@ -105,7 +108,7 @@ public static class GitLogService
                 if (string.IsNullOrEmpty(repoRoot) || !Directory.Exists(repoRoot))
                     return new List<GitCommit>();
 
-                var output = RunGit(repoRoot,
+                var output = GitCli.Run(repoRoot,
                     "-c", "core.quotepath=false", "log",
                     "--branches", "--tags", "--remotes", "HEAD",
                     "--decorate=full", "--date-order",
@@ -135,7 +138,7 @@ public static class GitLogService
                 if (string.IsNullOrEmpty(repoRoot) || string.IsNullOrEmpty(hash) || !Directory.Exists(repoRoot))
                     return new List<GitFileChange>();
 
-                var output = RunGit(repoRoot,
+                var output = GitCli.Run(repoRoot,
                     "-c", "core.quotepath=false", "show", "--format=",
                     "--name-status", "-m", "--first-parent", hash);
 
@@ -159,35 +162,19 @@ public static class GitLogService
                     || string.IsNullOrEmpty(path) || !Directory.Exists(repoRoot))
                     return "";
 
-                var output = RunGit(repoRoot,
+                // The path came back from git relative to the top of the working tree, so the
+                // pathspec has to say so: left bare it would be resolved against whichever
+                // folder this is running in, which is the project folder and not necessarily
+                // the repository root.
+                var output = GitCli.Run(repoRoot,
                     "-c", "core.quotepath=false", "show", "--format=",
-                    "-m", "--first-parent", hash, "--", path);
+                    "-m", "--first-parent", hash, "--", GitCli.Pathspec(path));
 
-                return Truncate(output);
+                return GitCli.TruncateDiff(output);
             }
             catch
             {
                 return "";
-            }
-        });
-    }
-
-    /// <summary>True when the working tree has staged, unstaged, or untracked changes.</summary>
-    public static Task<bool> HasUncommittedChangesAsync(string repoRoot)
-    {
-        return Task.Run(() =>
-        {
-            try
-            {
-                if (string.IsNullOrEmpty(repoRoot) || !Directory.Exists(repoRoot))
-                    return false;
-
-                return !string.IsNullOrWhiteSpace(
-                    RunGit(repoRoot, "-c", "core.quotepath=false", "status", "--porcelain"));
-            }
-            catch
-            {
-                return false;
             }
         });
     }
@@ -210,16 +197,18 @@ public static class GitLogService
                 // The format opens with a separator, so field 1 is the hash; field 0 holds
                 // only the newline left behind by the previous record's terminator.
                 var parts = record.Split(FieldSep);
-                if (parts.Length < 9) continue;
+                if (parts.Length < 10) continue;
 
                 var hash = parts[1].Trim();
                 if (hash.Length == 0) continue;
 
                 DateTimeOffset.TryParse(parts[5], CultureInfo.InvariantCulture,
-                    DateTimeStyles.None, out var date);
+                    DateTimeStyles.None, out var authored);
+                DateTimeOffset.TryParse(parts[6], CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out var committed);
 
                 // A separator inside the body would be git's own bytes, not ours; keep them.
-                var body = parts.Length == 9 ? parts[8] : string.Join(FieldSep, parts, 8, parts.Length - 8);
+                var body = parts.Length == 10 ? parts[9] : string.Join(FieldSep, parts, 9, parts.Length - 9);
 
                 commits.Add(new GitCommit
                 {
@@ -227,10 +216,11 @@ public static class GitLogService
                     Parents = parts[2].Split(' ', StringSplitOptions.RemoveEmptyEntries),
                     Author = parts[3],
                     AuthorEmail = parts[4],
-                    Date = date,
-                    Subject = parts[7],
+                    Date = authored,
+                    CommitDate = committed,
+                    Subject = parts[8],
                     Body = body.Replace("\r\n", "\n").Trim('\n'),
-                    Refs = ParseRefs(parts[6]),
+                    Refs = ParseRefs(parts[7]),
                 });
             }
             catch
@@ -335,56 +325,5 @@ public static class GitLogService
         }
 
         return files;
-    }
-
-    // -- Internals ------------------------------------------------------
-
-    /// <summary>Runs git with the given arguments (no shell quoting needed) and returns stdout.</summary>
-    private static string RunGit(string repoRoot, params string[] args)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = repoRoot,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-            };
-            foreach (var a in args)
-                psi.ArgumentList.Add(a);
-
-            using var proc = Process.Start(psi);
-            if (proc == null) return "";
-            string output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit();
-            return output;
-        }
-        catch
-        {
-            return "";
-        }
-    }
-
-    /// <summary>Caps a diff so one enormous commit cannot stall the window that renders it.</summary>
-    private static string Truncate(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return text;
-
-        var lines = text.Split('\n');
-        if (lines.Length <= MaxDiffLines) return text;
-
-        var sb = new StringBuilder();
-        for (int i = 0; i < MaxDiffLines; i++)
-            sb.Append(lines[i]).Append('\n');
-
-        var fmt = Loc.Get("GitDiffTruncatedFmt", "... truncated ({0} more lines) ...");
-        try { sb.Append(string.Format(CultureInfo.CurrentCulture, fmt, lines.Length - MaxDiffLines)); }
-        catch { sb.Append("... truncated ..."); }
-
-        return sb.ToString();
     }
 }

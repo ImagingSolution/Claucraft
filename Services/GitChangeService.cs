@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -43,7 +42,6 @@ public sealed class GitChange
 /// </summary>
 public static class GitChangeService
 {
-    private const int MaxDiffLines = 5000;
     private const long MaxBinaryCheckSize = 2 * 1024 * 1024; // 2 MB
 
     /// <summary>
@@ -59,7 +57,7 @@ public static class GitChangeService
                 if (string.IsNullOrEmpty(repoRoot) || !Directory.Exists(repoRoot))
                     return result;
 
-                var output = RunGit(repoRoot, "-c", "core.quotepath=false", "status", "--porcelain");
+                var output = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "status", "--porcelain");
                 if (string.IsNullOrEmpty(output))
                     return result;
 
@@ -140,8 +138,11 @@ public static class GitChangeService
                 if (File.Exists(fullPath) && IsBinaryFile(fullPath))
                     return Loc.Get("GitDiffBinaryFile", "Binary file (diff not shown)");
 
-                var staged = RunGit(repoRoot, "-c", "core.quotepath=false", "diff", "--cached", "--", change.Path);
-                var unstaged = RunGit(repoRoot, "-c", "core.quotepath=false", "diff", "--", change.Path);
+                // The path is relative to the top of the working tree and may hold characters
+                // git would otherwise read as a glob, so it goes over as an explicit pathspec.
+                var pathspec = GitCli.Pathspec(change.Path);
+                var staged = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--cached", "--", pathspec);
+                var unstaged = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--", pathspec);
 
                 bool hasStaged = !string.IsNullOrWhiteSpace(staged);
                 bool hasUnstaged = !string.IsNullOrWhiteSpace(unstaged);
@@ -167,7 +168,7 @@ public static class GitChangeService
                     combined = "";
                 }
 
-                return TruncateDiff(combined);
+                return GitCli.TruncateDiff(combined);
             }
             catch
             {
@@ -186,7 +187,7 @@ public static class GitChangeService
                 if (string.IsNullOrEmpty(repoRoot) || !Directory.Exists(repoRoot))
                     return 0;
 
-                var output = RunGit(repoRoot, "-c", "core.quotepath=false", "status", "--porcelain");
+                var output = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "status", "--porcelain");
                 if (string.IsNullOrEmpty(output))
                     return 0;
 
@@ -260,7 +261,7 @@ public static class GitChangeService
             foreach (var line in lines)
                 sb.Append('+').Append(line).Append('\n');
 
-            return TruncateDiff(sb.ToString());
+            return GitCli.TruncateDiff(sb.ToString());
         }
         catch
         {
@@ -291,52 +292,4 @@ public static class GitChangeService
         }
     }
 
-    private static string TruncateDiff(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return text;
-
-        var lines = text.Split('\n');
-        if (lines.Length <= MaxDiffLines) return text;
-
-        int remaining = lines.Length - MaxDiffLines;
-        var sb = new StringBuilder();
-        for (int i = 0; i < MaxDiffLines; i++)
-            sb.Append(lines[i]).Append('\n');
-
-        var fmt = Loc.Get("GitDiffTruncatedFmt", "... truncated ({0} more lines) ...");
-        try { sb.Append(string.Format(fmt, remaining)); }
-        catch { sb.Append("... truncated ..."); }
-
-        return sb.ToString();
-    }
-
-    /// <summary>Runs git with the given arguments (no shell quoting needed) and returns stdout.</summary>
-    private static string RunGit(string repoRoot, params string[] args)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = repoRoot,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-            };
-            foreach (var a in args)
-                psi.ArgumentList.Add(a);
-
-            using var proc = Process.Start(psi);
-            if (proc == null) return "";
-            string output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit();
-            return output;
-        }
-        catch
-        {
-            return "";
-        }
-    }
 }

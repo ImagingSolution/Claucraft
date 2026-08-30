@@ -35,20 +35,28 @@ public sealed class GraphEdge
     /// <summary>Lane of the child commit.</summary>
     public int FromLane { get; init; }
 
+    /// <summary>
+    /// Lane the line runs down between the two commits, which is neither end's lane when a
+    /// second parent has to step aside around the chain its first parent occupies. Keeping it
+    /// separate from <see cref="ToLane"/> is what stops such a line being drawn straight on top
+    /// of that chain once the parent settles.
+    /// </summary>
+    public int TravelLane { get; init; }
+
     /// <summary>Row of the parent, or -1 when the parent falls outside the loaded range.</summary>
     public int ToRow { get; set; } = -1;
 
     /// <summary>
-    /// Lane the edge settles into: the parent's own lane once the parent has been placed, and
-    /// until then the lane the line travels down.
+    /// Lane the edge ends in: the parent's own lane once the parent has been placed, and until
+    /// then the travel lane, so a dangling line simply runs off the bottom where it is.
     /// </summary>
     public int ToLane { get; set; }
 
     /// <summary>
-    /// Lane whose colour the edge takes. The outermost of the two lanes, so that a branch
-    /// keeps its own colour both where it forks off and where it merges back.
+    /// Lane whose colour the edge takes. The outermost lane it touches, so that a branch keeps
+    /// its own colour both where it forks off and where it merges back.
     /// </summary>
-    public int ColorLane => FromLane > ToLane ? FromLane : ToLane;
+    public int ColorLane => Math.Max(TravelLane, Math.Max(FromLane, ToLane));
 }
 
 /// <summary>The laid-out graph: one row per commit, plus the lines running between them.</summary>
@@ -102,10 +110,10 @@ public static class CommitGraphLayout
             {
                 if (lanes[i] == node.Hash) lanes[i] = null;
             }
-            lanes[lane] = null;
 
             // Only now are both ends of the incoming lines known: the row this commit landed
-            // on and the lane it landed in.
+            // on and the lane it landed in. Each line keeps the lane it travelled down, so one
+            // that stepped aside on the way here is still drawn stepping back in.
             if (awaitingParent.Remove(node.Hash, out var arrivals))
             {
                 foreach (var edge in arrivals)
@@ -124,15 +132,17 @@ public static class CommitGraphLayout
                 var parent = parents[i];
                 if (string.IsNullOrEmpty(parent)) continue;
 
-                // Every line gets a lane to travel down, even when another line is already
-                // heading for the same parent -- the two are drawn side by side until they
-                // meet, and a later tip must not be dropped on top of either of them.
-                // The first parent carries on down this commit's own lane.
-                int travelLane = i == 0 ? lane : TakeFreeLane(lanes);
+                int travelLane = ReserveLane(lanes, parent, lane, isFirstParent: i == 0);
                 lanes[travelLane] = parent;
 
                 // ToLane is the travel lane until the parent turns up and names its own.
-                var edge = new GraphEdge { FromRow = row, FromLane = lane, ToLane = travelLane };
+                var edge = new GraphEdge
+                {
+                    FromRow = row,
+                    FromLane = lane,
+                    TravelLane = travelLane,
+                    ToLane = travelLane,
+                };
                 graph.Edges.Add(edge);
                 if (travelLane > maxLane) maxLane = travelLane;
 
@@ -144,6 +154,25 @@ public static class CommitGraphLayout
 
         graph.LaneCount = maxLane + 1;
         return graph;
+    }
+
+    /// <summary>
+    /// Picks the lane a line to <paramref name="parent"/> travels down. A line joins one already
+    /// heading for the same parent rather than opening a lane of its own, which is what keeps a
+    /// commit a dozen branches share two lanes wide instead of a dozen.
+    /// </summary>
+    private static int ReserveLane(List<string?> lanes, string parent, int commitLane, bool isFirstParent)
+    {
+        int existing = lanes.IndexOf(parent);
+
+        // The first parent carries on down this commit's own lane, and gives it up only to move
+        // further left, towards the trunk. A reservation further right is left where it is: the
+        // parent settles in the leftmost lane reaching it, which is this one, and the line that
+        // made that reservation is drawn turning in when it gets there.
+        if (isFirstParent && (existing < 0 || existing > commitLane))
+            return commitLane;
+
+        return existing >= 0 ? existing : TakeFreeLane(lanes);
     }
 
     /// <summary>Claims the leftmost free lane, widening the graph only when none is free.</summary>

@@ -22,12 +22,21 @@ public class CommitGraphWindow : Window
 {
     private const int PageSize = 500;
 
-    private readonly string _repoRoot;
     private readonly bool _isDark;
     private readonly Typeface _mono;
 
+    /// <summary>
+    /// The top of the working tree. It starts as the project folder and is replaced with the
+    /// repository root on the first load: git resolves pathspecs against the folder it runs in
+    /// but reports paths from the root, so the two only agree once this has climbed.
+    /// </summary>
+    private string _repoRoot;
+
+    private bool _rootResolved;
+
     private readonly CommitGraphView _view;
     private readonly ScrollViewer _scroller;
+    private readonly Button _refreshButton;
     private readonly Button _loadMoreButton;
     private readonly TextBlock _statusText;
     private readonly Grid _header;
@@ -47,6 +56,22 @@ public class CommitGraphWindow : Window
     /// <summary>Guards against a slow detail load landing after the selection has moved on.</summary>
     private int _detailGeneration;
 
+    /// <summary>The same, for reloads: Refresh and Load more can otherwise land out of order.</summary>
+    private int _reloadGeneration;
+
+    /// <summary>
+    /// The working-tree listing the last reload read. The uncommitted row shows this rather than
+    /// asking git again for output the reload has already read once.
+    /// </summary>
+    private List<GitChange> _workingTree = new();
+
+    /// <summary>
+    /// Set when a row is activated before its file list has arrived. Double-clicking a row that
+    /// was not already selected starts the list loading on the first press and asks to open on
+    /// the second, so the request has to outlive the wait.
+    /// </summary>
+    private bool _openFileWhenListed;
+
     public CommitGraphWindow(string repoRoot, string repoLabel, bool isDark, Typeface mono)
     {
         _repoRoot = repoRoot;
@@ -64,12 +89,15 @@ public class CommitGraphWindow : Window
         KeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
 
         // -- Toolbar --
-        var refreshButton = ToolButton(Loc.Get("GraphRefresh", "Refresh"));
-        refreshButton.Click += (_, _) => { _limit = PageSize; _ = ReloadAsync(); };
+        _refreshButton = ToolButton(Loc.Get("GraphRefresh", "Refresh"));
+        _refreshButton.Click += (_, _) => { _limit = PageSize; _ = ReloadAsync(); };
 
         _loadMoreButton = ToolButton(Loc.Get("GraphLoadMore", "Load more"));
         _loadMoreButton.IsEnabled = false;
-        _loadMoreButton.Click += (_, _) => { _limit += PageSize; _ = ReloadAsync(); };
+
+        // Load more only lengthens the listing, so the commit being read stays selected and in
+        // view instead of being thrown back to the top of the history.
+        _loadMoreButton.Click += (_, _) => { _limit += PageSize; _ = ReloadAsync(keepSelection: true); };
 
         _statusText = new TextBlock
         {
@@ -84,7 +112,7 @@ public class CommitGraphWindow : Window
             Orientation = Orientation.Horizontal,
             Margin = new Thickness(10, 6),
         };
-        toolbar.Children.Add(refreshButton);
+        toolbar.Children.Add(_refreshButton);
         toolbar.Children.Add(_loadMoreButton);
         toolbar.Children.Add(_statusText);
 
@@ -259,23 +287,51 @@ public class CommitGraphWindow : Window
 
     // -- Loading --------------------------------------------------------
 
-    private async Task ReloadAsync()
+    private async Task ReloadAsync(bool keepSelection = false)
     {
+        int generation = ++_reloadGeneration;
+
         _statusText.Text = Loc.Get("GraphLoading", "Loading...");
+        _refreshButton.IsEnabled = false;
         _loadMoreButton.IsEnabled = false;
 
-        var commits = await GitLogService.GetLogAsync(_repoRoot, _limit);
-        bool dirty = await GitLogService.HasUncommittedChangesAsync(_repoRoot);
+        try
+        {
+            if (!_rootResolved)
+            {
+                _rootResolved = true;
+                var top = await Task.Run(() => GitCli.FindRepoRoot(_repoRoot));
+                if (generation != _reloadGeneration) return;
+                if (!string.IsNullOrEmpty(top)) _repoRoot = top!;
+            }
 
-        _view.SetGraph(CommitGraphLayout.Build(commits), dirty);
-        _header.Margin = new Thickness(_view.GraphWidth, 0, 0, 0);
+            // The two readings are independent, so they run together rather than one after the
+            // other. The working-tree listing doubles as the answer to whether there is anything
+            // uncommitted to show, which is why the row it feeds never asks git a second time.
+            var logTask = GitLogService.GetLogAsync(_repoRoot, _limit);
+            var changesTask = GitChangeService.GetChangesAsync(_repoRoot);
+            await Task.WhenAll(logTask, changesTask);
 
-        _statusText.Text = commits.Count == 0
-            ? Loc.Get("GraphNoCommits", "No commits to show")
-            : Format(Loc.Get("GraphCommitCountFmt", "{0} commits"), commits.Count);
+            // A reload started while this one was in flight owns the view now.
+            if (generation != _reloadGeneration) return;
 
-        // A short page means the log ran out, so there is nothing further to fetch.
-        _loadMoreButton.IsEnabled = commits.Count >= _limit;
+            var commits = logTask.Result;
+            _workingTree = changesTask.Result;
+
+            _view.SetGraph(CommitGraphLayout.Build(commits), _workingTree.Count > 0, keepSelection);
+            _header.Margin = new Thickness(_view.GraphWidth, 0, 0, 0);
+
+            _statusText.Text = commits.Count == 0
+                ? Loc.Get("GraphNoCommits", "No commits to show")
+                : Format(Loc.Get("GraphCommitCountFmt", "{0} commits"), commits.Count);
+
+            // A short page means the log ran out, so there is nothing further to fetch.
+            _loadMoreButton.IsEnabled = commits.Count >= _limit;
+        }
+        finally
+        {
+            if (generation == _reloadGeneration) _refreshButton.IsEnabled = true;
+        }
     }
 
     // -- Detail pane ----------------------------------------------------
@@ -287,14 +343,16 @@ public class CommitGraphWindow : Window
         _fileRows.Children.Clear();
         _fileActions.Clear();
 
+        // A request to open a file belongs to the selection that was showing when it was made.
+        _openFileWhenListed = false;
+
         if (_view.IsUncommittedSelected)
         {
             _detailHash.Text = "";
             _detailAuthor.Text = "";
             _detailDate.Text = "";
             _detailMessage.Text = Loc.Get("GraphUncommitted", "Uncommitted Changes");
-            _filesHeading.Text = Loc.Get("GraphChangedFiles", "Changed files");
-            _ = LoadWorkingTreeFilesAsync(generation);
+            ShowWorkingTreeFiles();
             return;
         }
 
@@ -313,9 +371,7 @@ public class CommitGraphWindow : Window
         _detailAuthor.Text = string.IsNullOrEmpty(commit.AuthorEmail)
             ? commit.Author
             : $"{commit.Author} <{commit.AuthorEmail}>";
-        _detailDate.Text = commit.Date == default
-            ? ""
-            : commit.Date.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture);
+        _detailDate.Text = DescribeDates(commit);
 
         _detailMessage.Text = string.IsNullOrEmpty(commit.Body)
             ? commit.Subject
@@ -333,10 +389,7 @@ public class CommitGraphWindow : Window
         _filesHeading.Text = Format(Loc.Get("GraphChangedFilesFmt", "Changed files ({0})"), files.Count);
 
         if (files.Count == 0)
-        {
             _fileRows.Children.Add(EmptyNote(Loc.Get("GraphNoFiles", "No files changed")));
-            return;
-        }
 
         foreach (var file in files)
         {
@@ -344,27 +397,25 @@ public class CommitGraphWindow : Window
             AddFileRow(FileRow(file.StatusGlyph, file.Path, file.OldPath),
                 () => _ = OpenCommitDiffAsync(commit, captured));
         }
+
+        OpenPendingFile();
     }
 
-    private async Task LoadWorkingTreeFilesAsync(int generation)
+    private void ShowWorkingTreeFiles()
     {
-        var changes = await GitChangeService.GetChangesAsync(_repoRoot);
-        if (generation != _detailGeneration) return;
+        _filesHeading.Text = Format(Loc.Get("GraphChangedFilesFmt", "Changed files ({0})"), _workingTree.Count);
 
-        _filesHeading.Text = Format(Loc.Get("GraphChangedFilesFmt", "Changed files ({0})"), changes.Count);
-
-        if (changes.Count == 0)
-        {
+        if (_workingTree.Count == 0)
             _fileRows.Children.Add(EmptyNote(Loc.Get("GraphNoFiles", "No files changed")));
-            return;
-        }
 
-        foreach (var change in changes)
+        foreach (var change in _workingTree)
         {
             var captured = change;
             AddFileRow(FileRow(change.StatusGlyph, change.Path, null),
                 () => _ = OpenWorkingTreeDiffAsync(captured));
         }
+
+        OpenPendingFile();
     }
 
     private void AddFileRow(Control row, Action open)
@@ -378,6 +429,22 @@ public class CommitGraphWindow : Window
     {
         // Double-clicking a commit row opens the first file it touched, which is the quickest
         // way into a one-file commit; the file list stays there for anything larger.
+        if (_fileActions.Count > 0)
+        {
+            _fileActions[0]();
+            return;
+        }
+
+        // The list is still on its way -- on a row that was not already selected, this gesture's
+        // own first press is what started it. Hold the request rather than dropping it.
+        _openFileWhenListed = true;
+    }
+
+    /// <summary>Honours a row activation that arrived before the file list did.</summary>
+    private void OpenPendingFile()
+    {
+        if (!_openFileWhenListed) return;
+        _openFileWhenListed = false;
         if (_fileActions.Count > 0) _fileActions[0]();
     }
 
@@ -395,9 +462,31 @@ public class CommitGraphWindow : Window
 
     private void ShowDiff(string title, string diff)
     {
-        if (string.IsNullOrWhiteSpace(diff)) return;
+        // No diff text is an answer in its own right -- a binary file, a mode change, a rename
+        // that moved nothing -- so it opens a window saying so. Swallowing it here made
+        // double-clicking such a file indistinguishable from a broken control.
+        if (string.IsNullOrWhiteSpace(diff))
+            diff = Loc.Get("GraphNoTextualDiff", "No textual changes (binary, mode, or rename only)");
+
         new DiffWindow(title, diff, _isDark, _mono).Show(this);
     }
+
+    /// <summary>
+    /// The date the listing is ordered by, and the author date alongside it when a rebase or a
+    /// cherry-pick has left the two saying different things.
+    /// </summary>
+    private static string DescribeDates(GitCommit commit)
+    {
+        if (commit.CommitDate == default) return "";
+
+        string committed = Stamp(commit.CommitDate);
+        if (commit.Date == default || commit.Date == commit.CommitDate) return committed;
+
+        return committed + "  " + Format(Loc.Get("GraphAuthoredFmt", "(authored {0})"), Stamp(commit.Date));
+    }
+
+    private static string Stamp(DateTimeOffset date) =>
+        date.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture);
 
     // -- Small pieces ---------------------------------------------------
 

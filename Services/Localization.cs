@@ -348,6 +348,8 @@ public static class Loc
         ["GraphChangedFiles"] = new() { ["English"] = "Changed files", ["日本語"] = "変更されたファイル" },
         ["GraphChangedFilesFmt"] = new() { ["English"] = "Changed files ({0})", ["日本語"] = "変更されたファイル ({0})" },
         ["GraphNoFiles"] = new() { ["English"] = "No files changed", ["日本語"] = "変更されたファイルはありません" },
+        ["GraphNoTextualDiff"] = new() { ["English"] = "No textual changes (binary, mode, or rename only)", ["日本語"] = "テキストの変更はありません（バイナリ・モード・リネームのみ）" },
+        ["GraphAuthoredFmt"] = new() { ["English"] = "(authored {0})", ["日本語"] = "（作成 {0}）" },
 
         // ── Usage and cost ──
         ["PlanTier"] = new() { ["English"] = "Plan", ["日本語"] = "プラン" },
