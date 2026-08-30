@@ -295,6 +295,7 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnBrowseFolder, Loc.Get("SelectProjectFolder"));
 
         // Activity Bar tooltips
+        ToolTip.SetTip(BtnActivityNewProject, Loc.Get("NewProject"));
         ToolTip.SetTip(BtnActivityExplorer, Loc.Get("ExplorerTooltip"));
         ToolTip.SetTip(BtnActivitySnippets, Loc.Get("SnippetsTooltip"));
         ToolTip.SetTip(BtnActivityWindows, Loc.Get("WindowsTooltip"));
@@ -4990,16 +4991,7 @@ public partial class MainWindow : Window
             "M2 6C2 4.89 2.89 4 4 4H9L11 6H18C19.1 6 20 6.89 20 8V16C20 17.1 19.1 18 18 18H4C2.89 18 2 17.1 2 16V6Z",
             Loc.Get("NewProject"),
             Color.FromRgb(0, 122, 255));
-        newProjectLink.PointerPressed += async (_, _) =>
-        {
-            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-            {
-                Title = Loc.Get("SelectProjectFolder"),
-                AllowMultiple = false
-            });
-            if (folders.Count > 0)
-                OpenProjectFromWelcome(folders[0].Path.LocalPath);
-        };
+        newProjectLink.PointerPressed += (_, _) => _ = PickNewProjectAsync();
 
         // Previous Project link
         var prevProjectLink = CreateWelcomeLink(
@@ -5203,6 +5195,23 @@ public partial class MainWindow : Window
 
         return border;
     }
+
+    /// <summary>
+    /// Asks for a folder and opens it as the project. Shared by the welcome page's New Project
+    /// link and the activity bar button, so the two cannot drift apart.
+    /// </summary>
+    private async Task PickNewProjectAsync()
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = Loc.Get("SelectProjectFolder"),
+            AllowMultiple = false
+        });
+        if (folders.Count > 0)
+            OpenProjectFromWelcome(folders[0].Path.LocalPath);
+    }
+
+    private void OnActivityNewProject(object? sender, RoutedEventArgs e) => _ = PickNewProjectAsync();
 
     private async void OpenProjectFromWelcome(string folderPath, bool continueSession = false)
     {
