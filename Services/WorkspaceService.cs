@@ -30,6 +30,15 @@ public class WorkspaceTab
     /// <summary>True when the user renamed the tab, so the restored title is not overwritten.</summary>
     public bool IsManualTitle { get; set; }
 
+    /// <summary>Isolated checkout the tab worked in, or empty when it shared the project folder.</summary>
+    public string WorktreePath { get; set; } = "";
+
+    /// <summary>Branch that checkout is on, which is what lets it be re-created if the folder went.</summary>
+    public string WorktreeBranch { get; set; } = "";
+
+    /// <summary>Repository the checkout was cut from.</summary>
+    public string WorktreeOrigin { get; set; } = "";
+
     // Child window geometry, only meaningful in the Cascade layout.
     public double Left { get; set; }
     public double Top { get; set; }

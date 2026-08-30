@@ -59,6 +59,18 @@
                               Margin="0,0,6,0"
                               SelectionChanged="OnLaunchProfileChanged" />
 
+                    <!-- Gives the next session its own checkout. Off by default: it changes
+                         where the session's files live, which is not something to inherit
+                         without asking for it. -->
+                    <CheckBox x:Name="ChkIsolate" Grid.Row="1" Grid.Column="2"
+                              IsVisible="False"
+                              VerticalAlignment="Center"
+                              HorizontalAlignment="Right"
+                              Margin="0,3,6,0"
+                              FontSize="11"
+                              Content="Isolate"
+                              IsCheckedChanged="OnIsolateChanged" />
+
                     <Button x:Name="BtnNewClaude" Grid.Row="0" Grid.Column="3"
                             Classes="primary"
                             ToolTip.Tip="Open a new session"
@@ -75,7 +87,7 @@
                                FontSize="12" Foreground="{DynamicResource SubtleText}"
                                FontWeight="Normal" Margin="0,3,0,0" />
 
-                    <ComboBox x:Name="CmbSessions" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2"
+                    <ComboBox x:Name="CmbSessions" Grid.Row="1" Grid.Column="1"
                               Classes="modern"
                               VerticalAlignment="Center"
                               HorizontalAlignment="Stretch"

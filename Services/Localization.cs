@@ -455,6 +455,13 @@ public static class Loc
         ["StopTaskTooltip"] = new() { ["English"] = "Stop what the AI is doing (Esc)", ["日本語"] = "AI の実行を中断（Esc）" },
 
         // -- Git write operations --
+
+        // -- Isolated sessions (git worktree) --
+        ["IsolateSession"] = new() { ["English"] = "Isolate", ["日本語"] = "隔離" },
+        ["IsolateTooltip"] = new() { ["English"] = "Open the next session in its own git worktree, so two windows cannot edit the same files", ["日本語"] = "次のセッションを専用の git worktree で開きます。複数ウィンドウが同じファイルを編集しなくなります" },
+        ["WorktreeFailedTitle"] = new() { ["English"] = "The isolated checkout could not be created", ["日本語"] = "隔離チェックアウトを作成できませんでした" },
+        ["WorktreeDirtyTitle"] = new() { ["English"] = "Close this isolated session?", ["日本語"] = "この隔離セッションを閉じますか？" },
+        ["WorktreeDirtyFmt"] = new() { ["English"] = "{0} still has uncommitted changes. Closing removes its checkout and those changes are lost.", ["日本語"] = "{0} に未コミットの変更が残っています。閉じるとチェックアウトごと削除され、その変更は失われます。" },
         ["StageAll"] = new() { ["English"] = "Stage all", ["日本語"] = "すべてステージ" },
         ["StageFile"] = new() { ["English"] = "Click to stage", ["日本語"] = "クリックでステージ" },
         ["UnstageFile"] = new() { ["English"] = "Staged - click to unstage", ["日本語"] = "ステージ済み - クリックで取り消し" },

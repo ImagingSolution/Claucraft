@@ -177,6 +177,19 @@ public partial class MainWindow : Window
         /// the teardown a second time.
         /// </summary>
         public bool IsClosing { get; set; }
+
+        /// <summary>
+        /// The isolated checkout this window works in, or null when it shares the project
+        /// folder with every other window. Owned by the window: closing it takes the checkout
+        /// with it.
+        /// </summary>
+        public string? WorktreePath { get; set; }
+
+        /// <summary>Branch the worktree is on, so it can be tidied up with the checkout.</summary>
+        public string? WorktreeBranch { get; set; }
+
+        /// <summary>The repository the worktree was cut from - not where the session works.</summary>
+        public string? WorktreeOrigin { get; set; }
     };
 
     public MainWindow()
@@ -365,6 +378,8 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnActivityChanges, Loc.Get("ChangesTooltip"));
         ToolTip.SetTip(StatusBranchName, Loc.Get("CommitGraphTooltip"));
         ToolTip.SetTip(BtnBranchSwitch, Loc.Get("BranchSwitchTooltip"));
+        ChkIsolate.Content = Loc.Get("IsolateSession");
+        ToolTip.SetTip(ChkIsolate, Loc.Get("IsolateTooltip"));
         ToolTip.SetTip(ChkStageAll, Loc.Get("StageAll"));
         TxtCommitMessage.PlaceholderText = Loc.Get("CommitMessage");
         LblCommit.Text = Loc.Get("CommitAction");
@@ -1850,6 +1865,11 @@ public partial class MainWindow : Window
     private async void LoadRecentProjectFolders()
     {
         var recentFolders = await SessionService.GetRecentProjectFoldersAsync();
+
+        // Isolated checkouts get a transcript folder of their own, but they are scratch space
+        // belonging to a window, not projects anyone chose to open.
+        recentFolders.RemoveAll(WorktreeService.IsWorktreePath);
+
         var items = new List<string>();
 
         if (!string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder))
@@ -2023,6 +2043,8 @@ public partial class MainWindow : Window
             }
         }
         catch { }
+
+        UpdateIsolateToggle();
 
         // Keep the changed-files list on the project the status bar just switched to.
         if (ChangesPanel.IsVisible) RefreshChangesPanel();
@@ -2608,6 +2630,110 @@ public partial class MainWindow : Window
             ChangesList.Children.Add(BuildChangeRow(repo, change));
 
         ApplyCommitBoxState(repo);
+    }
+
+    // ── Isolated sessions (git worktree) ──
+
+    /// <summary>A checkout handed to one window, with what is needed to take it away again.</summary>
+    private sealed record WorktreeLease(string Path, string Branch, string RepoRoot);
+
+    /// <summary>
+    /// Creates the checkout the next session will work in, when the user has asked for one.
+    /// Returns null for every other case - the toggle off, no repository, or git refusing -
+    /// and the session then opens in the project folder as it always has.
+    /// </summary>
+    private async Task<WorktreeLease?> PrepareWorktreeAsync()
+    {
+        if (ChkIsolate.IsChecked != true) return null;
+
+        var repo = _projectFolder;
+        if (string.IsNullOrEmpty(repo)) return null;
+
+        // Isolating an isolated session would cut the new branch from the old one. Go back to
+        // the repository it came from instead.
+        var origin = _children.FirstOrDefault(c =>
+            string.Equals(c.WorktreePath, repo, StringComparison.OrdinalIgnoreCase))?.WorktreeOrigin;
+        if (!string.IsNullOrEmpty(origin)) repo = origin;
+
+        var root = GitCli.FindRepoRoot(repo);
+        if (root == null) return null;
+
+        var (path, result) = await WorktreeService.CreateAsync(root);
+        if (path == null)
+        {
+            var detail = result.Message;
+            ShowMessageDialog(Loc.Get("WorktreeFailedTitle"),
+                detail.Length > 0 ? detail : Loc.Get("WorktreeFailedTitle"));
+            return null;
+        }
+
+        var name = System.IO.Path.GetFileName(path);
+        return new WorktreeLease(path, WorktreeService.BranchPrefix + name, root);
+    }
+
+    /// <summary>
+    /// Brings back the checkout a saved tab was working in. The folder usually survives between
+    /// runs; when it does not but its branch is still there, git re-creates it. A checkout that
+    /// cannot be recovered leaves the tab to open in the project folder instead of failing.
+    /// </summary>
+    private async Task<WorktreeLease?> ReattachWorktreeAsync(WorkspaceTab tab)
+    {
+        if (string.IsNullOrEmpty(tab.WorktreePath) || string.IsNullOrEmpty(tab.WorktreeOrigin))
+            return null;
+        if (!Directory.Exists(tab.WorktreeOrigin)) return null;
+
+        var path = await WorktreeService.ReattachAsync(tab.WorktreeOrigin, tab.WorktreePath, tab.WorktreeBranch);
+        return path == null ? null : new WorktreeLease(path, tab.WorktreeBranch, tab.WorktreeOrigin);
+    }
+
+    /// <summary>
+    /// Asks before a closing window takes its checkout with it. The removal is forced, so
+    /// anything still uncommitted in that tree goes too. Returns false when the user would
+    /// rather keep the window.
+    /// </summary>
+    private async Task<bool> ConfirmWorktreeReleaseAsync(MdiChildInfo entry)
+    {
+        if (string.IsNullOrEmpty(entry.WorktreePath) || string.IsNullOrEmpty(entry.WorktreeOrigin))
+            return true;
+
+        if (!await WorktreeService.HasUncommittedChangesAsync(entry.WorktreePath))
+            return true;
+
+        return await ShowConfirmDialog(
+            Loc.Get("WorktreeDirtyTitle"),
+            string.Format(Loc.Get("WorktreeDirtyFmt"), entry.WorktreeBranch ?? entry.WorktreePath));
+    }
+
+    /// <summary>Removes the checkout, once the window that lived in it is gone.</summary>
+    private async Task ReleaseWorktreeAsync(MdiChildInfo entry)
+    {
+        if (string.IsNullOrEmpty(entry.WorktreePath) || string.IsNullOrEmpty(entry.WorktreeOrigin))
+            return;
+
+        await WorktreeService.RemoveAsync(entry.WorktreeOrigin, entry.WorktreePath, entry.WorktreeBranch);
+        entry.WorktreePath = null;
+
+        if (string.Equals(_projectFolder, entry.ProjectFolder, StringComparison.OrdinalIgnoreCase))
+            RefreshGitInfo();
+    }
+
+    /// <summary>
+    /// The toggle only means anything inside a repository, and only for a folder that is not
+    /// already an isolated checkout.
+    /// </summary>
+    private void UpdateIsolateToggle()
+    {
+        bool possible = !string.IsNullOrEmpty(_projectFolder)
+            && GitChangeService.IsGitRepository(_projectFolder);
+
+        ChkIsolate.IsVisible = possible;
+        if (!possible) ChkIsolate.IsChecked = false;
+    }
+
+    private void OnIsolateChanged(object? sender, RoutedEventArgs e)
+    {
+        // Deliberately not persisted: it decides where the next session's files live, which is
+        // not a preference to inherit silently on the next launch.
     }
 
     // ── Git write: stage, commit, branch, push ──
@@ -4312,6 +4438,9 @@ public partial class MainWindow : Window
                 SessionId = child.SessionId ?? "",
                 ProviderId = _cli.ActiveId,
                 IsManualTitle = child.Terminal.IsManualTitle,
+                WorktreePath = child.WorktreePath ?? "",
+                WorktreeBranch = child.WorktreeBranch ?? "",
+                WorktreeOrigin = child.WorktreeOrigin ?? "",
                 Left = double.IsNaN(left) ? 0 : left,
                 Top = double.IsNaN(top) ? 0 : top,
                 Width = child.Container.Bounds.Width,
@@ -4330,7 +4459,7 @@ public partial class MainWindow : Window
             SaveWorkspaceAs(name);
     }
 
-    private void RestoreWorkspace(string? name = null)
+    private async void RestoreWorkspace(string? name = null)
     {
         var ws = WorkspaceService.Load(name);
         if (ws == null || ws.Tabs.Count == 0) return;
@@ -4340,7 +4469,11 @@ public partial class MainWindow : Window
 
         foreach (var tab in ws.Tabs)
         {
-            if (!string.IsNullOrEmpty(tab.ProjectFolder) && Directory.Exists(tab.ProjectFolder))
+            var lease = await ReattachWorktreeAsync(tab);
+
+            if (lease != null)
+                _projectFolder = lease.Path;
+            else if (!string.IsNullOrEmpty(tab.ProjectFolder) && Directory.Exists(tab.ProjectFolder))
                 _projectFolder = tab.ProjectFolder;
 
             // Resume the exact transcript when the CLI can address one; otherwise open a new session.
@@ -4349,9 +4482,9 @@ public partial class MainWindow : Window
                              && _cli.Features.SessionList;
 
             if (canResume)
-                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId), tab.TabTitle, tab.TabTitle, tab.SessionId);
+                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId), tab.TabTitle, tab.TabTitle, tab.SessionId, lease);
             else
-                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle);
+                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle, worktree: lease);
 
             if (tab.IsManualTitle && _children.Count > 0)
             {
@@ -4711,7 +4844,17 @@ public partial class MainWindow : Window
                 if (items != null)
                 {
                     int folderIdx = items.FindIndex(f => f.Equals(_projectFolder, StringComparison.OrdinalIgnoreCase));
-                    CmbProjectFolder.SelectedIndex = folderIdx >= 0 ? folderIdx : -1;
+                    if (folderIdx < 0)
+                    {
+                        // An isolated checkout is kept out of the recent list - it is scratch
+                        // space belonging to a window, not a project anyone opened - but the box
+                        // still has to name where the active window is working.
+                        items.Insert(0, _projectFolder);
+                        CmbProjectFolder.ItemsSource = null;
+                        CmbProjectFolder.ItemsSource = items;
+                        folderIdx = 0;
+                    }
+                    CmbProjectFolder.SelectedIndex = folderIdx;
                 }
             }
             else
@@ -4802,8 +4945,13 @@ public partial class MainWindow : Window
 
     // ── MDI Child management ──
 
-    private void CreateNewChild(string command, string tabTitle, string? firstInput = null, string? sessionId = null)
+    private void CreateNewChild(string command, string tabTitle, string? firstInput = null,
+                                string? sessionId = null, WorktreeLease? worktree = null)
     {
+        // An isolated session works in its checkout, and so does everything that follows the
+        // active window: explorer, changed files, session list and the branch readout all
+        // describe the tree the AI is actually editing.
+        string? workFolder = worktree?.Path ?? _projectFolder;
         var terminal = new TerminalControl { IsDarkTheme = _isDark };
         ApplyProviderToTerminal(terminal);
         terminal.SetFont(_settings.FontFamily, _settings.FontSize);
@@ -4931,10 +5079,13 @@ public partial class MainWindow : Window
             container, titleBar, titleText, dot, stripDot, terminal, stripButton, stripText
         )
         {
-            ProjectFolder = _projectFolder,
+            ProjectFolder = workFolder,
             FirstInput = firstInput,
             SessionId = sessionId,
-            Effort = StartingEffort(command)
+            Effort = StartingEffort(command),
+            WorktreePath = worktree?.Path,
+            WorktreeBranch = worktree?.Branch,
+            WorktreeOrigin = worktree?.RepoRoot,
         };
 
         // Set FirstUserInput on terminal if provided (e.g. from resumed session)
@@ -5113,13 +5264,17 @@ public partial class MainWindow : Window
         ArrangeChildren();
         SyncSessionSelection();
 
+        // The explorer, changed files, session list and branch readout all follow the active
+        // window. An isolated one works in a different tree, so they have to move with it.
+        if (worktree != null) BringToFront(_children.Count - 1);
+
         Dispatcher.UIThread.Post(() =>
         {
-            string cdPart = !string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder)
-                ? $"cd /d \"{_projectFolder}\" && "
+            string cdPart = !string.IsNullOrEmpty(workFolder) && Directory.Exists(workFolder)
+                ? $"cd /d \"{workFolder}\" && "
                 : "";
             string fullCommand = $"cmd.exe /c chcp 65001 >nul && {cdPart}{command}";
-            terminal.StartProcess(fullCommand, _projectFolder);
+            terminal.StartProcess(fullCommand, workFolder);
             terminal.FocusTerminal();
             // The new child is already active, so nothing else will refresh the status bar
             // for it: without this, Stop / Undo stay blank until the tab is clicked.
@@ -5154,6 +5309,16 @@ public partial class MainWindow : Window
         if (entry.IsClosing || !_children.Contains(entry)) return;
         entry.IsClosing = true;
 
+        // Asked before the teardown starts: the answer can be "keep the window", and by the
+        // time the pty is gone that is no longer on offer. The removal itself has to wait -
+        // the CLI's own process is sitting in that folder until it exits, and Windows will not
+        // delete a directory that is some process's working directory.
+        if (!await ConfirmWorktreeReleaseAsync(entry))
+        {
+            entry.IsClosing = false;
+            return;
+        }
+
         // Disposing the pty from under the wait surfaces here as ObjectDisposedException. This
         // method is async void, so letting it escape ends the process — the whole app disappears
         // while other windows are still open.
@@ -5181,6 +5346,9 @@ public partial class MainWindow : Window
         ArrangeChildren();
         // ArrangeChildren bails out when the last child is gone, so refresh separately or the
         // closed session's Stop / Undo linger in the status bar.
+
+        // The checkout is only free once the terminal above has been disposed.
+        await ReleaseWorktreeAsync(entry);
     }
 
     // ── Welcome Page ──
@@ -5487,9 +5655,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private void LaunchClaudeWithInitialPrompt()
+    private async void LaunchClaudeWithInitialPrompt()
     {
-        CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), _cli.Active.Name);
+        var worktree = await PrepareWorktreeAsync();
+        CreateNewChild(
+            _cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()),
+            _cli.Active.Name,
+            worktree: worktree);
     }
 
     /// <summary>The launch profile new sessions start with, or null when the CLI defines none.</summary>
