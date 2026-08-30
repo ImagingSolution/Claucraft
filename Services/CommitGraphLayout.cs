@@ -38,8 +38,11 @@ public sealed class GraphEdge
     /// <summary>Row of the parent, or -1 when the parent falls outside the loaded range.</summary>
     public int ToRow { get; set; } = -1;
 
-    /// <summary>Lane the edge settles into on its way down to the parent.</summary>
-    public int ToLane { get; init; }
+    /// <summary>
+    /// Lane the edge settles into: the parent's own lane once the parent has been placed, and
+    /// until then the lane the line travels down.
+    /// </summary>
+    public int ToLane { get; set; }
 
     /// <summary>
     /// Lane whose colour the edge takes. The outermost of the two lanes, so that a branch
@@ -89,18 +92,27 @@ public static class CommitGraphLayout
 
             int row = graph.Rows.Count;
 
-            // The commit sits in whichever lane was waiting for it; a tip nothing waits for
-            // starts a lane of its own.
+            // Several lines can be heading for the same commit. It settles in the leftmost of
+            // them and the others end here, which is what pulls a shared parent back onto the
+            // trunk instead of leaving it wherever the first line to reach for it reserved it.
             int lane = lanes.IndexOf(node.Hash);
             if (lane < 0) lane = TakeFreeLane(lanes);
 
-            // Release the claim before walking the parents, so the first parent can inherit it.
+            for (int i = 0; i < lanes.Count; i++)
+            {
+                if (lanes[i] == node.Hash) lanes[i] = null;
+            }
             lanes[lane] = null;
 
+            // Only now are both ends of the incoming lines known: the row this commit landed
+            // on and the lane it landed in.
             if (awaitingParent.Remove(node.Hash, out var arrivals))
             {
                 foreach (var edge in arrivals)
+                {
                     edge.ToRow = row;
+                    edge.ToLane = lane;
+                }
             }
 
             graph.Rows.Add(new GraphRow { Node = node, Row = row, Lane = lane });
@@ -112,17 +124,17 @@ public static class CommitGraphLayout
                 var parent = parents[i];
                 if (string.IsNullOrEmpty(parent)) continue;
 
-                int toLane = lanes.IndexOf(parent);
-                if (toLane < 0)
-                {
-                    // The first parent continues this commit's line; the rest branch out sideways.
-                    toLane = i == 0 && lanes[lane] == null ? lane : TakeFreeLane(lanes);
-                    lanes[toLane] = parent;
-                }
+                // Every line gets a lane to travel down, even when another line is already
+                // heading for the same parent -- the two are drawn side by side until they
+                // meet, and a later tip must not be dropped on top of either of them.
+                // The first parent carries on down this commit's own lane.
+                int travelLane = i == 0 ? lane : TakeFreeLane(lanes);
+                lanes[travelLane] = parent;
 
-                var edge = new GraphEdge { FromRow = row, FromLane = lane, ToLane = toLane };
+                // ToLane is the travel lane until the parent turns up and names its own.
+                var edge = new GraphEdge { FromRow = row, FromLane = lane, ToLane = travelLane };
                 graph.Edges.Add(edge);
-                if (toLane > maxLane) maxLane = toLane;
+                if (travelLane > maxLane) maxLane = travelLane;
 
                 if (!awaitingParent.TryGetValue(parent, out var waiting))
                     awaitingParent[parent] = waiting = new List<GraphEdge>();
