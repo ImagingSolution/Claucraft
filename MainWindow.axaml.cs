@@ -170,6 +170,13 @@ public partial class MainWindow : Window
         /// by the status bar dropdown. A level typed straight into the terminal goes unseen.
         /// </summary>
         public string? Effort { get; set; }
+
+        /// <summary>
+        /// Set once CloseChild starts tearing this window down. The strip button lives on while
+        /// the CLI takes its time quitting, so this is what keeps a second × click from running
+        /// the teardown a second time.
+        /// </summary>
+        public bool IsClosing { get; set; }
     };
 
     public MainWindow()
@@ -4839,13 +4846,26 @@ public partial class MainWindow : Window
 
     private async void CloseChild(MdiChildInfo entry)
     {
-        int idx = _children.IndexOf(entry);
-        if (idx < 0) return;
+        // The wait below runs for up to three seconds, and the × stays clickable the whole time.
+        // Without this guard a second click re-enters and tears the same window down twice.
+        if (entry.IsClosing || !_children.Contains(entry)) return;
+        entry.IsClosing = true;
 
-        await entry.Terminal.SendExitAndWaitAsync();
+        // Disposing the pty from under the wait surfaces here as ObjectDisposedException. This
+        // method is async void, so letting it escape ends the process — the whole app disappears
+        // while other windows are still open.
+        try { await entry.Terminal.SendExitAndWaitAsync(); }
+        catch (ObjectDisposedException) { }
+
         entry.Terminal.Dispose();
         MdiContainer.Children.Remove(entry.Container);
         WindowStrip.Children.Remove(entry.StripButton);
+
+        // Resolve the position now rather than before the wait: windows open and close while a
+        // slow /exit is in flight, so an index taken up front either drops the wrong window or
+        // runs off the end of the list and takes the app down with it.
+        int idx = _children.IndexOf(entry);
+        if (idx < 0) return;
         _children.RemoveAt(idx);
 
         if (_children.Count == 0)
