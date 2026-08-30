@@ -1966,7 +1966,8 @@ public partial class MainWindow : Window
             return;
 
         var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
-        new Controls.CommitGraphWindow(_projectFolder, StatusRepoName.Text ?? "", _isDark, typeface).Show(this);
+        new Controls.CommitGraphWindow(_projectFolder, StatusRepoName.Text ?? "", _isDark, typeface,
+            SendToActiveTerminal).Show(this);
     }
 
     private void RefreshGitInfo()
@@ -3019,7 +3020,17 @@ public partial class MainWindow : Window
             : Color.FromArgb(20, 0, 0, 0));
         row.PointerEntered += (_, _) => row.Background = hover;
         row.PointerExited += (_, _) => row.Background = Brushes.Transparent;
-        row.PointerPressed += (_, _) => ShowDiff(repo, change);
+        // Left button only, or the right-click that opens the menu below would open the diff
+        // window behind it as well.
+        row.PointerPressed += (_, e) =>
+        {
+            if (e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) ShowDiff(repo, change);
+        };
+
+        var comment = new MenuItem { Header = Loc.Get("CommentOnFile", "Comment on this file...") };
+        comment.Click += (_, _) => CommentOnFile(change);
+        row.ContextMenu = new ContextMenu { ItemsSource = new[] { comment } };
+
         return row;
     }
 
@@ -3042,7 +3053,27 @@ public partial class MainWindow : Window
         }
 
         var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
-        new Controls.DiffWindow(change.Path, diff, _isDark, typeface).Show(this);
+        new Controls.DiffWindow(change.Path, diff, _isDark, typeface, change.Path, SendToActiveTerminal)
+            .Show(this);
+    }
+
+    /// <summary>
+    /// Asks for a comment about a whole file and hands it to the session as "@path &lt;comment&gt;".
+    /// The diff window does the same for a range of lines; this is the version for a file the
+    /// user has already made up their mind about.
+    /// </summary>
+    private async void CommentOnFile(GitChange change)
+    {
+        var comment = await ShowTextInputDialog(
+            change.Path,
+            Loc.Get("CommentOnFileHint", "What should change in this file?"),
+            "",
+            Loc.Get("SendToConsole"));
+        if (comment == null) return;
+
+        // Only real line breaks: a comment may legitimately mention "\n" and mean the text.
+        comment = Regex.Replace(comment, @"\s*\r?\n\s*", " ").Trim();
+        SendToActiveTerminal(comment.Length > 0 ? "@" + change.Path + " " + comment : "@" + change.Path + " ");
     }
 
     // ── Tokens & Cost ──
@@ -4600,7 +4631,12 @@ public partial class MainWindow : Window
         _ = dialog.ShowDialog(this);
     }
 
-    private Task<string?> ShowTextInputDialog(string title, string watermark, string initial)
+    /// <param name="okLabel">
+    /// What the accepting button says. Defaults to Save, which is wrong for a dialog that sends
+    /// rather than stores.
+    /// </param>
+    private Task<string?> ShowTextInputDialog(string title, string watermark, string initial,
+        string? okLabel = null)
     {
         var source = new TaskCompletionSource<string?>();
 
@@ -4613,7 +4649,7 @@ public partial class MainWindow : Window
         };
         var ok = new Button
         {
-            Content = Loc.Get("Save"),
+            Content = okLabel ?? Loc.Get("Save"),
             MinWidth = 88,
             HorizontalContentAlignment = HorizontalAlignment.Center,
         };

@@ -24,6 +24,7 @@ public class CommitGraphWindow : Window
 
     private readonly bool _isDark;
     private readonly Typeface _mono;
+    private readonly Action<string>? _sendComment;
 
     /// <summary>
     /// The top of the working tree. It starts as the project folder and is replaced with the
@@ -72,11 +73,17 @@ public class CommitGraphWindow : Window
     /// </summary>
     private bool _openFileWhenListed;
 
-    public CommitGraphWindow(string repoRoot, string repoLabel, bool isDark, Typeface mono)
+    /// <param name="sendComment">
+    /// Where a comment written against a diff goes. Passed straight through to
+    /// <see cref="DiffWindow"/>; null leaves those windows read-only.
+    /// </param>
+    public CommitGraphWindow(string repoRoot, string repoLabel, bool isDark, Typeface mono,
+        Action<string>? sendComment = null)
     {
         _repoRoot = repoRoot;
         _isDark = isDark;
         _mono = mono;
+        _sendComment = sendComment;
 
         Title = string.IsNullOrEmpty(repoLabel)
             ? Loc.Get("CommitGraphTitle", "Commit Graph")
@@ -451,16 +458,16 @@ public class CommitGraphWindow : Window
     private async Task OpenCommitDiffAsync(GitCommit commit, GitFileChange file)
     {
         var diff = await GitLogService.GetCommitFileDiffAsync(_repoRoot, commit.Hash, file.Path);
-        ShowDiff($"{file.Path} @ {commit.ShortHash}", diff);
+        ShowDiff($"{file.Path} @ {commit.ShortHash}", diff, file.Path);
     }
 
     private async Task OpenWorkingTreeDiffAsync(GitChange change)
     {
         var diff = await GitChangeService.GetDiffAsync(_repoRoot, change);
-        ShowDiff(change.Path, diff);
+        ShowDiff(change.Path, diff, change.Path);
     }
 
-    private void ShowDiff(string title, string diff)
+    private void ShowDiff(string title, string diff, string filePath)
     {
         // No diff text is an answer in its own right -- a binary file, a mode change, a rename
         // that moved nothing -- so it opens a window saying so. Swallowing it here made
@@ -468,7 +475,7 @@ public class CommitGraphWindow : Window
         if (string.IsNullOrWhiteSpace(diff))
             diff = Loc.Get("GraphNoTextualDiff", "No textual changes (binary, mode, or rename only)");
 
-        new DiffWindow(title, diff, _isDark, _mono).Show(this);
+        new DiffWindow(title, diff, _isDark, _mono, filePath, _sendComment).Show(this);
     }
 
     /// <summary>
