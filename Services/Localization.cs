@@ -333,6 +333,22 @@ public static class Loc
         ["GitDiffUnstagedHeader"] = new() { ["English"] = "--- unstaged ---", ["日本語"] = "--- 未ステージ ---" },
         ["GitDiffTruncatedFmt"] = new() { ["English"] = "... truncated ({0} more lines) ...", ["日本語"] = "... 省略（残り {0} 行）..." },
 
+        // ── Commit graph ──
+        ["CommitGraphTitle"] = new() { ["English"] = "Commit Graph", ["日本語"] = "コミットグラフ" },
+        ["CommitGraphTooltip"] = new() { ["English"] = "Current branch - double-click for the commit graph", ["日本語"] = "現在のブランチ - ダブルクリックでコミットグラフ" },
+        ["GraphRefresh"] = new() { ["English"] = "Refresh", ["日本語"] = "更新" },
+        ["GraphLoadMore"] = new() { ["English"] = "Load more", ["日本語"] = "さらに読み込む" },
+        ["GraphLoading"] = new() { ["English"] = "Loading...", ["日本語"] = "読み込み中..." },
+        ["GraphCommitCountFmt"] = new() { ["English"] = "{0} commits", ["日本語"] = "{0} 件のコミット" },
+        ["GraphNoCommits"] = new() { ["English"] = "No commits to show", ["日本語"] = "表示できるコミットがありません" },
+        ["GraphUncommitted"] = new() { ["English"] = "Uncommitted Changes", ["日本語"] = "コミットされていない変更" },
+        ["GraphColumnDescription"] = new() { ["English"] = "Description", ["日本語"] = "内容" },
+        ["GraphColumnAuthor"] = new() { ["English"] = "Author", ["日本語"] = "作成者" },
+        ["GraphColumnDate"] = new() { ["English"] = "Date", ["日本語"] = "日時" },
+        ["GraphChangedFiles"] = new() { ["English"] = "Changed files", ["日本語"] = "変更されたファイル" },
+        ["GraphChangedFilesFmt"] = new() { ["English"] = "Changed files ({0})", ["日本語"] = "変更されたファイル ({0})" },
+        ["GraphNoFiles"] = new() { ["English"] = "No files changed", ["日本語"] = "変更されたファイルはありません" },
+
         // ── Usage and cost ──
         ["PlanTier"] = new() { ["English"] = "Plan", ["日本語"] = "プラン" },
         ["PlanPro"] = new() { ["English"] = "Pro", ["日本語"] = "Pro" },

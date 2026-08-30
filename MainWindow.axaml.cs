@@ -355,6 +355,7 @@ public partial class MainWindow : Window
 
         // Changed files, tokens & cost, and the live status readouts
         ToolTip.SetTip(BtnActivityChanges, Loc.Get("ChangesTooltip"));
+        ToolTip.SetTip(StatusBranchName, Loc.Get("CommitGraphTooltip"));
         ToolTip.SetTip(BtnActivityCost, Loc.Get("CostTooltip"));
         ToolTip.SetTip(BtnRefreshChanges, Loc.Get("Refresh"));
         ToolTip.SetTip(StatusModeBadge, Loc.Get("ModeBadgeTooltip"));
@@ -1918,6 +1919,18 @@ public partial class MainWindow : Window
             Process.Start(new ProcessStartInfo { FileName = _gitRepoUrl, UseShellExecute = true });
         }
         e.Handled = true;
+    }
+
+    /// <summary>Opens the commit graph for the active project, the way Git Graph does in VS Code.</summary>
+    private void OnBranchNameDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        e.Handled = true;
+
+        if (string.IsNullOrEmpty(_projectFolder) || !GitChangeService.IsGitRepository(_projectFolder))
+            return;
+
+        var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
+        new Controls.CommitGraphWindow(_projectFolder, StatusRepoName.Text ?? "", _isDark, typeface).Show(this);
     }
 
     private void RefreshGitInfo()
