@@ -459,19 +459,16 @@ public class TerminalBuffer
 
     public void Resize(int newRows, int newCols)
     {
-        var newCells = new TerminalCell[newRows, newCols];
-        int copyRows = Math.Min(Rows, newRows);
-        int copyCols = Math.Min(Cols, newCols);
-        for (int r = 0; r < copyRows; r++)
-            for (int c = 0; c < copyCols; c++)
-                newCells[r, c] = _cells[r, c];
-        // Fill new cells with empty
-        for (int r = 0; r < newRows; r++)
-            for (int c = copyCols; c < newCols; c++)
-                newCells[r, c] = TerminalCell.Empty;
-        for (int r = copyRows; r < newRows; r++)
-            for (int c = 0; c < newCols; c++)
-                newCells[r, c] = TerminalCell.Empty;
+        var newCells = ResizeGrid(_cells, newRows, newCols);
+
+        // The saved main screen has to travel with the resize. Left at its old size it still
+        // gets installed by SwitchToMainBuffer when the CLI leaves the alternate screen, and
+        // from then on Rows and Cols describe a grid that no longer exists: every bounds check
+        // in this class passes and the next read runs off the end of the array. That is what
+        // takes the whole app down when one of two MDI windows is closed and the survivor is
+        // re-tiled while its CLI is on the alternate screen.
+        if (_altCells != null)
+            _altCells = ResizeGrid(_altCells, newRows, newCols);
 
         var newWrapped = new bool[newRows];
         for (int r = 0; r < Math.Min(_lineWrapped.Length, newRows); r++)
@@ -485,6 +482,34 @@ public class TerminalBuffer
         CursorCol = Math.Clamp(CursorCol, 0, newCols - 1);
         ScrollTop = 0;
         ScrollBottom = newRows - 1;
+    }
+
+    /// <summary>
+    /// Copies a cell grid into one of the requested size, keeping the top-left overlap. Sized
+    /// off the source array itself rather than <see cref="Rows"/> and <see cref="Cols"/>, so it
+    /// is correct for the saved alternate-screen grid too - that one is not always the same
+    /// shape as the live one.
+    /// </summary>
+    private static TerminalCell[,] ResizeGrid(TerminalCell[,] cells, int newRows, int newCols)
+    {
+        var grid = new TerminalCell[newRows, newCols];
+        int copyRows = Math.Min(cells.GetLength(0), newRows);
+        int copyCols = Math.Min(cells.GetLength(1), newCols);
+
+        for (int r = 0; r < copyRows; r++)
+            for (int c = 0; c < copyCols; c++)
+                grid[r, c] = cells[r, c];
+
+        // Everything outside the overlap is blank, not default(TerminalCell) - the default has
+        // colour index 0 rather than "use the terminal default".
+        for (int r = 0; r < copyRows; r++)
+            for (int c = copyCols; c < newCols; c++)
+                grid[r, c] = TerminalCell.Empty;
+        for (int r = copyRows; r < newRows; r++)
+            for (int c = 0; c < newCols; c++)
+                grid[r, c] = TerminalCell.Empty;
+
+        return grid;
     }
 
     public void NotifyChanged() => BufferChanged?.Invoke();
