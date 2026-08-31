@@ -335,6 +335,7 @@ public static class Loc
         ["FromMarketplaceFmt"] = new() { ["English"] = "From the {0} marketplace", ["日本語"] = "マーケットプレイス: {0}" },
         ["SkillInvokeFmt"] = new() { ["English"] = "Double-click to run {0}. Claude also picks it up from the description above.", ["日本語"] = "ダブルクリックで {0} を実行します。上の説明に合致すれば Claude が自動で選ぶこともあります。" },
         ["DoubleClickOpens"] = new() { ["English"] = "Double-click to open it.", ["日本語"] = "ダブルクリックで開きます。" },
+        ["SubagentDepthFmt"] = new() { ["English"] = "Spawned by another agent (depth {0})", ["日本語"] = "別のエージェントが起動（深さ {0}）" },
         ["NSkillsFmt"] = new() { ["English"] = "{0} skills", ["日本語"] = "スキル {0}" },
         ["NCommandsFmt"] = new() { ["English"] = "{0} commands", ["日本語"] = "コマンド {0}" },
         ["NAgentsFmt"] = new() { ["English"] = "{0} agents", ["日本語"] = "エージェント {0}" },

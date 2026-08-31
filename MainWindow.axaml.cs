@@ -232,6 +232,7 @@ public partial class MainWindow : Window
         {
             RefreshLiveStatus();
             RefreshGenerationBars();
+            RefreshSubagents();
         };
         _insightTimer.Start();
 
@@ -1049,7 +1050,112 @@ public partial class MainWindow : Window
             };
 
             WindowsList.Children.Add(item);
+
+            foreach (var run in SubagentMonitor.ReadRunning(ResolveSessionPath(child)))
+                WindowsList.Children.Add(BuildSubagentRow(run));
         }
+    }
+
+    /// <summary>
+    /// One running subagent, indented under the window that spawned it. There is nothing to
+    /// click: the CLI owns the task, and the row exists to answer "what is it doing".
+    /// </summary>
+    private Control BuildSubagentRow(SubagentRun run)
+    {
+        var dot = new Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            Fill = new SolidColorBrush(Color.FromRgb(255, 214, 10)),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 7, 0),
+        };
+
+        var label = new TextBlock
+        {
+            Text = run.Label,
+            FontSize = 11,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var elapsed = new TextBlock
+        {
+            Text = FormatElapsed(DateTime.Now - run.Started),
+            FontSize = 10,
+            Opacity = 0.5,
+            Margin = new Thickness(6, 0, 2, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
+        Grid.SetColumn(dot, 0);
+        Grid.SetColumn(label, 1);
+        Grid.SetColumn(elapsed, 2);
+        grid.Children.Add(dot);
+        grid.Children.Add(label);
+        grid.Children.Add(elapsed);
+
+        var tip = run.Label;
+        if (!string.IsNullOrEmpty(run.AgentType))
+            tip += Environment.NewLine + run.AgentType + (run.Model != null ? "  ·  " + run.Model : "");
+        if (run.Depth > 1)
+            tip += Environment.NewLine + string.Format(Loc.Get("SubagentDepthFmt"), run.Depth);
+        ToolTip.SetTip(grid, tip);
+
+        // Nested agents step in again, so the depth reads off the indent.
+        return new Border
+        {
+            Child = grid,
+            Padding = new Thickness(6, 3),
+            Margin = new Thickness(14 + (run.Depth - 1) * 10, 0, 4, 0),
+            CornerRadius = new CornerRadius(4),
+        };
+    }
+
+    private static string FormatElapsed(TimeSpan span)
+    {
+        if (span < TimeSpan.Zero) span = TimeSpan.Zero;
+        return span.TotalHours >= 1
+            ? ((int)span.TotalHours) + "h" + span.Minutes + "m"
+            : span.TotalMinutes >= 1
+                ? span.Minutes + "m" + span.Seconds + "s"
+                : span.Seconds + "s";
+    }
+
+    /// <summary>
+    /// Which subagents are in flight, as one string. The panel is rebuilt from scratch, so it
+    /// is only rebuilt when this changes - otherwise a hover would be dropped twice a second.
+    /// </summary>
+    private string _subagentSignature = "";
+    private DateTime _subagentDrawn = DateTime.MinValue;
+
+    /// <summary>
+    /// Keeps the subagent rows current while the windows panel is open. The scan itself only
+    /// reads what the transcripts have grown by, but the panel is rebuilt wholesale - so a
+    /// rebuild waits for the set to change, or for a second to pass so the timers move.
+    /// </summary>
+    private void RefreshSubagents()
+    {
+        if (!WindowsPanel.IsVisible) return;
+
+        var signature = SubagentSignature();
+        bool ticking = signature.Length > 0
+            && DateTime.Now - _subagentDrawn > TimeSpan.FromSeconds(1);
+        if (signature == _subagentSignature && !ticking) return;
+
+        _subagentSignature = signature;
+        _subagentDrawn = DateTime.Now;
+        RefreshWindowsPanel();
+    }
+
+    private string SubagentSignature()
+    {
+        var parts = new List<string>();
+        foreach (var child in _children)
+            foreach (var run in SubagentMonitor.ReadRunning(ResolveSessionPath(child)))
+                parts.Add(run.Id);
+        return string.Join("|", parts);
     }
 
     // ── File Tree ──
@@ -4297,10 +4403,12 @@ public partial class MainWindow : Window
     /// when several share one folder and none has reported its id yet.
     /// </summary>
     private string? ResolveActiveSessionPath()
-    {
-        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return null;
+        => _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+            ? ResolveSessionPath(_children[_activeChildIndex])
+            : null;
 
-        var child = _children[_activeChildIndex];
+    private string? ResolveSessionPath(MdiChildInfo child)
+    {
         var folder = string.IsNullOrEmpty(child.ProjectFolder) ? _projectFolder : child.ProjectFolder;
         if (string.IsNullOrEmpty(folder)) return null;
 
@@ -5738,6 +5846,9 @@ public partial class MainWindow : Window
         // Without this guard a second click re-enters and tears the same window down twice.
         if (entry.IsClosing || !_children.Contains(entry)) return;
         entry.IsClosing = true;
+
+        // Read while the window still knows which transcript is its own.
+        SubagentMonitor.Forget(ResolveSessionPath(entry));
 
         // Asked before the teardown starts: the answer can be "keep the window", and by the
         // time the pty is gone that is no longer on offer. The removal itself has to wait -
