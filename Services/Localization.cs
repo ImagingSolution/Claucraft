@@ -333,6 +333,7 @@ public static class Loc
         ["McpUserScoped"] = new() { ["English"] = "Registered with 'claude mcp' in ~/.claude.json. Claucraft does not edit that file.", ["日本語"] = "~/.claude.json に 'claude mcp' で登録されています。Claucraft はこのファイルを書き換えません。" },
         ["McpOwnedByFmt"] = new() { ["English"] = "Comes with the {0} plugin - switch the plugin off to remove it.", ["日本語"] = "{0} プラグインに含まれています。外すにはプラグインを無効にしてください。" },
         ["FromMarketplaceFmt"] = new() { ["English"] = "From the {0} marketplace", ["日本語"] = "マーケットプレイス: {0}" },
+        ["SkillInvokeFmt"] = new() { ["English"] = "Type {0} to run it, or let Claude pick it from the description above.", ["日本語"] = "{0} で実行できます。上の説明に合致すれば Claude が自動で選ぶこともあります。" },
         ["NSkillsFmt"] = new() { ["English"] = "{0} skills", ["日本語"] = "スキル {0}" },
         ["NCommandsFmt"] = new() { ["English"] = "{0} commands", ["日本語"] = "コマンド {0}" },
         ["NAgentsFmt"] = new() { ["English"] = "{0} agents", ["日本語"] = "エージェント {0}" },

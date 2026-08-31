@@ -3310,6 +3310,14 @@ public partial class MainWindow : Window
             tip += Environment.NewLine + string.Format(Loc.Get("FromMarketplaceFmt"), item.Source);
         if (!string.IsNullOrEmpty(item.Path))
             tip += Environment.NewLine + item.Path;
+        if (item.Kind == ExtensionKind.Skill)
+        {
+            // A plugin's skills are addressed through it, so the prefix is part of the name.
+            var invoke = item.Source is "project" or "user"
+                ? "/" + item.Name
+                : "/" + item.Source + ":" + item.Name;
+            tip += Environment.NewLine + string.Format(Loc.Get("SkillInvokeFmt"), invoke);
+        }
         if (item.Kind == ExtensionKind.Mcp && !item.CanToggle)
             tip += Environment.NewLine + (item.Source == "user"
                 ? Loc.Get("McpUserScoped")

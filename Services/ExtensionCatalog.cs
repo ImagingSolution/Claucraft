@@ -87,7 +87,9 @@ public static class ExtensionCatalog
 
     // ── Plugins ──
 
-    private sealed record PluginInfo(string Id, string Name, string InstallPath, bool Enabled, ExtensionItem Item);
+    private sealed record PluginInfo(
+        string Id, string Name, string InstallPath, bool Enabled,
+        List<string> SkillFiles, ExtensionItem Item);
 
     private static List<PluginInfo> ReadPlugins()
     {
@@ -96,6 +98,7 @@ public static class ExtensionCatalog
         if (installed == null) return result;
 
         var enabledMap = ReadJson(UserSettingsPath)?["enabledPlugins"]?.AsObject();
+        var declared = ReadDeclaredSkills();
 
         foreach (var entry in installed)
         {
@@ -112,7 +115,9 @@ public static class ExtensionCatalog
             var description = Trim(manifest?["description"]?.GetValue<string>());
             var version = manifest?["version"]?.GetValue<string>();
 
-            result.Add(new PluginInfo(id, name, installPath, enabled, new ExtensionItem
+            var skills = SkillFiles(installPath, declared.GetValueOrDefault(id));
+
+            result.Add(new PluginInfo(id, name, installPath, enabled, skills, new ExtensionItem
             {
                 Kind = ExtensionKind.Plugin,
                 Name = name,
@@ -122,7 +127,7 @@ public static class ExtensionCatalog
                 Enabled = enabled,
                 CanToggle = true,
                 Id = id,
-                Detail = DescribeContents(installPath, version),
+                Detail = DescribeContents(installPath, version, skills.Count),
             }));
         }
 
@@ -139,13 +144,87 @@ public static class ExtensionCatalog
         return path != null && Directory.Exists(path) ? path : null;
     }
 
+    /// <summary>
+    /// Plugin id -&gt; the skill folders its marketplace entry names, for the marketplaces that
+    /// name any. A plugin absent from this map contributes everything under its own skills
+    /// folder, which is the usual arrangement.
+    /// </summary>
+    private static Dictionary<string, List<string>> ReadDeclaredSkills()
+    {
+        var map = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var known = ReadJson(
+            System.IO.Path.Combine(UserClaudeDir, "plugins", "known_marketplaces.json"))?.AsObject();
+        if (known == null) return map;
+
+        foreach (var market in known)
+        {
+            var location = market.Value?["installLocation"]?.GetValue<string>();
+            if (location == null) continue;
+
+            var plugins = ReadJson(
+                System.IO.Path.Combine(location, ".claude-plugin", "marketplace.json"))?["plugins"] as JsonArray;
+            if (plugins == null) continue;
+
+            foreach (var plugin in plugins)
+            {
+                var name = plugin?["name"]?.GetValue<string>();
+                if (name == null || plugin?["skills"] is not JsonArray skills) continue;
+
+                var paths = new List<string>();
+                foreach (var skill in skills)
+                    if (skill?.GetValue<string>() is { } relative) paths.Add(relative);
+                map[name + "@" + market.Key] = paths;
+            }
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// The SKILL.md files a plugin actually contributes, in order.
+    ///
+    /// Usually that is every skill under its install path. But several plugins can share one
+    /// repository - anthropic-agent-skills ships five that way - and then only the folders its
+    /// marketplace entry names are its own. Globbing there would credit every one of them with
+    /// the whole repository.
+    /// </summary>
+    private static List<string> SkillFiles(string installPath, List<string>? declared)
+    {
+        if (declared == null)
+            return SkillFilesUnder(System.IO.Path.Combine(installPath, "skills"));
+
+        var named = new List<string>();
+        foreach (var relative in declared)
+        {
+            string file;
+            try
+            {
+                file = System.IO.Path.GetFullPath(
+                    System.IO.Path.Combine(installPath, relative, "SKILL.md"));
+            }
+            catch { continue; }
+            if (File.Exists(file)) named.Add(file);
+        }
+        return named;
+    }
+
+    private static List<string> SkillFilesUnder(string dir)
+    {
+        if (!Directory.Exists(dir)) return new List<string>();
+        try
+        {
+            var files = Directory.EnumerateFiles(dir, "SKILL.md", SearchOption.AllDirectories).ToList();
+            files.Sort(StringComparer.OrdinalIgnoreCase);
+            return files;
+        }
+        catch { return new List<string>(); }
+    }
+
     /// <summary>"v6.3.0 - 14 skills - 1 MCP" - what loading this plugin actually costs.</summary>
-    private static string DescribeContents(string installPath, string? version)
+    private static string DescribeContents(string installPath, string? version, int skills)
     {
         var parts = new List<string>();
         if (!string.IsNullOrEmpty(version) && version.Length <= 12) parts.Add("v" + version);
 
-        int skills = CountSkillDirs(System.IO.Path.Combine(installPath, "skills"));
         if (skills > 0) parts.Add(string.Format(Loc.Get("NSkillsFmt"), skills));
 
         int commands = CountFiles(System.IO.Path.Combine(installPath, "commands"), "*.md");
@@ -158,13 +237,6 @@ public static class ExtensionCatalog
         if (mcp > 0) parts.Add(string.Format(Loc.Get("NMcpFmt"), mcp));
 
         return string.Join("  ", parts);
-    }
-
-    private static int CountSkillDirs(string dir)
-    {
-        if (!Directory.Exists(dir)) return 0;
-        try { return Directory.EnumerateFiles(dir, "SKILL.md", SearchOption.AllDirectories).Count(); }
-        catch { return 0; }
     }
 
     private static int CountFiles(string dir, string pattern)
@@ -325,24 +397,19 @@ public static class ExtensionCatalog
         var items = new List<ExtensionItem>();
 
         if (!string.IsNullOrEmpty(projectFolder))
-            AddSkills(items, System.IO.Path.Combine(projectFolder, ".claude", "skills"), "project", true);
+            AddSkills(items,
+                SkillFilesUnder(System.IO.Path.Combine(projectFolder, ".claude", "skills")), "project", true);
 
-        AddSkills(items, System.IO.Path.Combine(UserClaudeDir, "skills"), "user", true);
+        AddSkills(items, SkillFilesUnder(System.IO.Path.Combine(UserClaudeDir, "skills")), "user", true);
 
         foreach (var plugin in plugins)
-            AddSkills(items, System.IO.Path.Combine(plugin.InstallPath, "skills"), plugin.Name, plugin.Enabled);
+            AddSkills(items, plugin.SkillFiles, plugin.Name, plugin.Enabled);
 
         return items;
     }
 
-    private static void AddSkills(List<ExtensionItem> items, string dir, string source, bool enabled)
+    private static void AddSkills(List<ExtensionItem> items, List<string> files, string source, bool enabled)
     {
-        if (!Directory.Exists(dir)) return;
-        List<string> files;
-        try { files = Directory.EnumerateFiles(dir, "SKILL.md", SearchOption.AllDirectories).ToList(); }
-        catch { return; }
-        files.Sort(StringComparer.OrdinalIgnoreCase);
-
         foreach (var file in files)
         {
             var (name, description) = ReadSkillHeader(file);
