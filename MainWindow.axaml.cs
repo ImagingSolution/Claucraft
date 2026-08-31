@@ -30,7 +30,7 @@ namespace Claucraft;
 public partial class MainWindow : Window
 {
     private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical, Cascade }
-    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, Changes, Slash }
+    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, Changes, Slash, Extensions }
 
     private string? _projectFolderBacking;
 
@@ -50,6 +50,10 @@ public partial class MainWindow : Window
             if (string.Equals(_projectFolderBacking, value, StringComparison.OrdinalIgnoreCase)) return;
             _projectFolderBacking = value;
             StartFileWatcher();
+            // The extensions panel reads the project's .mcp.json and .claude/skills, so its
+            // cache belongs to the folder we just left.
+            _extensions = null;
+            if (_activeSidePanel == SidebarPanel.Extensions) RefreshExtensionsPanel();
         }
     }
     private string? _gitRepoUrl;
@@ -360,6 +364,12 @@ public partial class MainWindow : Window
 
         // Slash command panel
         ToolTip.SetTip(BtnActivitySlash, Loc.Get("SlashCommandsTooltip"));
+        ToolTip.SetTip(BtnActivityExtensions, Loc.Get("ExtensionsTooltip"));
+        ToolTip.SetTip(BtnRefreshExtensions, Loc.Get("Refresh"));
+        TxtExtensionSearch.PlaceholderText = Loc.Get("ExtensionsSearch");
+        // The cached rows carry summaries built in the language we just left.
+        _extensions = null;
+        if (_activeSidePanel == SidebarPanel.Extensions) RefreshExtensionsPanel();
         TxtSlashSearch.PlaceholderText = Loc.Get("SearchSlashCommands");
         if (SlashPanel.IsVisible) RefreshSlashPanel();
 
@@ -884,6 +894,7 @@ public partial class MainWindow : Window
         WindowsPanel.IsVisible = panel == SidebarPanel.Windows;
         ChangesPanel.IsVisible = panel == SidebarPanel.Changes;
         SlashPanel.IsVisible = panel == SidebarPanel.Slash;
+        ExtensionsPanel.IsVisible = panel == SidebarPanel.Extensions;
         SidePanelTitle.Text = panel switch
         {
             SidebarPanel.Explorer => Loc.Get("EXPLORER"),
@@ -892,6 +903,7 @@ public partial class MainWindow : Window
             SidebarPanel.Windows => Loc.Get("WINDOWS"),
             SidebarPanel.Changes => Loc.Get("CHANGES"),
             SidebarPanel.Slash => Loc.Get("SLASH"),
+            SidebarPanel.Extensions => Loc.Get("EXTENSIONS"),
             _ => ""
         };
         BtnBrowseFolder.IsVisible = panel == SidebarPanel.Explorer;
@@ -901,6 +913,8 @@ public partial class MainWindow : Window
             RefreshChangesPanel();
         if (panel == SidebarPanel.Slash)
             RefreshSlashPanel();
+        if (panel == SidebarPanel.Extensions)
+            RefreshExtensionsPanel();
     }
 
     private void UpdateActivityBarHighlight()
@@ -911,6 +925,7 @@ public partial class MainWindow : Window
         SetActivityButtonActive(BtnActivityWindows, _activeSidePanel == SidebarPanel.Windows);
         SetActivityButtonActive(BtnActivityChanges, _activeSidePanel == SidebarPanel.Changes);
         SetActivityButtonActive(BtnActivitySlash, _activeSidePanel == SidebarPanel.Slash);
+        SetActivityButtonActive(BtnActivityExtensions, _activeSidePanel == SidebarPanel.Extensions);
         // DocView button state is managed by OnActivityDocView, not side panel
     }
 
@@ -3032,6 +3047,346 @@ public partial class MainWindow : Window
         row.ContextMenu = new ContextMenu { ItemsSource = new[] { comment } };
 
         return row;
+    }
+
+    // ── Extensions: MCP servers, skills and plugins ──
+
+    private ExtensionSnapshot? _extensions;
+    private bool _extensionsLoading;
+    /// <summary>Overrides the hint line once, to report what a write did.</summary>
+    private string? _extensionsNotice;
+    /// <summary>Skills outnumber the rest by two orders of magnitude, so that section starts folded.</summary>
+    private readonly HashSet<ExtensionKind> _extensionsCollapsed = new() { ExtensionKind.Skill };
+
+    private const int MaxExtensionRows = 150;
+
+    private void OnActivityExtensions(object? sender, RoutedEventArgs e)
+    {
+        ToggleSidePanel(SidebarPanel.Extensions);
+    }
+
+    private void OnRefreshExtensions(object? sender, RoutedEventArgs e)
+    {
+        _extensions = null;
+        _extensionsNotice = null;
+        RefreshExtensionsPanel();
+    }
+
+    private void OnExtensionSearchChanged(object? sender, TextChangedEventArgs e)
+    {
+        _extensionsNotice = null;
+        RenderExtensions();
+    }
+
+    private async void RefreshExtensionsPanel()
+    {
+        if (_extensionsLoading || !ExtensionsPanel.IsVisible) return;
+        if (_extensions != null) { RenderExtensions(); return; }
+
+        _extensionsLoading = true;
+        ExtensionsList.Children.Clear();
+        LblExtensionsHint.Text = Loc.Get("ExtensionsLoading");
+        try
+        {
+            _extensions = await ExtensionCatalog.LoadAsync(_projectFolder);
+        }
+        catch
+        {
+            _extensions = new ExtensionSnapshot();
+        }
+        finally
+        {
+            _extensionsLoading = false;
+        }
+
+        if (ExtensionsPanel.IsVisible) RenderExtensions();
+    }
+
+    private void RenderExtensions()
+    {
+        ExtensionsList.Children.Clear();
+        if (_extensions == null) return;
+
+        var query = TxtExtensionSearch.Text?.Trim() ?? "";
+        int shown = 0;
+        shown += AddExtensionSection(ExtensionKind.Mcp, Loc.Get("McpServers"), _extensions.Mcp, query);
+        shown += AddExtensionSection(ExtensionKind.Skill, Loc.Get("Skills"), _extensions.Skills, query);
+        shown += AddExtensionSection(ExtensionKind.Plugin, Loc.Get("Plugins"), _extensions.Plugins, query);
+
+        LblExtensionsHint.Text = _extensionsNotice
+            ?? (shown == 0 && query.Length > 0 ? Loc.Get("NoMatches") : Loc.Get("ExtensionsApplyHint"));
+    }
+
+    /// <summary>Renders one section and returns how many rows matched, folded or not.</summary>
+    private int AddExtensionSection(ExtensionKind kind, string title,
+        IReadOnlyList<ExtensionItem> items, string query)
+    {
+        var matches = items.Where(i => MatchesExtensionQuery(i, query)).ToList();
+        // A search that hits nothing in a section should not leave its header behind.
+        if (matches.Count == 0 && query.Length > 0) return 0;
+
+        // Searching means the user is after a row, so the fold gets out of the way.
+        bool open = query.Length > 0 || !_extensionsCollapsed.Contains(kind);
+        ExtensionsList.Children.Add(BuildExtensionHeader(kind, title, matches, open));
+        if (!open) return matches.Count;
+
+        foreach (var item in matches.Take(MaxExtensionRows))
+            ExtensionsList.Children.Add(BuildExtensionRow(item));
+
+        if (matches.Count > MaxExtensionRows)
+            ExtensionsList.Children.Add(new TextBlock
+            {
+                Text = string.Format(Loc.Get("ExtensionsMoreFmt"), matches.Count - MaxExtensionRows),
+                FontSize = 10,
+                Opacity = 0.5,
+                Margin = new Thickness(24, 3, 6, 6),
+            });
+
+        return matches.Count;
+    }
+
+    private static bool MatchesExtensionQuery(ExtensionItem item, string query)
+    {
+        if (query.Length == 0) return true;
+        return Has(item.Name) || Has(item.Source) || Has(item.Description);
+
+        bool Has(string? text) =>
+            text != null && text.Contains(query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private Control BuildExtensionHeader(ExtensionKind kind, string title,
+        List<ExtensionItem> items, bool open)
+    {
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+
+        var chevron = new TextBlock
+        {
+            Text = open ? "▾" : "▸",
+            FontSize = 9,
+            Width = 12,
+            Opacity = 0.6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var label = new TextBlock
+        {
+            Text = title + "  (" + items.Count + ")",
+            FontSize = 10,
+            FontWeight = FontWeight.SemiBold,
+            LetterSpacing = 1,
+            Opacity = 0.6,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(chevron, 0);
+        Grid.SetColumn(label, 1);
+        grid.Children.Add(chevron);
+        grid.Children.Add(label);
+
+        int switchable = items.Count(i => i.CanToggle && i.Enabled);
+        if (switchable > 0)
+        {
+            var off = new Button
+            {
+                Content = new TextBlock { Text = Loc.Get("DisableAll"), FontSize = 10 },
+                Padding = new Thickness(6, 1),
+                MinHeight = 0,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Opacity = 0.7,
+                Cursor = new Cursor(StandardCursorType.Hand),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            ToolTip.SetTip(off, string.Format(Loc.Get("DisableAllFmt"), switchable));
+            off.Click += (_, _) => DisableAllExtensions(kind, items);
+            Grid.SetColumn(off, 2);
+            grid.Children.Add(off);
+        }
+
+        var header = new Border
+        {
+            Padding = new Thickness(6, 9, 4, 3),
+            Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Child = grid,
+        };
+        // The button above handles its own press, so it never reaches this fold.
+        header.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(header).Properties.IsLeftButtonPressed) return;
+            if (!_extensionsCollapsed.Remove(kind)) _extensionsCollapsed.Add(kind);
+            RenderExtensions();
+        };
+        return header;
+    }
+
+    private Control BuildExtensionRow(ExtensionItem item)
+    {
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+
+        Control lead;
+        if (item.CanToggle)
+        {
+            var box = new CheckBox
+            {
+                IsChecked = item.Enabled,
+                MinWidth = 0,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            box.IsCheckedChanged += (_, _) =>
+            {
+                bool want = box.IsChecked == true;
+                if (want != item.Enabled) ApplyExtensionToggle(item, want);
+            };
+            lead = box;
+        }
+        else
+        {
+            // Nothing here to switch, so the dot only reports whether the owner is on.
+            lead = new Ellipse
+            {
+                Width = 6,
+                Height = 6,
+                Margin = new Thickness(4, 0, 10, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Fill = new SolidColorBrush(item.Enabled
+                    ? Color.FromRgb(48, 209, 88)
+                    : Color.FromRgb(142, 142, 147)),
+            };
+        }
+
+        var text = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock
+        {
+            Text = item.Name,
+            FontSize = 12,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        var second = string.IsNullOrEmpty(item.Detail) ? item.Description : item.Detail;
+        if (!string.IsNullOrEmpty(second))
+            text.Children.Add(new TextBlock
+            {
+                Text = second,
+                FontSize = 10,
+                Opacity = 0.5,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+
+        Grid.SetColumn(lead, 0);
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(lead);
+        grid.Children.Add(text);
+
+        // For a server or a skill the source names who to switch off, so it earns the column.
+        // A plugin's source is its marketplace - the same string on nearly every row, and it
+        // truncates to nothing in a narrow panel - so that one stays in the tooltip.
+        if (item.Kind != ExtensionKind.Plugin)
+        {
+            var source = new TextBlock
+            {
+                Text = item.Source,
+                FontSize = 9,
+                Opacity = 0.45,
+                MaxWidth = 84,
+                Margin = new Thickness(6, 0, 2, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(source, 2);
+            grid.Children.Add(source);
+        }
+
+        var row = new Border
+        {
+            Padding = new Thickness(6, 4),
+            CornerRadius = new CornerRadius(4),
+            Background = Brushes.Transparent,
+            Opacity = item.Enabled ? 1.0 : 0.5,
+            Child = grid,
+        };
+
+        var tip = item.Description ?? item.Name;
+        if (item.Kind == ExtensionKind.Plugin && item.Source.Length > 0)
+            tip += Environment.NewLine + string.Format(Loc.Get("FromMarketplaceFmt"), item.Source);
+        if (!string.IsNullOrEmpty(item.Path))
+            tip += Environment.NewLine + item.Path;
+        if (item.Kind == ExtensionKind.Mcp && !item.CanToggle)
+            tip += Environment.NewLine + (item.Source == "user"
+                ? Loc.Get("McpUserScoped")
+                : string.Format(Loc.Get("McpOwnedByFmt"), item.Source));
+        ToolTip.SetTip(row, tip);
+
+        if (!string.IsNullOrEmpty(item.Path))
+        {
+            row.Cursor = new Cursor(StandardCursorType.Hand);
+            var hover = new SolidColorBrush(_isDark
+                ? Color.FromArgb(30, 255, 255, 255)
+                : Color.FromArgb(20, 0, 0, 0));
+            row.PointerEntered += (_, _) => row.Background = hover;
+            row.PointerExited += (_, _) => row.Background = Brushes.Transparent;
+            row.PointerPressed += (_, e) =>
+            {
+                if (e.GetCurrentPoint(row).Properties.IsLeftButtonPressed)
+                    OpenPath(item.Path!);
+            };
+        }
+
+        return row;
+    }
+
+    private void ApplyExtensionToggle(ExtensionItem item, bool enabled)
+    {
+        var project = _projectFolder;
+        string? error;
+        if (item.Kind == ExtensionKind.Plugin)
+            error = ExtensionCatalog.SetPluginEnabled(item.Id, enabled);
+        else if (item.Kind == ExtensionKind.Mcp && !string.IsNullOrEmpty(project))
+            error = ExtensionCatalog.SetProjectMcpEnabled(project, item.Id, enabled);
+        else
+            return;
+
+        ReportExtensionWrite(error, 1);
+    }
+
+    private async void DisableAllExtensions(ExtensionKind kind, List<ExtensionItem> items)
+    {
+        var targets = items.Where(i => i.CanToggle && i.Enabled).ToList();
+        if (targets.Count == 0) return;
+
+        if (!await ShowConfirmDialog(Loc.Get("DisableAll"),
+                string.Format(Loc.Get("DisableAllConfirmFmt"), targets.Count)))
+            return;
+
+        var project = _projectFolder;
+        string? error = null;
+        foreach (var item in targets)
+        {
+            if (kind == ExtensionKind.Plugin)
+                error = ExtensionCatalog.SetPluginEnabled(item.Id, false);
+            else if (!string.IsNullOrEmpty(project))
+                error = ExtensionCatalog.SetProjectMcpEnabled(project, item.Id, false);
+            if (error != null) break;
+        }
+
+        ReportExtensionWrite(error, targets.Count);
+    }
+
+    private void ReportExtensionWrite(string? error, int count)
+    {
+        _extensionsNotice = error != null
+            ? string.Format(Loc.Get("ExtensionsWriteFailedFmt"), error)
+            : string.Format(Loc.Get("ExtensionsChangedFmt"), count);
+        _extensions = null;
+        RefreshExtensionsPanel();
+    }
+
+    private static void OpenPath(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+        }
+        catch { }
     }
 
     private async void ShowDiff(string repo, GitChange change)
