@@ -54,6 +54,10 @@ public partial class MainWindow : Window
             // cache belongs to the folder we just left.
             _extensions = null;
             if (_activeSidePanel == SidebarPanel.Extensions) RefreshExtensionsPanel();
+
+            // A file open from the project being left is no longer what the tree is showing.
+            // Unsaved edits keep it open - the path is absolute and still saves.
+            if (!_editorDirty) CloseEditor();
         }
     }
     private string? _gitRepoUrl;
@@ -368,6 +372,8 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnActivityExtensions, Loc.Get("ExtensionsTooltip"));
         ToolTip.SetTip(BtnRefreshExtensions, Loc.Get("Refresh"));
         TxtExtensionSearch.PlaceholderText = Loc.Get("ExtensionsSearch");
+        ToolTip.SetTip(BtnEditorSave, Loc.Get("EditorSaveTooltip"));
+        ToolTip.SetTip(BtnEditorClose, Loc.Get("EditorCloseTooltip"));
         // The cached rows carry summaries built in the language we just left.
         _extensions = null;
         if (_activeSidePanel == SidebarPanel.Extensions) RefreshExtensionsPanel();
@@ -1260,27 +1266,158 @@ public partial class MainWindow : Window
         });
     }
 
-    private void OnFileTreeSelectionChanged(object? sender, SelectionChangedEventArgs e)
-    {
-        var node = FileTree.SelectedItem as FileTreeNode;
-        if (node == null || node.IsDirectory)
-        {
-            FilePreviewBorder.IsVisible = false;
-            return;
-        }
-        try
-        {
-            var ext = System.IO.Path.GetExtension(node.FullPath).ToLowerInvariant();
-            var textExts = new HashSet<string> { ".cs", ".txt", ".md", ".json", ".xml", ".axaml", ".xaml",
-                ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".py", ".go", ".rs", ".java", ".yml", ".yaml",
-                ".toml", ".sh", ".bash", ".ps1", ".sql", ".gitignore", ".csproj", ".sln", ".config", ".log" };
-            if (!textExts.Contains(ext)) { FilePreviewBorder.IsVisible = false; return; }
+    // ── Explorer editor ──
 
-            var lines = System.IO.File.ReadLines(node.FullPath).Take(30);
-            FilePreviewText.Text = string.Join("\n", lines);
-            FilePreviewBorder.IsVisible = true;
+    private static readonly HashSet<string> EditableExtensions = new()
+    {
+        ".cs", ".txt", ".md", ".json", ".xml", ".axaml", ".xaml",
+        ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".py", ".go", ".rs", ".java", ".yml", ".yaml",
+        ".toml", ".sh", ".bash", ".ps1", ".sql", ".gitignore", ".csproj", ".sln", ".config", ".log",
+    };
+
+    private TextFileDocument? _editorDoc;
+    private bool _editorDirty;
+
+    /// <summary>
+    /// Opens the selected file in the editor below the tree.
+    ///
+    /// Only a different file replaces what is open. The watcher rebuilds the tree whenever
+    /// anything in the project changes - which the CLI does constantly - and that arrives here
+    /// as a null selection; closing on it would throw away edits mid-keystroke.
+    /// </summary>
+    private async void OnFileTreeSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (FileTree.SelectedItem is not FileTreeNode node || node.IsDirectory) return;
+        if (_editorDoc != null &&
+            string.Equals(_editorDoc.Path, node.FullPath, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (!EditableExtensions.Contains(System.IO.Path.GetExtension(node.FullPath).ToLowerInvariant()))
+            return;
+
+        if (!await ReleaseEditorAsync()) return;
+        OpenInEditor(node.FullPath);
+    }
+
+    private void OpenInEditor(string path)
+    {
+        TextFileDocument doc;
+        try { doc = TextFileEditor.Read(path); }
+        catch { CloseEditor(); return; }
+
+        _editorDoc = doc;
+        _editorDirty = false;
+
+        FilePreviewText.Text = doc.Text;
+        FilePreviewText.IsReadOnly = !doc.Editable;
+        FilePreviewText.CaretIndex = 0;
+        BtnEditorSave.IsVisible = doc.Editable;
+        BtnEditorSave.IsEnabled = false;
+        ToolTip.SetTip(BtnEditorSave, Loc.Get("EditorSaveTooltip"));
+
+        var notice = doc.Block switch
+        {
+            EditBlock.TooLarge => Loc.Get("EditorTooLarge"),
+            EditBlock.Binary => Loc.Get("EditorBinary"),
+            EditBlock.NotUtf8 => Loc.Get("EditorNotUtf8"),
+            _ => null,
+        };
+        EditorNotice.Text = notice ?? "";
+        EditorNotice.IsVisible = notice != null;
+
+        UpdateEditorTitle();
+        FilePreviewBorder.IsVisible = true;
+    }
+
+    private void UpdateEditorTitle()
+    {
+        if (_editorDoc == null) return;
+        var name = System.IO.Path.GetFileName(_editorDoc.Path);
+        EditorFileName.Text = _editorDirty ? name + " ●" : name;
+        ToolTip.SetTip(EditorFileName, _editorDoc.Path);
+    }
+
+    private void CloseEditor()
+    {
+        _editorDoc = null;
+        _editorDirty = false;
+        FilePreviewText.Text = "";
+        FilePreviewBorder.IsVisible = false;
+    }
+
+    /// <summary>
+    /// Dirty is "differs from what was read", not "a key was pressed". TextChanged also fires
+    /// for the load itself, and this way typing something back the way it was clears the mark
+    /// rather than leaving a file marked unsaved with nothing to save.
+    /// </summary>
+    private void OnEditorTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (_editorDoc is not { Editable: true } doc) return;
+
+        bool dirty = (FilePreviewText.Text ?? "") != doc.Text;
+        if (dirty == _editorDirty) return;
+
+        _editorDirty = dirty;
+        BtnEditorSave.IsEnabled = dirty;
+        UpdateEditorTitle();
+    }
+
+    private void OnEditorKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.S && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            _ = SaveEditorAsync();
+            e.Handled = true;
         }
-        catch { FilePreviewBorder.IsVisible = false; }
+    }
+
+    private void OnEditorSave(object? sender, RoutedEventArgs e) => _ = SaveEditorAsync();
+
+    private async void OnEditorClose(object? sender, RoutedEventArgs e)
+    {
+        if (await ReleaseEditorAsync()) CloseEditor();
+    }
+
+    /// <summary>
+    /// Offers to save before the open file goes away. False means the user backed out and
+    /// whatever was about to replace the editor should not happen.
+    /// </summary>
+    private async Task<bool> ReleaseEditorAsync()
+    {
+        if (!_editorDirty || _editorDoc == null) return true;
+
+        var save = await ShowConfirmDialog(
+            Loc.Get("EditorUnsavedTitle"),
+            string.Format(Loc.Get("EditorUnsavedFmt"), System.IO.Path.GetFileName(_editorDoc.Path)));
+
+        // Cancel discards: the alternative is a third button, and the edits are still on screen
+        // until something replaces them.
+        return !save || await SaveEditorAsync();
+    }
+
+    private async Task<bool> SaveEditorAsync()
+    {
+        if (_editorDoc is not { Editable: true } doc || !_editorDirty) return true;
+
+        if (TextFileEditor.ChangedOnDisk(doc) &&
+            !await ShowConfirmDialog(
+                Loc.Get("EditorConflictTitle"),
+                string.Format(Loc.Get("EditorConflictFmt"), System.IO.Path.GetFileName(doc.Path))))
+            return false;
+
+        var saved = TextFileEditor.Write(doc, FilePreviewText.Text ?? "", out var error);
+        if (saved == null)
+        {
+            EditorNotice.Text = string.Format(Loc.Get("EditorSaveFailedFmt"), error);
+            EditorNotice.IsVisible = true;
+            return false;
+        }
+
+        _editorDoc = saved;
+        _editorDirty = false;
+        BtnEditorSave.IsEnabled = false;
+        EditorNotice.IsVisible = false;
+        UpdateEditorTitle();
+        return true;
     }
 
 

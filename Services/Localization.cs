@@ -336,6 +336,18 @@ public static class Loc
         ["SkillInvokeFmt"] = new() { ["English"] = "Double-click to run {0}. Claude also picks it up from the description above.", ["日本語"] = "ダブルクリックで {0} を実行します。上の説明に合致すれば Claude が自動で選ぶこともあります。" },
         ["DoubleClickOpens"] = new() { ["English"] = "Double-click to open it.", ["日本語"] = "ダブルクリックで開きます。" },
         ["SubagentDepthFmt"] = new() { ["English"] = "Spawned by another agent (depth {0})", ["日本語"] = "別のエージェントが起動（深さ {0}）" },
+
+        // ── Explorer Editor ──
+        ["EditorSaveTooltip"] = new() { ["English"] = "Save (Ctrl+S)", ["日本語"] = "保存 (Ctrl+S)" },
+        ["EditorCloseTooltip"] = new() { ["English"] = "Close the editor", ["日本語"] = "エディタを閉じる" },
+        ["EditorTooLarge"] = new() { ["English"] = "Too large to edit here - showing the first 30 lines.", ["日本語"] = "サイズが大きいため編集できません（先頭 30 行のみ表示）。" },
+        ["EditorBinary"] = new() { ["English"] = "Not a text file.", ["日本語"] = "テキストファイルではありません。" },
+        ["EditorNotUtf8"] = new() { ["English"] = "Not UTF-8, so saving could corrupt it - read-only.", ["日本語"] = "UTF-8 ではないため、保存すると壊れる可能性があります（読み取り専用）。" },
+        ["EditorUnsavedTitle"] = new() { ["English"] = "Unsaved changes", ["日本語"] = "未保存の変更" },
+        ["EditorUnsavedFmt"] = new() { ["English"] = "Save the changes to {0}?", ["日本語"] = "{0} の変更を保存しますか？" },
+        ["EditorConflictTitle"] = new() { ["English"] = "Changed on disk", ["日本語"] = "ディスク上で変更されています" },
+        ["EditorConflictFmt"] = new() { ["English"] = "{0} has changed since it was opened. Overwrite it with what is on screen?", ["日本語"] = "{0} は開いた後に変更されています。画面の内容で上書きしますか？" },
+        ["EditorSaveFailedFmt"] = new() { ["English"] = "Could not save: {0}", ["日本語"] = "保存できませんでした: {0}" },
         ["NSkillsFmt"] = new() { ["English"] = "{0} skills", ["日本語"] = "スキル {0}" },
         ["NCommandsFmt"] = new() { ["English"] = "{0} commands", ["日本語"] = "コマンド {0}" },
         ["NAgentsFmt"] = new() { ["English"] = "{0} agents", ["日本語"] = "エージェント {0}" },
