@@ -3311,35 +3311,66 @@ public partial class MainWindow : Window
         if (!string.IsNullOrEmpty(item.Path))
             tip += Environment.NewLine + item.Path;
         if (item.Kind == ExtensionKind.Skill)
-        {
-            // A plugin's skills are addressed through it, so the prefix is part of the name.
-            var invoke = item.Source is "project" or "user"
-                ? "/" + item.Name
-                : "/" + item.Source + ":" + item.Name;
-            tip += Environment.NewLine + string.Format(Loc.Get("SkillInvokeFmt"), invoke);
-        }
+            tip += Environment.NewLine + string.Format(Loc.Get("SkillInvokeFmt"), SkillCommand(item));
+        else if (!string.IsNullOrEmpty(item.Path))
+            tip += Environment.NewLine + Loc.Get("DoubleClickOpens");
         if (item.Kind == ExtensionKind.Mcp && !item.CanToggle)
             tip += Environment.NewLine + (item.Source == "user"
                 ? Loc.Get("McpUserScoped")
                 : string.Format(Loc.Get("McpOwnedByFmt"), item.Source));
         ToolTip.SetTip(row, tip);
 
+        row.Cursor = new Cursor(StandardCursorType.Hand);
+        var hover = new SolidColorBrush(_isDark
+            ? Color.FromArgb(30, 255, 255, 255)
+            : Color.FromArgb(20, 0, 0, 0));
+        row.PointerEntered += (_, _) => row.Background = hover;
+        row.PointerExited += (_, _) => row.Background = Brushes.Transparent;
+
+        // Double click runs the row, the way the slash panel does. A single click is left
+        // alone because these rows carry a checkbox, and a stray click that launches an
+        // editor - or a turn - is worse than one that does nothing.
+        row.DoubleTapped += (_, e) =>
+        {
+            // Double clicking the box is two toggles, not a request to run anything.
+            if (e.Source is Visual source && source.FindAncestorOfType<CheckBox>(true) != null) return;
+            if (item.Kind == ExtensionKind.Skill) RunSkill(item);
+            else if (!string.IsNullOrEmpty(item.Path)) OpenPath(item.Path!);
+        };
+
         if (!string.IsNullOrEmpty(item.Path))
         {
-            row.Cursor = new Cursor(StandardCursorType.Hand);
-            var hover = new SolidColorBrush(_isDark
-                ? Color.FromArgb(30, 255, 255, 255)
-                : Color.FromArgb(20, 0, 0, 0));
-            row.PointerEntered += (_, _) => row.Background = hover;
-            row.PointerExited += (_, _) => row.Background = Brushes.Transparent;
-            row.PointerPressed += (_, e) =>
-            {
-                if (e.GetCurrentPoint(row).Properties.IsLeftButtonPressed)
-                    OpenPath(item.Path!);
-            };
+            var open = new MenuItem { Header = Loc.Get("Open") };
+            open.Click += (_, _) => OpenPath(item.Path!);
+            row.ContextMenu = new ContextMenu { ItemsSource = new[] { open } };
         }
 
         return row;
+    }
+
+    /// <summary>
+    /// The slash form that runs a skill. A plugin's skills are addressed through it, so the
+    /// plugin name is part of the command; a project or personal skill stands alone.
+    /// </summary>
+    private static string SkillCommand(ExtensionItem item) =>
+        item.Source is "project" or "user"
+            ? "/" + item.Name
+            : "/" + item.Source + ":" + item.Name;
+
+    private void RunSkill(ExtensionItem item)
+    {
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count)
+        {
+            _extensionsNotice = Loc.Get("SlashNeedsSession");
+            RenderExtensions();
+            return;
+        }
+        // Only a bare terminal takes the carriage return as "send". With the chat view or the
+        // expanded input open the text lands in a box, where it would just be a stray
+        // character - so there the command is typed and the user presses Enter.
+        var terminal = _children[_activeChildIndex].Terminal;
+        bool writesToPty = !terminal.IsDocumentView && !terminal.IsExpanded;
+        SendToActiveTerminal(writesToPty ? SkillCommand(item) + "\r" : SkillCommand(item));
     }
 
     private void ApplyExtensionToggle(ExtensionItem item, bool enabled)
