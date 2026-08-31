@@ -2441,32 +2441,41 @@ public class TerminalControl : Control, IDisposable
     }
 
     /// <summary>
-    /// True only when the CLI is sitting on a numbered permission prompt. The question line
-    /// alone is not enough: the watch now runs during ordinary work as well, so a stray match
-    /// would throw the card up over a session that is not waiting on anything. Requiring the
-    /// numbered choices next to the question is what keeps that from happening.
+    /// True only when the CLI is sitting on a numbered permission prompt.
+    ///
+    /// The buttons write "1", "2" or "3" straight into the pty, so a wrong match does not just
+    /// show a stray card - it answers whatever prompt is really there. Three things have to
+    /// agree, and each rules out a prompt this used to be confused with:
+    ///
+    /// - Every permission prompt opens with "Do you want to " (…proceed? / …allow this
+    ///   connection? / …&lt;verb&gt; &lt;file&gt;?). "Esc to cancel" used to count as well, which is
+    ///   what put this card over an AskUserQuestion list - the CLI prints that under most of
+    ///   its selectors.
+    /// - Option 1 of a permission prompt is always Yes. A question's first option is anything.
+    /// - "Enter to select" belongs to the multi-question selector, never to a permission
+    ///   prompt, so seeing it settles the matter on its own.
     /// </summary>
     private bool IsPermissionPromptOnScreen()
     {
         int totalRows = _buffer.Scrollback.Count + _buffer.Rows;
-        bool question = false, choices = false;
+        bool question = false, yesChoice = false;
 
         for (int i = Math.Max(0, totalRows - 14); i < totalRows; i++)
         {
             var text = GetRowText(i).TrimEnd();
             if (text.Length == 0) continue;
 
-            if (text.Contains("Do you want") || text.Contains("Esc to cancel"))
-                question = true;
+            if (text.Contains("Enter to select")) return false;
+            if (text.Contains("Do you want")) question = true;
 
             // "❯ 1. Yes", "  1. Yes, and don't ask again", "1. Yes" — the marker is a leading
             // "1." once the box drawing and the selection caret are stripped off.
             var bare = text.TrimStart(' ', '│', '|', '❯', '>', '*');
-            if (bare.StartsWith("1.") || bare.StartsWith("1)"))
-                choices = true;
+            if ((bare.StartsWith("1.") || bare.StartsWith("1)")) && bare.Contains("Yes"))
+                yesChoice = true;
         }
 
-        return question && choices;
+        return question && yesChoice;
     }
 
     /// <summary>Grabs the text of the permission prompt so it can be explained in plain words.</summary>
