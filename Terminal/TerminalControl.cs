@@ -41,6 +41,9 @@ public class TerminalControl : Control, IDisposable
     private int _inputStartAbsRow;
     private int _inputStartCol;
 
+    // Click-to-move caret: guards the arrow-key convergence loop against re-entry
+    private bool _caretMoveInProgress;
+
     // Scrollbar drag state
     private bool _isScrollbarDragging;
     private double _scrollbarDragStartY;
@@ -1123,6 +1126,11 @@ public class TerminalControl : Control, IDisposable
             _isSelecting = false;
             e.Pointer.Capture(null);
             e.Handled = true;
+
+            // A press and release on the same cell is a click, not a drag, so it
+            // asks for the caret rather than for a selection.
+            if (!_hasSelection)
+                TryMoveCaretToClick(AbsoluteToScreenRow(_selEndRow), _selEndCol);
         }
     }
 
@@ -1330,6 +1338,160 @@ public class TerminalControl : Control, IDisposable
                 count++;
         }
         return toCol > fromCol ? count : -count;
+    }
+
+    // ── Click-to-move caret ──
+
+    // The CLI owns the cursor, so it can only be moved by sending it arrow keys.
+    // Counting how many to send means reading the CLI's own input layout off the
+    // grid, and that reading can be wrong — the wrap point of a soft-wrapped line
+    // may or may not hold a character. Rather than trust one estimate, the move
+    // runs as a short convergence loop: send the estimate, look at where the
+    // cursor actually landed, send the remainder. The correction after the first
+    // hop is almost always a same-row count, which is exact.
+    private const int MaxCaretMoveChars = 400;
+    private const int MaxInputBlockRows = 12;
+    private const int CaretMoveAttempts = 4;
+
+    private async void TryMoveCaretToClick(int screenRow, int targetCol)
+    {
+        if (_caretMoveInProgress || _pty == null) return;
+        if (_scrollOffset != 0) return;      // scrolled back: the cursor is not on screen
+        if (screenRow < 0 || screenRow >= _buffer.Rows) return;
+        // The alternate buffer is no signal either way here: the Claude Code CLI
+        // draws its prompt on it. Finding the prompt row is what tells us the
+        // click landed on an editable line, and that check happens below.
+
+        int blockTop, blockBottom, textLeft;
+        if (!TryGetInputBlock(out blockTop, out blockBottom, out textLeft))
+        {
+            // No prompt row found. Same-row moves need no layout guesswork, so they
+            // still work; anything crossing a row would be guessing and is dropped.
+            if (screenRow != _buffer.CursorRow) return;
+            blockTop = blockBottom = screenRow;
+            textLeft = 0;
+        }
+        if (screenRow < blockTop || screenRow > blockBottom) return;
+
+        targetCol = ClampToRowContent(screenRow, targetCol, textLeft);
+
+        _caretMoveInProgress = true;
+        try
+        {
+            int lastRow = -1, lastCol = -1;
+            for (int attempt = 0; attempt < CaretMoveAttempts; attempt++)
+            {
+                int fromRow = _buffer.CursorRow;
+                int fromCol = _buffer.CursorCol;
+                if (fromRow == screenRow && fromCol == targetCol) return;
+
+                // The previous batch moved nothing, so the caret is against an edge
+                // the estimate does not know about. Stop rather than thrash.
+                if (fromRow == lastRow && fromCol == lastCol) return;
+                lastRow = fromRow;
+                lastCol = fromCol;
+
+                int delta = EstimateCaretDelta(fromRow, fromCol, screenRow, targetCol,
+                                               blockTop, blockBottom, textLeft);
+                if (delta == 0 || Math.Abs(delta) > MaxCaretMoveChars) return;
+
+                string key = delta > 0 ? "\x1b[C" : "\x1b[D";
+                var sb = new System.Text.StringBuilder(key.Length * Math.Abs(delta));
+                for (int i = 0; i < Math.Abs(delta); i++) sb.Append(key);
+                _pty.WriteInput(sb.ToString());
+
+                await Task.Delay(70);
+                if (_pty == null) return;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[MoveCaret] {ex.Message}");
+        }
+        finally
+        {
+            _caretMoveInProgress = false;
+        }
+    }
+
+    // Locates the CLI's input block: the prompt row, which carries the marker in
+    // the first column, plus the wrapped rows under it, which the CLI indents to
+    // line up after that marker. Returns false when the cursor is not sitting in
+    // such a block, which is the signal to fall back to same-row moves only.
+    private bool TryGetInputBlock(out int topRow, out int bottomRow, out int textLeft)
+    {
+        topRow = bottomRow = -1;
+        textLeft = 0;
+
+        int cursorRow = _buffer.CursorRow;
+        int promptRow = -1;
+        for (int r = cursorRow; r >= 0 && cursorRow - r < MaxInputBlockRows; r--)
+        {
+            int first = FirstNonBlankCol(r);
+            if (first < 0) return false;                 // blank row: above the input
+            char c = GetCellAt(r, first).Character;
+            if (first == 0 && (c == '>' || c == '❯'))
+            {
+                promptRow = r;
+                textLeft = first + 2;                    // past the marker and its space
+                break;
+            }
+            if (first < 2) return false;                 // some other line: not the input
+        }
+        if (promptRow < 0) return false;
+
+        bottomRow = promptRow;
+        for (int r = promptRow + 1; r < _buffer.Rows && r - promptRow < MaxInputBlockRows; r++)
+        {
+            if (FirstNonBlankCol(r) < textLeft) break;   // dedents: past the input
+            bottomRow = r;
+        }
+        topRow = promptRow;
+        return cursorRow >= topRow && cursorRow <= bottomRow;
+    }
+
+    private int EstimateCaretDelta(int fromRow, int fromCol, int toRow, int toCol,
+                                   int blockTop, int blockBottom, int textLeft)
+    {
+        if (fromRow == toRow) return CountCharsBetweenCols(fromRow, fromCol, toCol);
+
+        bool forward = toRow > fromRow;
+        int lo = forward ? fromRow : toRow;
+        int hi = forward ? toRow : fromRow;
+        int loCol = forward ? fromCol : toCol;
+        int hiCol = forward ? toCol : fromCol;
+        if (lo < blockTop || hi > blockBottom) return 0;
+
+        int count = CountCharsBetweenCols(lo, loCol, RowContentEnd(lo, textLeft));
+        for (int r = lo + 1; r < hi; r++)
+            count += CountCharsBetweenCols(r, textLeft, RowContentEnd(r, textLeft));
+        count += CountCharsBetweenCols(hi, textLeft, hiCol);
+        return forward ? count : -count;
+    }
+
+    // One column past the row's last character — the caret position at end of line.
+    private int RowContentEnd(int row, int textLeft)
+    {
+        return Math.Max(textLeft, LastNonBlankCol(row) + 1);
+    }
+
+    private int ClampToRowContent(int row, int col, int textLeft)
+    {
+        return Math.Clamp(col, textLeft, RowContentEnd(row, textLeft));
+    }
+
+    private int FirstNonBlankCol(int row)
+    {
+        for (int col = 0; col < _buffer.Cols; col++)
+            if (GetCellAt(row, col).Character > ' ') return col;
+        return -1;
+    }
+
+    private int LastNonBlankCol(int row)
+    {
+        for (int col = _buffer.Cols - 1; col >= 0; col--)
+            if (GetCellAt(row, col).Character > ' ') return col;
+        return -1;
     }
 
     // ── Expanded Input Panel ──
