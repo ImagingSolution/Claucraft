@@ -95,11 +95,12 @@
                                FontSize="12" Foreground="{DynamicResource SubtleText}"
                                FontWeight="Normal" Margin="0,3,0,0" />
 
-                    <ComboBox x:Name="CmbSessions" Grid.Row="1" Grid.Column="1"
+                    <Grid x:Name="SessionRow" Grid.Row="1" Grid.Column="1"
+                          ColumnDefinitions="*,Auto" Margin="10,3,10,0">
+                    <ComboBox x:Name="CmbSessions" Grid.Column="0"
                               Classes="modern"
                               VerticalAlignment="Center"
                               HorizontalAlignment="Stretch"
-                              Margin="10,3,10,0"
                               PlaceholderText="Select a session to resume..."
                               SelectionChanged="OnSessionSelectionChanged">
                         <ComboBox.ItemTemplate>
@@ -118,6 +119,16 @@
                             </DataTemplate>
                         </ComboBox.ItemTemplate>
                     </ComboBox>
+                    <!-- The combo lists every session this project has - 88 of them here - so
+                         finding one, or clearing one out, needs a list you can search. -->
+                    <Button x:Name="BtnManageSessions" Grid.Column="1"
+                            Classes="icon-btn" Padding="5" Margin="5,0,0,0"
+                            VerticalAlignment="Center"
+                            Click="OnManageSessions">
+                        <PathIcon Data="M15.5 14H14.71L14.43 13.73C15.41 12.59 16 11.11 16 9.5C16 5.91 13.09 3 9.5 3C5.91 3 3 5.91 3 9.5C3 13.09 5.91 16 9.5 16C11.11 16 12.59 15.41 13.73 14.43L14 14.71V15.5L19 20.49L20.49 19L15.5 14ZM9.5 14C7.01 14 5 11.99 5 9.5C5 7.01 7.01 5 9.5 5C11.99 5 14 7.01 14 9.5C14 11.99 11.99 14 9.5 14Z"
+                                  Width="13" Height="13" />
+                    </Button>
+                    </Grid>
 
                     <Button x:Name="BtnResumeSession" Grid.Row="1" Grid.Column="3"
                             Classes="primary"

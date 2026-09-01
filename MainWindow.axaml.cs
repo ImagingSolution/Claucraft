@@ -372,6 +372,7 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnActivityExtensions, Loc.Get("ExtensionsTooltip"));
         ToolTip.SetTip(BtnRefreshExtensions, Loc.Get("Refresh"));
         TxtExtensionSearch.PlaceholderText = Loc.Get("ExtensionsSearch");
+        ToolTip.SetTip(BtnManageSessions, Loc.Get("ManageSessionsTooltip"));
         ToolTip.SetTip(BtnEditorSave, Loc.Get("EditorSaveTooltip"));
         ToolTip.SetTip(BtnEditorClose, Loc.Get("EditorCloseTooltip"));
         // The cached rows carry summaries built in the language we just left.
@@ -558,7 +559,7 @@ public partial class MainWindow : Window
 
         // Session row — only Claude-style CLIs expose a session index Claucraft can read.
         LblSession.IsVisible = features.SessionList;
-        CmbSessions.IsVisible = features.SessionList;
+        SessionRow.IsVisible = features.SessionList;
         if (features.SessionList)
         {
             LblResume.Text = Loc.Get("Resume");
@@ -2355,6 +2356,193 @@ public partial class MainWindow : Window
     {
         if (!_cli.Features.SessionList) return;
         BtnResumeSession.IsEnabled = CmbSessions.SelectedItem is SessionInfo;
+    }
+
+    // ── Session picker ──
+
+    private const int MaxSessionRows = 60;
+
+    /// <summary>
+    /// A searchable view of the same sessions the combo holds, with a way to throw one away.
+    /// The combo is fine for picking among a handful and useless at the dozens a long-running
+    /// project accumulates, and it has nowhere to put a per-row action.
+    /// </summary>
+    private void OnManageSessions(object? sender, RoutedEventArgs e)
+    {
+        var sessions = CmbSessions.ItemsSource as List<SessionInfo> ?? new List<SessionInfo>();
+
+        var search = new TextBox
+        {
+            PlaceholderText = Loc.Get("SearchSessions"),
+            FontSize = 12,
+            Padding = new Thickness(8, 5),
+            CornerRadius = new CornerRadius(4),
+            Margin = new Thickness(0, 0, 0, 6),
+        };
+        var rows = new StackPanel { Spacing = 1 };
+        var hint = new TextBlock
+        {
+            FontSize = 10,
+            Opacity = 0.55,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(2, 6, 2, 0),
+        };
+
+        var flyout = new Flyout
+        {
+            // The button sits at the right of the toolbar, so the panel grows back across the
+            // window rather than off the side of it.
+            Placement = PlacementMode.BottomEdgeAlignedRight,
+            Content = new DockPanel
+            {
+                Width = 460,
+                Children =
+                {
+                    Docked(search, Avalonia.Controls.Dock.Top),
+                    Docked(hint, Avalonia.Controls.Dock.Bottom),
+                    new ScrollViewer
+                    {
+                        MaxHeight = 360,
+                        HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+                        VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                        Content = rows,
+                    },
+                },
+            },
+        };
+
+        void Render()
+        {
+            var query = search.Text?.Trim() ?? "";
+            var matches = sessions.Where(s => MatchesSession(s, query)).ToList();
+
+            rows.Children.Clear();
+            foreach (var session in matches.Take(MaxSessionRows))
+                rows.Children.Add(BuildSessionRow(session, flyout, sessions, Render));
+
+            hint.Text = matches.Count == 0
+                ? Loc.Get("NoMatches")
+                : matches.Count > MaxSessionRows
+                    ? string.Format(Loc.Get("ExtensionsMoreFmt"), matches.Count - MaxSessionRows)
+                    : string.Format(Loc.Get("SessionCountFmt"), matches.Count);
+        }
+
+        search.TextChanged += (_, _) => Render();
+        Render();
+
+        flyout.ShowAt(BtnManageSessions);
+        Dispatcher.UIThread.Post(() => search.Focus());
+    }
+
+    /// <summary>Sets a child's dock side inline, so a DockPanel can be built as one initializer.</summary>
+    private static Control Docked(Control control, Avalonia.Controls.Dock side)
+    {
+        DockPanel.SetDock(control, side);
+        return control;
+    }
+
+    private static bool MatchesSession(SessionInfo session, string query)
+    {
+        if (query.Length == 0) return true;
+        return Has(session.DisplayTitle) || Has(session.Summary) || Has(session.Id)
+            || Has(session.Timestamp?.ToString("yyyy/MM/dd HH:mm"));
+
+        bool Has(string? text) =>
+            text != null && text.Contains(query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private Control BuildSessionRow(
+        SessionInfo session, Flyout flyout, List<SessionInfo> all, Action render)
+    {
+        var stamp = new TextBlock
+        {
+            Text = session.Timestamp?.ToString("yyyy/MM/dd HH:mm") ?? "",
+            FontSize = 10,
+            Opacity = 0.6,
+            Width = 104,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var title = new TextBlock
+        {
+            Text = session.DisplayTitle ?? session.Summary ?? session.Id,
+            FontSize = 12,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var remove = new Button
+        {
+            Content = new TextBlock { Text = "×", FontSize = 13 },
+            Padding = new Thickness(6, 0),
+            MinHeight = 0,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Opacity = 0.55,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTip.SetTip(remove, Loc.Get("DeleteSession"));
+        remove.Click += async (_, args) =>
+        {
+            args.Handled = true;
+            await DeleteSessionAsync(session, all, render);
+        };
+
+        var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
+        Grid.SetColumn(stamp, 0);
+        Grid.SetColumn(title, 1);
+        Grid.SetColumn(remove, 2);
+        grid.Children.Add(stamp);
+        grid.Children.Add(title);
+        grid.Children.Add(remove);
+
+        var row = new Border
+        {
+            Child = grid,
+            Padding = new Thickness(6, 5),
+            CornerRadius = new CornerRadius(4),
+            Background = Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+        ToolTip.SetTip(row, session.Id);
+
+        var hover = new SolidColorBrush(_isDark
+            ? Color.FromArgb(30, 255, 255, 255)
+            : Color.FromArgb(20, 0, 0, 0));
+        row.PointerEntered += (_, _) => row.Background = hover;
+        row.PointerExited += (_, _) => row.Background = Brushes.Transparent;
+        row.PointerPressed += (_, args) =>
+        {
+            if (!args.GetCurrentPoint(row).Properties.IsLeftButtonPressed) return;
+            CmbSessions.SelectedItem = session;
+            flyout.Hide();
+        };
+
+        return row;
+    }
+
+    private async Task DeleteSessionAsync(SessionInfo session, List<SessionInfo> all, Action render)
+    {
+        var label = session.DisplayTitle ?? session.Summary ?? session.Id;
+        if (!await ShowConfirmDialog(
+                Loc.Get("DeleteSession"),
+                string.Format(Loc.Get("DeleteSessionConfirmFmt"), label)))
+            return;
+
+        var error = SessionService.Delete(_projectFolder ?? "", session.Id);
+        if (error != null)
+        {
+            await ShowConfirmDialog(Loc.Get("DeleteSession"),
+                string.Format(Loc.Get("DeleteSessionFailedFmt"), error));
+            return;
+        }
+
+        // The combo is bound to this same list, so it has to be reset to notice the removal.
+        all.Remove(session);
+        CmbSessions.ItemsSource = null;
+        CmbSessions.ItemsSource = all;
+        SyncSessionSelection();
+        render();
     }
 
     private void OnResumeSession(object? sender, RoutedEventArgs e)

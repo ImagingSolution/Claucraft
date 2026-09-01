@@ -112,6 +112,10 @@ public static class Loc
         // ── Session Management ──
         ["DeleteSession"] = new() { ["English"] = "Delete", ["日本語"] = "削除" },
         ["SearchSessions"] = new() { ["English"] = "Search sessions...", ["日本語"] = "セッション検索..." },
+        ["ManageSessionsTooltip"] = new() { ["English"] = "Search sessions", ["日本語"] = "セッションを検索" },
+        ["SessionCountFmt"] = new() { ["English"] = "Showing {0}", ["日本語"] = "{0} 件を表示" },
+        ["DeleteSessionConfirmFmt"] = new() { ["English"] = "Delete \"{0}\"? The transcript goes to the recycle bin.", ["日本語"] = "「{0}」を削除しますか？ トランスクリプトはごみ箱に移動します。" },
+        ["DeleteSessionFailedFmt"] = new() { ["English"] = "Could not delete: {0}", ["日本語"] = "削除できませんでした: {0}" },
 
         // ── File Preview ──
         ["Preview"] = new() { ["English"] = "Preview", ["日本語"] = "プレビュー" },

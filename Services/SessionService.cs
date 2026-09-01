@@ -444,6 +444,53 @@ public static class SessionService
     }
 
     /// <summary>
+    /// Sends a session's transcript, and the folder holding its subagents and tool results,
+    /// to the recycle bin. Returns null on success, else the reason.
+    ///
+    /// This is the one place Claucraft removes anything under ~/.claude, so it goes only where
+    /// the id points and only to the bin - a transcript is the sole copy of a conversation.
+    /// </summary>
+    public static string? Delete(string projectFolder, string sessionId)
+    {
+        // The id names files, so anything that could climb out of the project's folder is a
+        // bug or worse; refuse rather than reinterpret.
+        if (string.IsNullOrWhiteSpace(sessionId) ||
+            sessionId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+            sessionId.Contains("..", StringComparison.Ordinal))
+            return "invalid session id";
+
+        try
+        {
+            string claudeProjectsDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".claude", "projects");
+            if (!Directory.Exists(claudeProjectsDir)) return "no projects folder";
+
+            string normalizedTarget = NormalizeFolderName(projectFolder);
+            var targets = new List<string>();
+
+            foreach (var dir in Directory.GetDirectories(claudeProjectsDir))
+            {
+                if (!NormalizeFolderName(Path.GetFileName(dir))
+                        .Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var transcript = Path.Combine(dir, sessionId + ".jsonl");
+                if (File.Exists(transcript)) targets.Add(transcript);
+
+                var sidecar = Path.Combine(dir, sessionId);
+                if (Directory.Exists(sidecar)) targets.Add(sidecar);
+            }
+
+            if (targets.Count == 0) return "session not found";
+            return RecycleBin.Send(targets.ToArray());
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    /// <summary>
     /// Get the most recent project folders (up to 10) from ~/.claude/projects/ JSONL files.
     /// Returns actual folder paths extracted from session cwd fields, sorted by most recent first.
     /// </summary>
