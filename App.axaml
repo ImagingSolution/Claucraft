@@ -122,7 +122,7 @@
             <!-- The gap between one icon and the next is the button's spare height plus the
                  margins around it. At 48 that came to 32px; 32 halves it to 16 and leaves the
                  icons the size they were. Width stays put so the bar keeps its own width. -->
-            <Setter Property="Height" Value="32" />
+            <Setter Property="Height" Value="40" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Opacity" Value="0.45" />

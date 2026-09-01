@@ -307,6 +307,7 @@ public partial class MainWindow : Window
         // Toolbar
         LblProject.Text = Loc.Get("Project");
         CmbProjectFolder.PlaceholderText = Loc.Get("SelectProjectFolder");
+        ToolTip.SetTip(BtnNewProject, Loc.Get("NewProject"));
         LblSession.Text = Loc.Get("Session");
         CmbSessions.PlaceholderText = Loc.Get("SelectSession");
         // LblNewClaude / LblResume depend on the active provider — set by ApplyProviderUi()
@@ -317,7 +318,6 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnBrowseFolder, Loc.Get("SelectProjectFolder"));
 
         // Activity Bar tooltips
-        ToolTip.SetTip(BtnActivityNewProject, Loc.Get("NewProject"));
         ToolTip.SetTip(BtnActivityExplorer, Loc.Get("ExplorerTooltip"));
         ToolTip.SetTip(BtnActivitySnippets, Loc.Get("SnippetsTooltip"));
         ToolTip.SetTip(BtnActivityWindows, Loc.Get("WindowsTooltip"));

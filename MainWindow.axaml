@@ -39,15 +39,28 @@
                                FontSize="12" Foreground="{DynamicResource SubtleText}"
                                FontWeight="Normal" />
 
-                    <ComboBox x:Name="CmbProjectFolder" Grid.Row="0" Grid.Column="1"
+                    <Grid x:Name="ProjectRow" Grid.Row="0" Grid.Column="1"
+                          ColumnDefinitions="*,Auto" Margin="10,0">
+                    <ComboBox x:Name="CmbProjectFolder" Grid.Column="0"
                               Classes="modern"
                               IsEditable="True"
                               PlaceholderText="Select project folder..."
                               VerticalAlignment="Center"
                               HorizontalAlignment="Stretch"
-                              Margin="10,0"
                               SelectionChanged="OnProjectFolderSelectionChanged"
                               KeyDown="OnProjectFolderKeyDown" />
+                    <!-- Opens a project, the same act as the welcome page's New Project.
+                         Sits beside the folder combo it fills in, matching the session row's
+                         search button below it. -->
+                    <Button x:Name="BtnNewProject" Grid.Column="1"
+                            Classes="icon-btn" Padding="5" Margin="5,0,0,0"
+                            VerticalAlignment="Center"
+                            ToolTip.Tip="New Project"
+                            Click="OnActivityNewProject">
+                        <PathIcon Data="M20 6H12L10 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V8C22 6.9 21.1 6 20 6ZM20 18H4V6H9.17L11.17 8H20V18ZM13 10H11V12H9V14H11V16H13V14H15V12H13V10Z"
+                                  Width="13" Height="13" />
+                    </Button>
+                    </Grid>
 
                     <!-- Launch profile: bounds how much context a new session accumulates.
                          Kept in its own column so the button column is sized by New Session alone. -->
@@ -324,17 +337,6 @@
                     BorderBrush="{DynamicResource DividerColor}" BorderThickness="0,0,0.5,0">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="0,8">
-                        <!-- Opens a project, the same act as the welcome page's New Project.
-                             Above the divider because it changes what every panel below is
-                             looking at, rather than toggling one of them. -->
-                        <Button x:Name="BtnActivityNewProject" Classes="activity-btn"
-                                ToolTip.Tip="New Project"
-                                Click="OnActivityNewProject">
-                            <PathIcon Data="M20 6H12L10 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V8C22 6.9 21.1 6 20 6ZM20 18H4V6H9.17L11.17 8H20V18ZM13 10H11V12H9V14H11V16H13V14H15V12H13V10Z"
-                                      Width="20" Height="20" />
-                        </Button>
-                        <Border Height="1" Margin="8,4"
-                                Background="{DynamicResource DividerColor}" />
                         <Button x:Name="BtnActivityExplorer" Classes="activity-btn"
                                 ToolTip.Tip="Explorer (Ctrl+Shift+E)"
                                 Click="OnActivityExplorer">
