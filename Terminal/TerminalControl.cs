@@ -44,6 +44,12 @@ public class TerminalControl : Control, IDisposable
     // Click-to-move caret: guards the arrow-key convergence loop against re-entry
     private bool _caretMoveInProgress;
 
+    // Caret blink, in step with the input box's own caret
+    private DispatcherTimer? _caretBlinkTimer;
+    private bool _caretOn = true;
+    private int _lastCaretRow = -1;
+    private int _lastCaretCol = -1;
+
     // Scrollbar drag state
     private bool _isScrollbarDragging;
     private double _scrollbarDragStartY;
@@ -261,6 +267,24 @@ public class TerminalControl : Control, IDisposable
         // Forward click to activate MDI window
         _inputTextBox.PointerPressed += (s, e) => Clicked?.Invoke();
 
+        // Blink the terminal caret on the same 500ms cadence as the caret in the input
+        // box below it. The timer runs only while that box holds focus, which is also
+        // the only time the caret is drawn, so an unfocused terminal never repaints for
+        // a blink — and in an MDI window only the active session's caret is ticking.
+        _caretBlinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _caretBlinkTimer.Tick += (_, _) =>
+        {
+            _caretOn = !_caretOn;
+            InvalidateVisual();
+        };
+        _inputTextBox.GotFocus += (_, _) => RestartCaretBlink();
+        _inputTextBox.LostFocus += (_, _) =>
+        {
+            _caretBlinkTimer?.Stop();
+            _caretOn = true;
+            InvalidateVisual();
+        };
+
         // Expand button (▲)
         _expandButton = new Button
         {
@@ -402,9 +426,25 @@ public class TerminalControl : Control, IDisposable
         if (!_firstInputCaptured)
             _firstInputBuffer.Append(e.Text);
 
-        // Printable text committed (half-width direct or IME confirmed) — send to PTY
-        if (_hasSelection) ClearSelection();
-        _pty?.WriteInput(e.Text);
+        // Printable text committed (half-width direct or IME confirmed) — send to PTY.
+        // Typing over a selection replaces it, the way a text editor does. If an edit
+        // is already in flight the character still goes straight through rather than
+        // being dropped on the floor.
+        if (_hasSelection && !_caretMoveInProgress
+            && TryGetEditableSelection(out _, out _, out _, out _))
+        {
+            string typed = e.Text;
+            RunCaretEdit(() => ReplaceSelectionAsync(() =>
+            {
+                _pty?.WriteInput(typed);
+                return Task.CompletedTask;
+            }));
+        }
+        else
+        {
+            if (_hasSelection) ClearSelection();
+            _pty?.WriteInput(e.Text);
+        }
         e.Handled = true;
 
         // Mark that we just committed, so next KeyDown clears remnants
@@ -533,11 +573,25 @@ public class TerminalControl : Control, IDisposable
                 // Document view: paste into IME input box
                 _ = PasteToInputBoxAsync();
             }
+            else if (_hasSelection && !_caretMoveInProgress)
+            {
+                // Terminal mode with a selection: paste over it, as an editor would
+                RunCaretEdit(() => ReplaceSelectionAsync(PasteFromClipboardAsync));
+            }
             else
             {
                 // Terminal mode: paste directly to PTY
                 _ = PasteFromClipboardAsync();
             }
+            e.Handled = true;
+            return;
+        }
+
+        // Ctrl+X: cut the selection. Without one there is nothing to cut, so the key
+        // falls through to the PTY the way any other unhandled key does.
+        if (e.Key == Key.X && e.KeyModifiers.HasFlag(KeyModifiers.Control) && _hasSelection)
+        {
+            RunCaretEdit(CutSelectionAsync);
             e.Handled = true;
             return;
         }
@@ -614,7 +668,7 @@ public class TerminalControl : Control, IDisposable
         // Backspace / Delete with selection: delete all selected characters
         if (_hasSelection && (e.Key == Key.Back || e.Key == Key.Delete))
         {
-            DeleteSelectedChars();
+            RunCaretEdit(DeleteSelectionAsync);
             e.Handled = true;
             return;
         }
@@ -1221,111 +1275,6 @@ public class TerminalControl : Control, IDisposable
             ? _buffer.GetCell(bufRow, col) : TerminalCell.Empty;
     }
 
-    private int CountCharsInRange(int fromRow, int fromCol, int toRow, int toCol)
-    {
-        int count = 0;
-        for (int row = fromRow; row <= toRow; row++)
-        {
-            int colStart = (row == fromRow) ? fromCol : 0;
-            int colEnd = (row == toRow) ? toCol : _buffer.Cols - 1;
-            for (int col = colStart; col <= colEnd; col++)
-            {
-                var cell = GetCellAtAbs(row, col);
-                if (cell.Character != '\0' && !cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
-                    count++;
-            }
-        }
-        return count;
-    }
-
-
-    private void DeleteSelectedChars()
-    {
-        GetOrderedSelection(out int sr, out int sc, out int er, out int ec);
-        int scrollbackCount = _buffer.Scrollback.Count;
-        int cursorAbsRow = ScreenRowToAbsolute(_buffer.CursorRow);
-        int cursorCol = _buffer.CursorCol;
-
-        System.Diagnostics.Debug.WriteLine($"[DeleteSelectedChars] sel=({sr},{sc})-({er},{ec}) cursorAbsRow={cursorAbsRow} cursorCol={cursorCol}");
-
-        // Multi-row or off-cursor-row: send charCount backspaces from cursor position
-        // (can't reliably move cursor to selection, but delete matching number of chars)
-        if (sr != er || sr != cursorAbsRow)
-        {
-            int multiCharCount = CountCharsInRange(sr, sc, er, ec);
-            ClearSelection();
-            if (multiCharCount <= 0) multiCharCount = 1;
-            System.Diagnostics.Debug.WriteLine($"[DeleteSelectedChars] multi-row/off-cursor: sending {multiCharCount} backspaces");
-            var bsSeq = new System.Text.StringBuilder();
-            for (int i = 0; i < multiCharCount; i++)
-                bsSeq.Append('\x7f');
-            _pty?.WriteInput(bsSeq.ToString());
-            return;
-        }
-
-        int bufRow = cursorAbsRow - scrollbackCount;
-        if (bufRow < 0 || bufRow >= _buffer.Rows)
-        {
-            ClearSelection();
-            _pty?.WriteInput("\x7f");
-            return;
-        }
-
-        // Find last non-empty cell in selection to avoid counting trailing empty cells
-        int lastContent = sc - 1;
-        for (int col = ec; col >= sc; col--)
-        {
-            if (_buffer.GetCell(bufRow, col).Character != '\0')
-            {
-                lastContent = col;
-                break;
-            }
-        }
-
-        ClearSelection();
-
-        // If selection has no content, fall back to single backspace
-        if (lastContent < sc)
-        {
-            _pty?.WriteInput("\x7f");
-            return;
-        }
-
-        int effectiveEnd = Math.Min(ec, lastContent);
-        int charCount = 0;
-        for (int col = sc; col <= effectiveEnd; col++)
-        {
-            var cell = _buffer.GetCell(bufRow, col);
-            if (!cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
-                charCount++;
-        }
-
-        if (charCount <= 0)
-        {
-            _pty?.WriteInput("\x7f");
-            return;
-        }
-
-        int targetCol = effectiveEnd + 1;
-
-        System.Diagnostics.Debug.WriteLine($"[DeleteSelectedChars] charCount={charCount} cursorCol={cursorCol} targetCol={targetCol}");
-
-        // Move cursor to end of selection, then send backspaces
-        var sb = new System.Text.StringBuilder();
-        if (cursorCol != targetCol)
-        {
-            int moveCount = CountCharsBetweenCols(bufRow, cursorCol, targetCol);
-            if (moveCount > 0)
-                for (int i = 0; i < moveCount; i++) sb.Append("\x1b[C");
-            else if (moveCount < 0)
-                for (int i = 0; i < -moveCount; i++) sb.Append("\x1b[D");
-        }
-        for (int i = 0; i < charCount; i++)
-            sb.Append('\x7f');
-
-        _pty?.WriteInput(sb.ToString());
-    }
-
     private int CountCharsBetweenCols(int row, int fromCol, int toCol)
     {
         if (fromCol == toCol) return 0;
@@ -1340,6 +1289,16 @@ public class TerminalControl : Control, IDisposable
         return toCol > fromCol ? count : -count;
     }
 
+    // Lights the caret and restarts its blink cycle. A caret that is being moved or
+    // typed at should stay solid rather than wink out mid-keystroke, which is how the
+    // input box's own caret behaves.
+    private void RestartCaretBlink()
+    {
+        _caretOn = true;
+        _caretBlinkTimer?.Stop();
+        _caretBlinkTimer?.Start();
+    }
+
     // ── Click-to-move caret ──
 
     // The CLI owns the cursor, so it can only be moved by sending it arrow keys.
@@ -1352,66 +1311,157 @@ public class TerminalControl : Control, IDisposable
     private const int MaxCaretMoveChars = 400;
     private const int MaxInputBlockRows = 12;
     private const int CaretMoveAttempts = 4;
+    private const int CaretSettleMs = 70;    // time for the CLI to redraw after a batch
 
-    private async void TryMoveCaretToClick(int screenRow, int targetCol)
+    // Runs one caret-driven edit at a time. These all talk to the CLI by sending keys
+    // and waiting to see what it did, so a second one starting mid-flight would be
+    // reading a grid the first is still changing.
+    private async void RunCaretEdit(Func<Task> edit)
     {
-        if (_caretMoveInProgress || _pty == null) return;
-        if (_scrollOffset != 0) return;      // scrolled back: the cursor is not on screen
-        if (screenRow < 0 || screenRow >= _buffer.Rows) return;
+        if (_caretMoveInProgress) return;
+        _caretMoveInProgress = true;
+        try
+        {
+            await edit();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[CaretEdit] {ex.Message}");
+        }
+        finally
+        {
+            _caretMoveInProgress = false;
+        }
+    }
+
+    private void TryMoveCaretToClick(int screenRow, int targetCol)
+    {
+        RunCaretEdit(() => MoveCaretToAsync(screenRow, targetCol));
+    }
+
+    // Walks the caret to a cell and reports how many characters it travelled
+    // (positive to the right). Each batch is sized by an estimate that skips the
+    // character a soft wrap swallows, so the estimate can only fall short, never
+    // overshoot — no arrow is ever absorbed at an edge, and the batches therefore
+    // add up to the true distance. That makes the return value exact, which is how
+    // the selection edits below learn how long a selection really is.
+    private async Task<int> MoveCaretToAsync(int screenRow, int targetCol)
+    {
+        if (_pty == null) return 0;
+        if (_scrollOffset != 0) return 0;    // scrolled back: the cursor is not on screen
+        if (screenRow < 0 || screenRow >= _buffer.Rows) return 0;
         // The alternate buffer is no signal either way here: the Claude Code CLI
         // draws its prompt on it. Finding the prompt row is what tells us the
-        // click landed on an editable line, and that check happens below.
+        // target is on an editable line, and that check happens below.
 
         int blockTop, blockBottom, textLeft;
         if (!TryGetInputBlock(out blockTop, out blockBottom, out textLeft))
         {
             // No prompt row found. Same-row moves need no layout guesswork, so they
             // still work; anything crossing a row would be guessing and is dropped.
-            if (screenRow != _buffer.CursorRow) return;
+            if (screenRow != _buffer.CursorRow) return 0;
             blockTop = blockBottom = screenRow;
             textLeft = 0;
         }
-        if (screenRow < blockTop || screenRow > blockBottom) return;
+        if (screenRow < blockTop || screenRow > blockBottom) return 0;
 
         targetCol = ClampToRowContent(screenRow, targetCol, textLeft);
 
-        _caretMoveInProgress = true;
-        try
+        int moved = 0;
+        int lastRow = -1, lastCol = -1;
+        for (int attempt = 0; attempt < CaretMoveAttempts; attempt++)
         {
-            int lastRow = -1, lastCol = -1;
-            for (int attempt = 0; attempt < CaretMoveAttempts; attempt++)
-            {
-                int fromRow = _buffer.CursorRow;
-                int fromCol = _buffer.CursorCol;
-                if (fromRow == screenRow && fromCol == targetCol) return;
+            int fromRow = _buffer.CursorRow;
+            int fromCol = _buffer.CursorCol;
+            if (fromRow == screenRow && fromCol == targetCol) break;
 
-                // The previous batch moved nothing, so the caret is against an edge
-                // the estimate does not know about. Stop rather than thrash.
-                if (fromRow == lastRow && fromCol == lastCol) return;
-                lastRow = fromRow;
-                lastCol = fromCol;
+            // The previous batch moved nothing, so the caret is against an edge
+            // the estimate does not know about. Stop rather than thrash.
+            if (fromRow == lastRow && fromCol == lastCol) break;
+            lastRow = fromRow;
+            lastCol = fromCol;
 
-                int delta = EstimateCaretDelta(fromRow, fromCol, screenRow, targetCol,
-                                               blockTop, blockBottom, textLeft);
-                if (delta == 0 || Math.Abs(delta) > MaxCaretMoveChars) return;
+            int delta = EstimateCaretDelta(fromRow, fromCol, screenRow, targetCol,
+                                           blockTop, blockBottom, textLeft);
+            if (delta == 0 || Math.Abs(delta) > MaxCaretMoveChars) break;
 
-                string key = delta > 0 ? "\x1b[C" : "\x1b[D";
-                var sb = new System.Text.StringBuilder(key.Length * Math.Abs(delta));
-                for (int i = 0; i < Math.Abs(delta); i++) sb.Append(key);
-                _pty.WriteInput(sb.ToString());
+            string key = delta > 0 ? "\x1b[C" : "\x1b[D";
+            var sb = new System.Text.StringBuilder(key.Length * Math.Abs(delta));
+            for (int i = 0; i < Math.Abs(delta); i++) sb.Append(key);
+            _pty.WriteInput(sb.ToString());
+            moved += delta;
 
-                await Task.Delay(70);
-                if (_pty == null) return;
-            }
+            await Task.Delay(CaretSettleMs);
+            if (_pty == null) break;
         }
-        catch (Exception ex)
+        return moved;
+    }
+
+    // ── Editing the selection ──
+
+    // True when the whole selection sits on the CLI's editable input line. That is
+    // the only place a delete can be honoured: a selection up in the output belongs
+    // to the scrollback, and sending backspaces for it would eat the prompt instead
+    // of the text the user highlighted.
+    private bool TryGetEditableSelection(out int startRow, out int startCol,
+                                         out int endRow, out int endCol)
+    {
+        startRow = startCol = endRow = endCol = 0;
+        if (!_hasSelection || _pty == null || _scrollOffset != 0) return false;
+        if (!TryGetInputBlock(out int blockTop, out int blockBottom, out _)) return false;
+
+        GetOrderedSelection(out int sr, out int sc, out int er, out int ec);
+        startRow = AbsoluteToScreenRow(sr);
+        endRow = AbsoluteToScreenRow(er);
+        startCol = sc;
+        endCol = ec;
+        return startRow >= blockTop && endRow <= blockBottom && startRow <= endRow;
+    }
+
+    private async Task DeleteSelectionAsync()
+    {
+        if (!TryGetEditableSelection(out int sr, out int sc, out int er, out int ec)) return;
+        ClearSelection();
+
+        int count;
+        if (sr == er)
         {
-            System.Diagnostics.Debug.WriteLine($"[MoveCaret] {ex.Message}");
+            // One row: the grid gives the character count exactly, no walk needed.
+            count = CountCharsBetweenCols(sr, sc, ec + 1);
+            await MoveCaretToAsync(er, ec + 1);
         }
-        finally
+        else
         {
-            _caretMoveInProgress = false;
+            // Across a wrap the grid alone cannot say how many characters there are,
+            // so walk the caret over the selection and let the walk count them. This
+            // happens before anything is deleted, while the layout is still still.
+            await MoveCaretToAsync(sr, sc);
+            count = await MoveCaretToAsync(er, ec + 1);
         }
+
+        if (count <= 0 || count > MaxCaretMoveChars) return;
+
+        var sb = new System.Text.StringBuilder(count);
+        for (int i = 0; i < count; i++) sb.Append('\x7f');
+        _pty?.WriteInput(sb.ToString());
+    }
+
+    private async Task CutSelectionAsync()
+    {
+        var text = GetSelectedText();       // before DeleteSelectionAsync clears it
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard != null && !string.IsNullOrEmpty(text))
+            await clipboard.SetTextAsync(text);
+        await DeleteSelectionAsync();
+    }
+
+    // Deletes the selection, then lets the caller put something in its place — the
+    // paste, or the character that was just typed.
+    private async Task ReplaceSelectionAsync(Func<Task> write)
+    {
+        await DeleteSelectionAsync();
+        await Task.Delay(CaretSettleMs);    // let the deletion land before writing over it
+        await write();
     }
 
     // Locates the CLI's input block: the prompt row, which carries the marker in
@@ -3506,6 +3556,15 @@ public class TerminalControl : Control, IDisposable
 
         bool focused = _inputTextBox.IsFocused;
 
+        // A cursor that has moved since the last frame restarts the blink cycle, so the
+        // caret stays lit while text is being typed or the caret walked along a line.
+        if (_buffer.CursorRow != _lastCaretRow || _buffer.CursorCol != _lastCaretCol)
+        {
+            _lastCaretRow = _buffer.CursorRow;
+            _lastCaretCol = _buffer.CursorCol;
+            if (focused) RestartCaretBlink();
+        }
+
         // Pre-compute screen rows covered by Excalidraw diagrams (to skip cell drawing there)
         var diagramRowRanges = new List<(int start, int end)>();
         if (EnableChartRendering)
@@ -3577,7 +3636,7 @@ public class TerminalControl : Control, IDisposable
                 // It is drawn after the glyph (see below) so the character underneath
                 // stays readable rather than being inverted out by a block.
                 bool isCaretCell = _scrollOffset == 0 && row == _buffer.CursorRow && col == _buffer.CursorCol
-                                   && _buffer.CursorVisible && focused;
+                                   && _buffer.CursorVisible && focused && _caretOn;
 
                 // Draw selection highlight
                 if (IsCellSelected(row, col))
@@ -4283,6 +4342,7 @@ public class TerminalControl : Control, IDisposable
         _disposed = true;
         _marquee.Stop();
         _permissionCheckTimer?.Stop();
+        _caretBlinkTimer?.Stop();
         _pty?.Dispose();
     }
 }
