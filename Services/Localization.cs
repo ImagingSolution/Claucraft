@@ -499,7 +499,6 @@ public static class Loc
         ["PaletteToggleWindows"] = new() { ["English"] = "Toggle Windows Panel", ["日本語"] = "ウィンドウ一覧を開閉" },
         ["PaletteUsageChart"] = new() { ["English"] = "Usage Chart", ["日本語"] = "使用量チャート" },
         ["PaletteSwitchMode"] = new() { ["English"] = "Switch Mode (Shift+Tab)", ["日本語"] = "モード切替 (Shift+Tab)" },
-        ["MarginalCostTooltip"] = new() { ["English"] = "Last turn, then what the next turn costs just to re-read the conversation.", ["日本語"] = "直前のターンの費用と、次のターンが会話を読み直すだけでかかる費用。" },
         ["StopTaskTooltip"] = new() { ["English"] = "Stop what the AI is doing (Esc)", ["日本語"] = "AI の実行を中断（Esc）" },
 
         // -- Git write operations --

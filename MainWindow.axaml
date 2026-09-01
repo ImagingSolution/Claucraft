@@ -283,15 +283,6 @@
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" />
                 </StackPanel>
-                <!-- What the last turn cost and what the next one costs just to re-read the
-                     conversation. Next to the context meter because both move every turn. -->
-                <StackPanel x:Name="StatusCostPanel" Orientation="Horizontal" Spacing="4"
-                            IsVisible="False" Cursor="Hand" VerticalAlignment="Center"
-                            PointerPressed="OnStatusCostPressed">
-                    <TextBlock x:Name="StatusCostText" Text=""
-                               Foreground="{DynamicResource SubtleText}" FontSize="11"
-                               VerticalAlignment="Center" />
-                </StackPanel>
                 <!-- The activity readout comes and goes mid-session, so it sits at the end of
                      the row: a turn starting or ending never shifts the badges and meters to
                      its left. Stop lives on the input row of the window that is working. -->

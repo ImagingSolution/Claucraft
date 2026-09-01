@@ -4795,27 +4795,8 @@ public partial class MainWindow : Window
     private void ClearSessionReadout()
     {
         StatusModelName.IsVisible = false;
-        StatusCostPanel.IsVisible = false;
         ApplyEffortReadout();
     }
-
-    /// <summary>
-    /// The two numbers that say whether a session has grown expensive: what the last turn cost,
-    /// and what the next one costs before it has done any work at all. A session that has become
-    /// expensive to continue says so here instead of turning up on the invoice.
-    /// </summary>
-    private void ApplyMarginalCost(TurnCost session)
-    {
-        bool show = _settings.ShowMarginalCost && session.HasData;
-        StatusCostPanel.IsVisible = show;
-        if (!show) return;
-
-        StatusCostText.Text = "$" + FormatUsd(session.LastTurnUsd) + " → $" + FormatUsd(session.NextTurnUsd);
-        ToolTip.SetTip(StatusCostPanel, Loc.Get("MarginalCostTooltip"));
-    }
-
-    private void OnStatusCostPressed(object? sender, PointerPressedEventArgs e)
-        => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this);
 
     /// <summary>The model that is answering, and the effort it is answering at.</summary>
     private void ApplySessionReadout()
@@ -4847,7 +4828,6 @@ public partial class MainWindow : Window
             ToolTip.SetTip(StatusModelName, Loc.Get("ModelTooltip"));
         }
 
-        ApplyMarginalCost(session);
         ApplyEffortReadout();
     }
 

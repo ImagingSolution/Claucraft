@@ -46,9 +46,6 @@ public class AppSettings
     /// <summary>Launch profile applied to new sessions, matched against CliProvider.Profiles.</summary>
     public string ActiveProfileId { get; set; } = CliProviderService.StandardProfileId;
 
-    /// <summary>Show what the current turn cost and what the next one will cost in the status bar.</summary>
-    public bool ShowMarginalCost { get; set; } = true;
-
     /// <summary>
     /// Context-remaining percentage at or below which the hand-off banner appears.
     /// Continuing past this point costs more per turn than starting fresh with a brief.
