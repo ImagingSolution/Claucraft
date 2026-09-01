@@ -3411,13 +3411,11 @@ public class TerminalControl : Control, IDisposable
                 if (bg != bgDefault)
                     context.FillRectangle(new SolidColorBrush(bg), new Rect(x, y, cellW, _cellHeight));
 
-                // Draw cursor
-                if (_scrollOffset == 0 && row == _buffer.CursorRow && col == _buffer.CursorCol && _buffer.CursorVisible && focused)
-                {
-                    context.FillRectangle(new SolidColorBrush(Color.FromArgb(180, fg.R, fg.G, fg.B)),
-                        new Rect(x, y, cellW, _cellHeight));
-                    fg = bgDefault;
-                }
+                // The caret is an insert-mode bar sitting on the cell's leading edge.
+                // It is drawn after the glyph (see below) so the character underneath
+                // stays readable rather than being inverted out by a block.
+                bool isCaretCell = _scrollOffset == 0 && row == _buffer.CursorRow && col == _buffer.CursorCol
+                                   && _buffer.CursorVisible && focused;
 
                 // Draw selection highlight
                 if (IsCellSelected(row, col))
@@ -3460,6 +3458,16 @@ public class TerminalControl : Control, IDisposable
                 {
                     var pen = new Pen(new SolidColorBrush(fg), 1);
                     context.DrawLine(pen, new Point(x, y + _cellHeight - 1), new Point(x + cellW, y + _cellHeight - 1));
+                }
+
+                // Draw the caret last so it sits on top of the glyph. The default
+                // foreground is used rather than the cell's own, which an inverse-video
+                // run would have swapped to the background colour and made invisible.
+                if (isCaretCell)
+                {
+                    double caretW = Math.Max(1.5, _cellWidth * 0.18);
+                    context.FillRectangle(new SolidColorBrush(Color.FromArgb(230, fgDefault.R, fgDefault.G, fgDefault.B)),
+                        new Rect(x, y, caretW, _cellHeight));
                 }
 
                 x += cellW;
