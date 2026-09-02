@@ -35,6 +35,19 @@ public class TerminalControl : Control, IDisposable
     private bool _hasSelection;
     private int _selStartRow, _selStartCol;
     private int _selEndRow, _selEndCol;
+    // Column the rows of a selection start at. Zero everywhere except inside the
+    // CLI's input block, whose rows are indented past the prompt marker: there the
+    // gutter is layout, not text, and selecting it would only copy stray spaces.
+    private int _selLeftMargin;
+
+    // Shift+arrow selection. Held as two caret positions - one before the first
+    // selected character, one after the last - because that is the only way growing
+    // and shrinking a selection behaves the way an editor's does. Converted to the
+    // inclusive cell pair above whenever it changes.
+    private bool _kbSelecting;
+    private int _kbAnchorRow, _kbAnchorCol;
+    private int _kbFocusRow, _kbFocusCol;
+    private int _kbDesiredCol = -1;      // column Up/Down tries to hold on to
 
     // Input boundary tracking: records where editable input begins
     private bool _inputStartPending = true;
@@ -596,6 +609,11 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
+        // Submitting or breaking the line leaves a keyboard selection pointing at
+        // text that is about to move, so it goes first.
+        if (_kbSelecting && e.Key == Key.Enter)
+            ClearSelection();
+
         // Shift+Enter: send newline (line feed) for multi-line input
         if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
@@ -672,6 +690,24 @@ public class TerminalControl : Control, IDisposable
             e.Handled = true;
             return;
         }
+
+        // Shift+arrows: extend a selection over the CLI's input, the way an editor
+        // does. Nothing is sent to the CLI - the selection is ours to draw, and the
+        // keys that act on one (Ctrl+C, Ctrl+X, Backspace, typing over it) already
+        // know how to reach the text through the caret.
+        if (!_isDocumentView
+            && (e.KeyModifiers & (KeyModifiers.Shift | KeyModifiers.Control | KeyModifiers.Alt)) == KeyModifiers.Shift
+            && e.Key is Key.Left or Key.Right or Key.Up or Key.Down
+            && ExtendKeyboardSelection(e.Key))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        // A plain caret move collapses a keyboard selection, as it would in an editor.
+        if (_kbSelecting && e.Key is Key.Left or Key.Right or Key.Up or Key.Down
+                                  or Key.Home or Key.End or Key.PageUp or Key.PageDown)
+            ClearSelection();
 
         // Forward navigation/editing keys directly to PTY
         {
@@ -1128,6 +1164,9 @@ public class TerminalControl : Control, IDisposable
             _selEndCol = _selStartCol;
             _isSelecting = true;
             _hasSelection = false;
+            _kbSelecting = false;
+            _kbDesiredCol = -1;
+            _selLeftMargin = 0;
             e.Pointer.Capture(this);
             InvalidateVisual();
         }
@@ -1160,6 +1199,7 @@ public class TerminalControl : Control, IDisposable
             _selEndRow = ScreenRowToAbsolute(row);
             _selEndCol = col;
             _hasSelection = (_selStartRow != _selEndRow || _selStartCol != _selEndCol);
+            UpdateSelectionMargin();
             InvalidateVisual();
             e.Handled = true;
         }
@@ -1202,15 +1242,32 @@ public class TerminalControl : Control, IDisposable
         }
     }
 
+    // Decides where the rows of the current selection begin. The CLI indents every
+    // row of its input block to line up past the prompt marker, so a selection that
+    // stays inside the block starts at the text rather than in that gutter; drag a
+    // selection over ordinary output and column 0 is content again, margin zero.
+    private void UpdateSelectionMargin()
+    {
+        _selLeftMargin = 0;
+        if (!_hasSelection || _scrollOffset != 0) return;
+        if (!TryGetInputBlock(out int blockTop, out int blockBottom, out int textLeft)) return;
+
+        GetOrderedSelection(out int sr, out _, out int er, out _);
+        int startRow = AbsoluteToScreenRow(sr);
+        int endRow = AbsoluteToScreenRow(er);
+        if (startRow >= blockTop && endRow <= blockBottom)
+            _selLeftMargin = textLeft;
+    }
+
     private bool IsCellSelected(int screenRow, int col)
     {
         if (!_hasSelection) return false;
         int absRow = ScreenRowToAbsolute(screenRow);
         GetOrderedSelection(out int sr, out int sc, out int er, out int ec);
         if (absRow < sr || absRow > er) return false;
-        if (absRow == sr && absRow == er) return col >= sc && col <= ec;
-        if (absRow == sr) return col >= sc;
-        if (absRow == er) return col <= ec;
+        if (col < _selLeftMargin) return false;
+        if (absRow == sr && col < sc) return false;
+        if (absRow == er && col > ec) return false;
         return true;
     }
 
@@ -1221,8 +1278,12 @@ public class TerminalControl : Control, IDisposable
         var sb = new System.Text.StringBuilder();
         for (int absRow = sr; absRow <= er; absRow++)
         {
-            int colStart = (absRow == sr) ? sc : 0;
-            int colEnd = (absRow == er) ? ec : _buffer.Cols - 1;
+            // The input block is padded on the right by as much as it is indented on
+            // the left, so a row there ends short of the terminal's own edge. Reading
+            // past it would fold that padding into a soft-wrapped line.
+            int rowEnd = _buffer.Cols - _selLeftMargin - 1;
+            int colStart = Math.Max(_selLeftMargin, (absRow == sr) ? sc : 0);
+            int colEnd = Math.Min(rowEnd, (absRow == er) ? ec : rowEnd);
             for (int col = colStart; col <= colEnd && col < _buffer.Cols; col++)
             {
                 var cell = GetCellAtAbs(absRow, col);
@@ -1236,20 +1297,32 @@ public class TerminalControl : Control, IDisposable
                 // Use buffer's line-wrap tracking for accurate detection
                 int sbCount = _buffer.Scrollback.Count;
                 bool isWrapped;
-                if (absRow < sbCount)
+                if (_selLeftMargin > 0)
+                {
+                    // Inside the input block that flag says nothing: the CLI pads every
+                    // row out to the right edge and lets the terminal wrap, so all of
+                    // them come back wrapped.
+                    isWrapped = IsInputRowWrapped(absRow, _selLeftMargin);
+                }
+                else if (absRow < sbCount)
                     isWrapped = _buffer.IsScrollbackLineWrapped(absRow);
                 else
                     isWrapped = _buffer.IsLineWrapped(absRow - sbCount);
 
-                if (!isWrapped)
+                // Trailing spaces go at a real line break, and inside the input block
+                // they go at a wrapped one too: the CLI wraps early rather than split a
+                // double-width character across the edge, and the gap it leaves behind
+                // is padding, not text.
+                if (!isWrapped || _selLeftMargin > 0)
                 {
-                    // Real line break: trim trailing spaces and add newline
                     int len = sb.Length;
                     while (len > 0 && sb[len - 1] == ' ') len--;
                     sb.Length = len;
-                    sb.AppendLine();
                 }
-                // Wrapped: text continues directly on next row (no trim, no newline)
+
+                // Real line break: start a new one. Wrapped: the text just carries on.
+                if (!isWrapped)
+                    sb.AppendLine();
             }
         }
         return sb.ToString().TrimEnd();
@@ -1259,8 +1332,161 @@ public class TerminalControl : Control, IDisposable
     {
         _hasSelection = false;
         _isSelecting = false;
+        _kbSelecting = false;
+        _kbDesiredCol = -1;
+        _selLeftMargin = 0;
         InvalidateVisual();
     }
+
+    // ── Keyboard selection (Shift+arrows) ──
+
+    // Moves one end of the selection by a character or a row. Nothing goes to the
+    // CLI: the caret stays where the CLI put it, which is where the edit keys expect
+    // to start walking from. The walk stays inside the CLI's input block, because a
+    // selection outside it is not editable and there would be no keyboard way back.
+    // Returns false when there is no input block to walk, leaving the key to the CLI.
+    private bool ExtendKeyboardSelection(Key key)
+    {
+        if (_pty == null || _scrollOffset != 0) return false;
+        if (!TryGetInputBlock(out int blockTop, out int blockBottom, out int textLeft))
+            return false;
+
+        bool InBlock(int r) => r >= blockTop && r <= blockBottom;
+
+        int row, col;
+        if (_kbSelecting && InBlock(_kbAnchorRow) && InBlock(_kbFocusRow))
+        {
+            row = _kbFocusRow;
+            col = ClampToRowContent(row, _kbFocusCol, textLeft);
+        }
+        else if (_hasSelection
+                 && TryGetEditableSelection(out int msr, out int msc, out int mer, out int mec))
+        {
+            // Carry on from a selection made with the mouse rather than dropping it.
+            _kbAnchorRow = msr;
+            _kbAnchorCol = ClampToRowContent(msr, msc, textLeft);
+            row = mer;
+            col = ClampToRowContent(mer, NextCol(mer, mec), textLeft);
+            _kbDesiredCol = -1;
+            _kbSelecting = true;
+        }
+        else
+        {
+            // A fresh selection starts at the CLI's own caret.
+            row = _buffer.CursorRow;
+            if (!InBlock(row)) return false;
+            col = ClampToRowContent(row, _buffer.CursorCol, textLeft);
+            _kbAnchorRow = row;
+            _kbAnchorCol = col;
+            _kbDesiredCol = -1;
+            _kbSelecting = true;
+        }
+
+        switch (key)
+        {
+            case Key.Left:
+                if (col > textLeft) col = PrevCol(row, col);
+                else if (row > blockTop) { row--; col = RowContentEnd(row, textLeft); }
+                _kbDesiredCol = -1;
+                break;
+
+            case Key.Right:
+                if (col < RowContentEnd(row, textLeft)) col = NextCol(row, col);
+                else if (row < blockBottom) { row++; col = textLeft; }
+                _kbDesiredCol = -1;
+                break;
+
+            case Key.Up:
+                if (_kbDesiredCol < 0) _kbDesiredCol = col;
+                if (row > blockTop)
+                {
+                    row--;
+                    col = SnapToCharStart(row, ClampToRowContent(row, _kbDesiredCol, textLeft));
+                }
+                // Already on the top row: take its start, and let go of the column
+                // being held on to, since the caret is visibly no longer in it.
+                else _kbDesiredCol = col = textLeft;
+                break;
+
+            case Key.Down:
+                if (_kbDesiredCol < 0) _kbDesiredCol = col;
+                if (row < blockBottom)
+                {
+                    row++;
+                    col = SnapToCharStart(row, ClampToRowContent(row, _kbDesiredCol, textLeft));
+                }
+                // Likewise on the bottom row: take its end and hold on to that instead.
+                else _kbDesiredCol = col = RowContentEnd(row, textLeft);
+                break;
+        }
+
+        _kbFocusRow = row;
+        _kbFocusCol = col;
+        ApplyKeyboardSelection(textLeft);
+        return true;
+    }
+
+    // Turns the caret pair into the inclusive cell pair the rest of the selection
+    // code speaks: the far caret steps back one character to name the last cell.
+    private void ApplyKeyboardSelection(int textLeft)
+    {
+        int loRow = _kbAnchorRow, loCol = _kbAnchorCol;
+        int hiRow = _kbFocusRow, hiCol = _kbFocusCol;
+        if (hiRow < loRow || (hiRow == loRow && hiCol < loCol))
+        {
+            (loRow, hiRow) = (hiRow, loRow);
+            (loCol, hiCol) = (hiCol, loCol);
+        }
+
+        if (loRow == hiRow && loCol >= hiCol)
+        {
+            _hasSelection = false;                          // walked back onto the anchor
+            InvalidateVisual();
+            return;
+        }
+
+        int endRow, endCol;
+        if (hiRow > loRow && hiCol <= textLeft)
+        {
+            // The far caret sits at the start of its row, so the last selected cell
+            // is the last one on the row above.
+            endRow = hiRow - 1;
+            endCol = _buffer.Cols - 1;
+        }
+        else
+        {
+            endRow = hiRow;
+            endCol = PrevCol(hiRow, hiCol);
+        }
+
+        _selStartRow = ScreenRowToAbsolute(loRow);
+        _selStartCol = loCol;
+        _selEndRow = ScreenRowToAbsolute(endRow);
+        _selEndCol = endCol;
+        _hasSelection = true;
+        _isSelecting = false;
+        _selLeftMargin = textLeft;      // the walk never leaves the input block
+        InvalidateVisual();
+    }
+
+    // A caret never sits between the halves of a double-width character, so these
+    // three step over the trailing half rather than into it.
+    private int SnapToCharStart(int row, int col)
+    {
+        while (col > 0 && GetCellAt(row, col).Attributes.HasFlag(CellAttributes.WideCharTrail))
+            col--;
+        return col;
+    }
+
+    private int NextCol(int row, int col)
+    {
+        int c = col + 1;
+        while (c < _buffer.Cols && GetCellAt(row, c).Attributes.HasFlag(CellAttributes.WideCharTrail))
+            c++;
+        return c;
+    }
+
+    private int PrevCol(int row, int col) => SnapToCharStart(row, col - 1);
 
     private TerminalCell GetCellAtAbs(int absRow, int col)
     {
@@ -1408,14 +1634,19 @@ public class TerminalControl : Control, IDisposable
     {
         startRow = startCol = endRow = endCol = 0;
         if (!_hasSelection || _pty == null || _scrollOffset != 0) return false;
-        if (!TryGetInputBlock(out int blockTop, out int blockBottom, out _)) return false;
+        if (!TryGetInputBlock(out int blockTop, out int blockBottom, out int textLeft)) return false;
 
         GetOrderedSelection(out int sr, out int sc, out int er, out int ec);
         startRow = AbsoluteToScreenRow(sr);
         endRow = AbsoluteToScreenRow(er);
-        startCol = sc;
+        // The gutter the block is indented by is layout, not text. It is left out of
+        // what gets drawn and copied, so it has to be left out of what gets deleted
+        // too - otherwise a drag that began on the prompt marker eats two characters
+        // that were never highlighted.
+        startCol = Math.Max(sc, textLeft);
         endCol = ec;
-        return startRow >= blockTop && endRow <= blockBottom && startRow <= endRow;
+        if (startRow < blockTop || endRow > blockBottom || startRow > endRow) return false;
+        return startRow < endRow || startCol <= endCol;
     }
 
     private async Task DeleteSelectionAsync()
@@ -1542,6 +1773,33 @@ public class TerminalControl : Control, IDisposable
         for (int col = _buffer.Cols - 1; col >= 0; col--)
             if (GetCellAt(row, col).Character > ' ') return col;
         return -1;
+    }
+
+    // Did this row of the CLI's input block run out of room, or did the user end it?
+    // The buffer's wrap flag cannot say: the CLI pads every row with spaces out to the
+    // terminal's right edge and lets it wrap, so every one of them comes back wrapped.
+    // What does say is whether the next row's first character would still have fitted
+    // here - the box is padded by `margin` columns on the right just as it is indented
+    // by that many on the left, so its last usable column is Cols - margin - 1.
+    private bool IsInputRowWrapped(int absRow, int margin)
+    {
+        int boxRight = _buffer.Cols - margin - 1;
+
+        int used = margin - 1;
+        for (int col = boxRight; col >= margin; col--)
+        {
+            var cell = GetCellAtAbs(absRow, col);
+            // A double-width character's trail cell holds '\0', but it is occupied.
+            if (cell.Character > ' ' || cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
+            {
+                used = col;
+                break;
+            }
+        }
+
+        int nextWidth = GetCellAtAbs(absRow + 1, margin + 1)
+                            .Attributes.HasFlag(CellAttributes.WideCharTrail) ? 2 : 1;
+        return boxRight - used < nextWidth;
     }
 
     // ── Expanded Input Panel ──
