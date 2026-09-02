@@ -2954,7 +2954,9 @@ public partial class MainWindow : Window
         BannerTitle.Text = title;
         BannerTitle.Foreground = new SolidColorBrush(accent);
         BannerAccent.Background = new SolidColorBrush(accent);
-        InfoBanner.Background = new SolidColorBrush(accent, 0.10);
+        // The tint rides on top of the banner's own opaque background; the banner
+        // now floats over the terminal, so the console text must not show through.
+        BannerTint.Background = new SolidColorBrush(accent, 0.14);
         BannerDetail.Text = detail;
         BannerDetail.IsVisible = !string.IsNullOrWhiteSpace(detail);
         LblBannerAction.Text = actionLabel ?? "";

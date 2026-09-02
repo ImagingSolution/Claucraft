@@ -899,36 +899,46 @@
                     </Grid>
                 </Border>
 
-                <!-- Advice banner: known CLI errors and the auto-compact hint -->
-                <Border x:Name="InfoBanner" DockPanel.Dock="Top" IsVisible="False"
-                        Padding="12,8" BorderThickness="0,0,0,0.5"
-                        BorderBrush="{DynamicResource DividerColor}">
-                    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
-                        <Border x:Name="BannerAccent" Grid.Column="0" Width="3" CornerRadius="2"
-                                Margin="0,0,10,0" />
-                        <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
-                            <TextBlock x:Name="BannerTitle" Text="" FontSize="12"
-                                       FontWeight="SemiBold" TextWrapping="Wrap" />
-                            <TextBlock x:Name="BannerDetail" Text="" FontSize="11"
-                                       Foreground="{DynamicResource SubtleText}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <Button x:Name="BtnBannerAction" Grid.Column="2" Classes="primary"
-                                Padding="10,3" Margin="8,0,4,0" IsVisible="False"
-                                VerticalAlignment="Center" Click="OnBannerAction">
-                            <TextBlock x:Name="LblBannerAction" Text="" FontSize="11" />
-                        </Button>
-                        <Button x:Name="BtnBannerDismiss" Grid.Column="3" Classes="icon-btn"
-                                Padding="4" VerticalAlignment="Center"
-                                ToolTip.Tip="Dismiss" Click="OnBannerDismiss">
-                            <PathIcon Data="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12Z"
-                                      Width="12" Height="12" />
-                        </Button>
-                    </Grid>
-                </Border>
+                <!-- MDI Container, with the advice banner floating over its top edge.
+                     Docking the banner would resize the terminals underneath, so every
+                     error would shove the console text around; overlaying leaves the
+                     grid untouched. -->
+                <Grid>
+                    <Canvas x:Name="MdiContainer"
+                            Background="Transparent" ClipToBounds="True" />
 
-                <!-- MDI Container -->
-                <Canvas x:Name="MdiContainer"
-                        Background="Transparent" ClipToBounds="True" />
+                    <!-- Advice banner: known CLI errors and the auto-compact hint -->
+                    <Border x:Name="InfoBanner" IsVisible="False" ZIndex="10"
+                            VerticalAlignment="Top" Margin="8,8,8,0"
+                            CornerRadius="6" BorderThickness="1"
+                            Background="{DynamicResource ToolBarBg}"
+                            BorderBrush="{DynamicResource DividerColor}"
+                            BoxShadow="0 4 14 0 #66000000">
+                        <Border x:Name="BannerTint" Padding="12,8" CornerRadius="5">
+                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                <Border x:Name="BannerAccent" Grid.Column="0" Width="3" CornerRadius="2"
+                                        Margin="0,0,10,0" />
+                                <StackPanel Grid.Column="1" Spacing="1" VerticalAlignment="Center">
+                                    <TextBlock x:Name="BannerTitle" Text="" FontSize="12"
+                                               FontWeight="SemiBold" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="BannerDetail" Text="" FontSize="11"
+                                               Foreground="{DynamicResource SubtleText}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button x:Name="BtnBannerAction" Grid.Column="2" Classes="primary"
+                                        Padding="10,3" Margin="8,0,4,0" IsVisible="False"
+                                        VerticalAlignment="Center" Click="OnBannerAction">
+                                    <TextBlock x:Name="LblBannerAction" Text="" FontSize="11" />
+                                </Button>
+                                <Button x:Name="BtnBannerDismiss" Grid.Column="3" Classes="icon-btn"
+                                        Padding="4" VerticalAlignment="Center"
+                                        ToolTip.Tip="Dismiss" Click="OnBannerDismiss">
+                                    <PathIcon Data="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12Z"
+                                              Width="12" Height="12" />
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </Border>
+                </Grid>
             </DockPanel>
         </Grid>
     </DockPanel>
