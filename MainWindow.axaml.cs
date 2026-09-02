@@ -187,6 +187,22 @@ public partial class MainWindow : Window
         public bool IsClosing { get; set; }
 
         /// <summary>
+        /// Turn-end detection, per window: true once this window has been seen mid-turn, so the
+        /// working → idle edge can be told apart from a window that was idle all along.
+        /// </summary>
+        public bool SawWorking { get; set; }
+
+        /// <summary>Consecutive idle polls since <see cref="SawWorking"/>, debouncing that edge.</summary>
+        public int IdlePolls { get; set; }
+
+        /// <summary>
+        /// The name the transcript gives this window's session, once one has been read. It
+        /// outranks anything the screen says: the opening prompt and the terminal's own OSC
+        /// title are both guesses at a name the session now states outright.
+        /// </summary>
+        public string? SessionTitle { get; set; }
+
+        /// <summary>
         /// The isolated checkout this window works in, or null when it shares the project
         /// folder with every other window. Owned by the window: closing it takes the checkout
         /// with it.
@@ -974,10 +990,11 @@ public partial class MainWindow : Window
                 Margin = new Thickness(0, 5, 0, 0),
             };
 
-            // Show summary (FirstUserInput) if available, otherwise fall back to tab title
-            var displayText = !string.IsNullOrEmpty(child.Terminal.FirstUserInput)
-                ? child.Terminal.FirstUserInput
-                : child.StripText.Text ?? _cli.Active.Name;
+            // The tab is the one name a window has, so this row reads it rather than keeping a
+            // second opinion: a rename, or a session renamed with /rename, reaches both at once.
+            var displayText = !string.IsNullOrWhiteSpace(child.StripText.Text)
+                ? child.StripText.Text
+                : child.Terminal.FirstUserInput ?? _cli.Active.Name;
 
             var title = new TextBlock
             {
@@ -2320,15 +2337,23 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (string.IsNullOrEmpty(_projectFolder) || !Directory.Exists(_projectFolder))
+        // The scan is slow enough that the active project can change while it runs, so the
+        // sessions that come back are matched against the folder they were actually read from.
+        var folder = _projectFolder;
+        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
         {
             CmbSessions.ItemsSource = null;
             BtnResumeSession.IsEnabled = false;
             return;
         }
 
-        CmbSessions.ItemsSource = await SessionService.GetSessionsForProjectAsync(_projectFolder);
+        var sessions = await SessionService.GetSessionsForProjectAsync(folder);
+        CmbSessions.ItemsSource = sessions;
         SyncSessionSelection();
+
+        // Same snapshot, same strings: whatever the box lists for a running session is what its
+        // tab, title bar and Windows row say.
+        ApplySessionTitles(sessions, folder);
     }
 
     /// <summary>
@@ -2721,12 +2746,15 @@ public partial class MainWindow : Window
     {
         for (int i = 0; i < _children.Count; i++)
         {
-            var terminal = _children[i].Terminal;
+            var child = _children[i];
+            var terminal = child.Terminal;
             try
             {
-                terminal.IsGenerating = i == _activeChildIndex
+                bool working = i == _activeChildIndex
                     ? _insight.IsWorking
                     : TerminalInsight.IsWorking(terminal.GetScreenText(0));
+                terminal.IsGenerating = working;
+                NoteChildTurnEnd(child, working);
             }
             catch
             {
@@ -2759,6 +2787,100 @@ public partial class MainWindow : Window
         _sawWorking = false;
         _idlePolls = 0;
         BlinkActiveFrame();
+    }
+
+    /// <summary>
+    /// The same working → idle edge as <see cref="NoteRunState"/>, tracked per window rather than
+    /// for the active one only, so a window that answered in the background gets its title
+    /// refreshed too. The idle state has to hold for two polls for the same reason it does there:
+    /// the spinner can be missing from a single frame mid-turn.
+    /// </summary>
+    private void NoteChildTurnEnd(MdiChildInfo entry, bool working)
+    {
+        if (working)
+        {
+            entry.SawWorking = true;
+            entry.IdlePolls = 0;
+            return;
+        }
+
+        if (!entry.SawWorking) return;
+        if (++entry.IdlePolls < TurnEndIdlePolls) return;
+
+        entry.SawWorking = false;
+        entry.IdlePolls = 0;
+        _ = SyncTitleFromSessionAsync(entry);
+    }
+
+    /// <summary>
+    /// Re-reads a window's session name once its answer is in. The CLI names a session as the
+    /// conversation grows and /rename replaces that name outright, but neither reaches the
+    /// terminal, so the transcript is the only place the current name exists. A window the user
+    /// renamed by hand keeps that name - a manual title outranks everything.
+    /// </summary>
+    private async Task SyncTitleFromSessionAsync(MdiChildInfo entry)
+    {
+        if (!_cli.Features.SessionList) return;
+        if (entry.Terminal.IsManualTitle || entry.IsClosing) return;
+
+        var folder = entry.ProjectFolder;
+        var sessionId = entry.SessionId;
+        if (string.IsNullOrEmpty(folder) || string.IsNullOrEmpty(sessionId)) return;
+
+        var info = await SessionService.GetSessionAsync(folder, sessionId);
+        if (info == null || !_children.Contains(entry)) return;
+        if (!ApplySessionTitle(entry, info)) return;
+
+        // The name moved, so the Session box is now showing the old one. Re-reading it is the
+        // expensive half of this - every transcript in the project - and a turn that did not
+        // rename anything never gets here.
+        if (PathEquals(folder, _projectFolder)) RefreshSessionList();
+    }
+
+    /// <summary>
+    /// Points every window of a project at the names in the list the Session box is about to
+    /// show, so the two are painted from one snapshot and cannot drift apart.
+    /// </summary>
+    private void ApplySessionTitles(List<SessionInfo> sessions, string folder)
+    {
+        foreach (var child in _children)
+        {
+            if (child.Terminal.IsManualTitle || child.IsClosing) continue;
+            if (string.IsNullOrEmpty(child.SessionId)) continue;
+            if (!PathEquals(child.ProjectFolder, folder)) continue;
+
+            var info = sessions.Find(s => s.Id.Equals(child.SessionId, StringComparison.OrdinalIgnoreCase));
+            if (info != null) ApplySessionTitle(child, info);
+        }
+    }
+
+    /// <summary>
+    /// Writes a session's name onto the window showing it - title bar, tab strip and, through
+    /// <see cref="RefreshWindowsPanel"/>, the Windows list. Takes <see cref="SessionInfo.DisplayTitle"/>
+    /// verbatim because that is the string the Session box renders; anything trimmed or
+    /// substituted here is a name that reads as a different session. Returns true when it changed.
+    /// </summary>
+    private bool ApplySessionTitle(MdiChildInfo entry, SessionInfo info)
+    {
+        var title = info.DisplayTitle;
+        if (string.IsNullOrWhiteSpace(title)) return false;
+
+        entry.SessionTitle = title;
+        if (entry.StripText.Text == title && entry.TitleText.Text == title) return false;
+
+        entry.TitleText.Text = title;
+        entry.StripText.Text = title;
+        entry.FirstInput = title;
+        RefreshWindowsPanel();
+        return true;
+    }
+
+    /// <summary>Two folder paths naming the same directory, separators and trailing slash aside.</summary>
+    private static bool PathEquals(string? a, string? b)
+    {
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        static string Norm(string p) => p.Replace('/', '\\').TrimEnd('\\');
+        return Norm(a).Equals(Norm(b), StringComparison.OrdinalIgnoreCase);
     }
 
     private void ClearLiveStatus()
@@ -6065,6 +6187,9 @@ public partial class MainWindow : Window
         terminal.TitleChanged += title =>
         {
             if (terminal.IsManualTitle) return; // Manual title takes priority
+            // Once the transcript has named the session, the screen stops being consulted -
+            // otherwise an OSC title would drop the tab back to the opening prompt.
+            if (!string.IsNullOrEmpty(entry.SessionTitle)) return;
             // Prefer session summary (FirstUserInput) over terminal OSC title
             var displayTitle = !string.IsNullOrEmpty(terminal.FirstUserInput)
                 ? terminal.FirstUserInput
@@ -6143,8 +6268,21 @@ public partial class MainWindow : Window
         {
             await Task.Delay(1500);
             if (!_children.Contains(entry)) return;
-            entry.SessionId = SessionService.FindSessionIdCreatedAfter(folder, launchedAt);
+            entry.SessionId = SessionService.FindSessionIdCreatedAfter(folder, launchedAt, TakenSessionIds(entry));
         }
+    }
+
+    /// <summary>
+    /// Sessions the other windows are already running, so a window looking for its own does not
+    /// settle on one of theirs. Two windows sharing an id would show each other's names.
+    /// </summary>
+    private HashSet<string> TakenSessionIds(MdiChildInfo except)
+    {
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var child in _children)
+            if (child != except && !string.IsNullOrEmpty(child.SessionId))
+                taken.Add(child.SessionId!);
+        return taken;
     }
 
     private async void CloseChild(MdiChildInfo entry)

@@ -83,6 +83,51 @@ public static class SessionService
         });
     }
 
+    /// <summary>
+    /// Read one session, exactly the way <see cref="GetSessionsForProjectAsync"/> reads each of
+    /// them, so the name this returns is the name the Session box lists. A window that only wants
+    /// its own session's current title has no business re-scanning every transcript in the
+    /// project. Returns null when the transcript is gone or /resume would hide it.
+    /// </summary>
+    public static Task<SessionInfo?> GetSessionAsync(string projectFolder, string sessionId)
+    {
+        return Task.Run<SessionInfo?>(() =>
+        {
+            // The id names a file, so anything that could climb out of the project's folder is
+            // refused rather than reinterpreted.
+            if (string.IsNullOrWhiteSpace(sessionId) ||
+                sessionId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                sessionId.Contains("..", StringComparison.Ordinal))
+                return null;
+
+            try
+            {
+                string claudeProjectsDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".claude", "projects");
+                if (!Directory.Exists(claudeProjectsDir)) return null;
+
+                string normalizedTarget = NormalizeFolderName(projectFolder);
+
+                foreach (var dir in Directory.GetDirectories(claudeProjectsDir))
+                {
+                    if (!NormalizeFolderName(Path.GetFileName(dir))
+                            .Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var transcript = Path.Combine(dir, sessionId + ".jsonl");
+                    if (!File.Exists(transcript)) continue;
+
+                    return ParseSessionFile(transcript, sessionId);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to read session {sessionId}: {ex.Message}");
+            }
+            return null;
+        });
+    }
+
     /// <summary>What a single pass over a transcript collects.</summary>
     private sealed class SessionScan
     {
@@ -414,11 +459,19 @@ public static class SessionService
     }
 
     /// <summary>
-    /// Session id of the newest transcript in the project folder written at or after the given time.
-    /// Used to learn the id of a session Claucraft launched itself, which the CLI only reveals by
-    /// creating the transcript file. Returns null while the CLI has not written one yet.
+    /// Session id of the transcript a window just started writing: one <em>created</em> in the
+    /// project folder at or after the given time. Used to learn the id of a session Claucraft
+    /// launched itself, which the CLI only reveals by creating the transcript file.
+    ///
+    /// Creation time is the whole test. Matching on last-write instead hands the window whichever
+    /// session in the project was typed into most recently - and with several windows on one
+    /// project, or a session running outside Claucraft, that is routinely somebody else's. Ids
+    /// another window already claimed are skipped for the same reason.
+    ///
+    /// Returns null while the CLI has not written a transcript yet.
     /// </summary>
-    public static string? FindSessionIdCreatedAfter(string projectFolder, DateTime after)
+    public static string? FindSessionIdCreatedAfter(string projectFolder, DateTime after,
+                                                    ICollection<string>? taken = null)
     {
         try
         {
@@ -435,10 +488,10 @@ public static class SessionService
                     .Equals(normalizedTarget, StringComparison.OrdinalIgnoreCase))
                 .SelectMany(d => Directory.GetFiles(d, "*.jsonl"))
                 .Select(f => new FileInfo(f))
-                .Where(f => f.CreationTime >= after || f.LastWriteTime >= after)
-                .OrderByDescending(f => f.LastWriteTime)
+                .Where(f => f.CreationTime >= after)
+                .OrderByDescending(f => f.CreationTime)
                 .Select(f => Path.GetFileNameWithoutExtension(f.Name))
-                .FirstOrDefault();
+                .FirstOrDefault(id => taken == null || !taken.Contains(id));
         }
         catch { return null; }
     }
