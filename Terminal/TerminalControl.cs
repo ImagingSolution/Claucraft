@@ -57,6 +57,15 @@ public class TerminalControl : Control, IDisposable
     // Click-to-move caret: guards the arrow-key convergence loop against re-entry
     private bool _caretMoveInProgress;
 
+    // Undo for the CLI's input line. The CLI owns that line and offers no undo of its
+    // own, so Claucraft keeps snapshots of the text and rewrites the line to put one
+    // back. See PushUndo / UndoAsync.
+    private readonly List<InputSnapshot> _undoStack = new();
+    private readonly List<InputSnapshot> _redoStack = new();
+    private UndoKind _lastUndoKind = UndoKind.None;
+    private bool _undoRunOpen;
+    private long _lastUndoTick;
+
     // Caret blink, in step with the input box's own caret
     private DispatcherTimer? _caretBlinkTimer;
     private bool _caretOn = true;
@@ -443,6 +452,7 @@ public class TerminalControl : Control, IDisposable
         // Typing over a selection replaces it, the way a text editor does. If an edit
         // is already in flight the character still goes straight through rather than
         // being dropped on the floor.
+        PushUndo(_hasSelection ? UndoKind.Structural : UndoKind.Typing);
         if (_hasSelection && !_caretMoveInProgress
             && TryGetEditableSelection(out _, out _, out _, out _))
         {
@@ -536,6 +546,7 @@ public class TerminalControl : Control, IDisposable
             else
             {
                 _inputStartPending = true;
+                ClearUndo();
                 _pty?.WriteInput("\x03");
             }
             e.Handled = true;
@@ -589,11 +600,13 @@ public class TerminalControl : Control, IDisposable
             else if (_hasSelection && !_caretMoveInProgress)
             {
                 // Terminal mode with a selection: paste over it, as an editor would
+                PushUndo(UndoKind.Structural);
                 RunCaretEdit(() => ReplaceSelectionAsync(PasteFromClipboardAsync));
             }
             else
             {
                 // Terminal mode: paste directly to PTY
+                PushUndo(UndoKind.Structural);
                 _ = PasteFromClipboardAsync();
             }
             e.Handled = true;
@@ -604,6 +617,7 @@ public class TerminalControl : Control, IDisposable
         // falls through to the PTY the way any other unhandled key does.
         if (e.Key == Key.X && e.KeyModifiers.HasFlag(KeyModifiers.Control) && _hasSelection)
         {
+            PushUndo(UndoKind.Structural);
             RunCaretEdit(CutSelectionAsync);
             e.Handled = true;
             return;
@@ -667,6 +681,7 @@ public class TerminalControl : Control, IDisposable
             }
             PromptSubmitted?.Invoke(ReadSubmittedLine());
             _inputStartPending = true;
+            ClearUndo();
             _pty?.WriteInput("\r");
             e.Handled = true;
             return;
@@ -686,6 +701,7 @@ public class TerminalControl : Control, IDisposable
         // Backspace / Delete with selection: delete all selected characters
         if (_hasSelection && (e.Key == Key.Back || e.Key == Key.Delete))
         {
+            PushUndo(UndoKind.Structural);
             RunCaretEdit(DeleteSelectionAsync);
             e.Handled = true;
             return;
@@ -741,6 +757,10 @@ public class TerminalControl : Control, IDisposable
 
             if (seq != null)
             {
+                // Deleting a character is undoable. Moving the caret is not, but it does
+                // close the current run, so what gets typed next undoes on its own.
+                if (e.Key is Key.Back or Key.Delete) PushUndo(UndoKind.Deleting);
+                else BreakUndoRun();
                 _pty?.WriteInput(seq);
                 e.Handled = true;
                 return;
@@ -755,10 +775,30 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
-        // Ctrl+Z: send SIGTSTP
+        // Ctrl+Z undoes the last edit to the CLI's input line, Ctrl+Shift+Z redoes it.
+        // With nothing of ours to put back, the key keeps its terminal meaning and
+        // goes through as SIGTSTP.
         if (e.Key == Key.Z && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            _pty?.WriteInput("\x1a");
+            bool redo = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            bool alt = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+            var stack = redo ? _redoStack : _undoStack;
+            if (!alt && !_isDocumentView && !_caretMoveInProgress && stack.Count > 0)
+                RunCaretEdit(redo ? RedoAsync : UndoAsync);
+            else
+                _pty?.WriteInput("\x1a");
+            e.Handled = true;
+            return;
+        }
+
+        // Ctrl+Y: redo, the binding Windows editors use.
+        if (e.Key == Key.Y
+            && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift | KeyModifiers.Alt)) == KeyModifiers.Control)
+        {
+            if (!_isDocumentView && !_caretMoveInProgress && _redoStack.Count > 0)
+                RunCaretEdit(RedoAsync);
+            else
+                _pty?.WriteInput("\x19");
             e.Handled = true;
             return;
         }
@@ -1562,6 +1602,7 @@ public class TerminalControl : Control, IDisposable
 
     private void TryMoveCaretToClick(int screenRow, int targetCol)
     {
+        BreakUndoRun();
         RunCaretEdit(() => MoveCaretToAsync(screenRow, targetCol));
     }
 
@@ -1693,6 +1734,173 @@ public class TerminalControl : Control, IDisposable
         await DeleteSelectionAsync();
         await Task.Delay(CaretSettleMs);    // let the deletion land before writing over it
         await write();
+    }
+
+    // ── Undo ──
+
+    // What an edit was, for the purpose of grouping. A burst of typing, or a run of
+    // backspaces, folds into a single undo step the way an editor's does; anything
+    // else stands on its own.
+    private enum UndoKind { None, Typing, Deleting, Structural }
+
+    // The input line as it stood before an edit, and where the caret sat in it.
+    private readonly record struct InputSnapshot(string Text, int CaretOffset);
+
+    private const int MaxUndoDepth = 50;
+    private const int UndoCoalesceMs = 1000;
+
+    // Records the input line before an edit changes it, so it has to run before the
+    // edit reaches the PTY, while the grid still shows the old text.
+    private void PushUndo(UndoKind kind)
+    {
+        if (_isDocumentView || _caretMoveInProgress) return;
+
+        long now = Environment.TickCount64;
+        bool sameRun = _undoRunOpen
+                       && kind == _lastUndoKind
+                       && kind is UndoKind.Typing or UndoKind.Deleting
+                       && now - _lastUndoTick < UndoCoalesceMs;
+        _lastUndoKind = kind;
+        _lastUndoTick = now;
+        if (sameRun) return;
+
+        _undoRunOpen = false;
+        if (!TryReadInputBlock(out string text, out int caret)) return;
+
+        // Nothing has changed since the last snapshot, so a second copy of it would
+        // only spend a Ctrl+Z doing nothing.
+        if (_undoStack.Count == 0 || _undoStack[^1].Text != text)
+        {
+            _undoStack.Add(new InputSnapshot(text, caret));
+            if (_undoStack.Count > MaxUndoDepth) _undoStack.RemoveAt(0);
+            // Editing after an undo abandons what was undone, the way an editor does.
+            _redoStack.Clear();
+        }
+        _undoRunOpen = true;
+    }
+
+    // Ends the current run: the next edit gets an undo step of its own.
+    private void BreakUndoRun()
+    {
+        _undoRunOpen = false;
+        _lastUndoKind = UndoKind.None;
+    }
+
+    // Submitting or interrupting throws the line away, and every snapshot of it with it.
+    private void ClearUndo()
+    {
+        _undoStack.Clear();
+        _redoStack.Clear();
+        BreakUndoRun();
+    }
+
+    // Undo and redo are the same move in opposite directions: take the line back to
+    // the snapshot on top of one stack, and leave where it was on top of the other.
+    private Task UndoAsync() => ApplySnapshotAsync(_undoStack, _redoStack);
+    private Task RedoAsync() => ApplySnapshotAsync(_redoStack, _undoStack);
+
+    private async Task ApplySnapshotAsync(List<InputSnapshot> from, List<InputSnapshot> to)
+    {
+        if (from.Count == 0) return;
+        // Read the line before touching it - this is what the other stack goes back to.
+        if (!TryReadInputBlock(out string current, out int currentCaret)) return;
+
+        var snap = from[^1];
+        BreakUndoRun();
+        ClearSelection();
+
+        // The stacks only move once the line has actually come clean; a move that
+        // could not empty it has changed nothing worth stepping back over.
+        if (!await ClearInputLineAsync() || _pty == null) return;
+        from.RemoveAt(from.Count - 1);
+
+        if (snap.Text.Length > 0)
+        {
+            _pty.WriteInput(snap.Text);
+            await Task.Delay(CaretSettleMs);
+        }
+
+        // Typing leaves the caret after the last character; walk it back to where the
+        // snapshot had it.
+        int tail = snap.Text.Length - snap.CaretOffset;
+        if (tail > 0 && tail <= MaxCaretMoveChars)
+        {
+            var back = new System.Text.StringBuilder(tail * 3);
+            for (int i = 0; i < tail; i++) back.Append("\x1b[D");
+            _pty?.WriteInput(back.ToString());
+        }
+
+        to.Add(new InputSnapshot(current, currentCaret));
+        if (to.Count > MaxUndoDepth) to.RemoveAt(0);
+    }
+
+    // Empties the CLI's input line: walk the caret to the end, walk it back to the
+    // start to learn the exact length, then delete forward that many times. More than
+    // one pass, because a pass can only count what the grid shows and the grid cannot
+    // show a character a soft wrap swallowed - whatever the first pass leaves behind,
+    // the next one can see. Returns false if the line would not come clean, which is
+    // the signal not to type over what is left of it.
+    private async Task<bool> ClearInputLineAsync()
+    {
+        for (int pass = 0; pass < 3; pass++)
+        {
+            if (_pty == null || _scrollOffset != 0) return false;
+            if (!TryGetInputBlock(out _, out int bottom, out int textLeft)) return false;
+
+            await MoveCaretToAsync(bottom, RowContentEnd(bottom, textLeft));
+            if (_pty == null) return false;
+            if (!TryGetInputBlock(out int top, out _, out textLeft)) return false;
+
+            int count = -await MoveCaretToAsync(top, textLeft);
+            if (count < 0 || count > MaxCaretMoveChars) return false;
+            if (count == 0) break;
+
+            var del = new System.Text.StringBuilder(count * 4);
+            for (int i = 0; i < count; i++) del.Append("\x1b[3~");
+            _pty?.WriteInput(del.ToString());
+            await Task.Delay(CaretSettleMs);
+        }
+        return TryReadInputBlock(out string left, out _) && left.Length == 0;
+    }
+
+    // Reads the CLI's input line off the grid: the text it holds, and how far into
+    // that text the caret sits. The spaces a row ends on are the block's own padding
+    // rather than text, so they come off; a row that ran out of room joins the next.
+    private bool TryReadInputBlock(out string text, out int caretOffset)
+    {
+        text = "";
+        caretOffset = 0;
+        if (_pty == null || _scrollOffset != 0) return false;
+        if (!TryGetInputBlock(out int top, out int bottom, out int textLeft)) return false;
+
+        var sb = new System.Text.StringBuilder();
+        int rowEnd = _buffer.Cols - textLeft - 1;
+        int caret = -1;
+        for (int row = top; row <= bottom; row++)
+        {
+            int rowStart = sb.Length;
+            for (int col = textLeft; col <= rowEnd && col < _buffer.Cols; col++)
+            {
+                if (caret < 0 && row == _buffer.CursorRow && col == _buffer.CursorCol)
+                    caret = sb.Length;
+                var cell = GetCellAt(row, col);
+                if (cell.Attributes.HasFlag(CellAttributes.WideCharTrail)) continue;
+                sb.Append(cell.Character == '\0' ? ' ' : cell.Character);
+            }
+            if (caret < 0 && row == _buffer.CursorRow) caret = sb.Length;
+
+            int len = sb.Length;
+            while (len > rowStart && sb[len - 1] == ' ') len--;
+            sb.Length = len;
+            if (caret > len) caret = len;
+
+            if (row < bottom && !IsInputRowWrapped(ScreenRowToAbsolute(row), textLeft))
+                sb.Append('\n');
+        }
+
+        text = sb.ToString();
+        caretOffset = Math.Clamp(caret < 0 ? text.Length : caret, 0, text.Length);
+        return true;
     }
 
     // Locates the CLI's input block: the prompt row, which carries the marker in
