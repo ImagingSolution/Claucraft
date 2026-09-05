@@ -44,6 +44,14 @@ public sealed class TerminalSnapshot
     public bool IsWorking { get; init; }
     public int? ContextRemainingPercent { get; init; }
     public ErrorDiagnosis? Error { get; init; }
+
+    /// <summary>
+    /// The model named in the CLI's own "Set model to X" confirmation, if one is on screen right
+    /// now. This fires for a switch made any way - typed at the prompt, picked from the CLI's own
+    /// interactive picker, or sent by Claucraft's dropdown - so the status bar never depends on
+    /// which of those triggered it.
+    /// </summary>
+    public string? ModelSwitchedTo { get; init; }
 }
 
 /// <summary>
@@ -143,6 +151,14 @@ public static class TerminalInsight
     /// <summary>Matches a generic "Error: something broke" or "Failed to do X" line not caught by a more specific pattern.</summary>
     private static readonly Regex DiagGenericErrorRegex = new(@"error:|failed to", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
+    // ── Model switch ─────────────────────────────────────────────────────
+
+    /// <summary>Matches "Set model to Fable 5.1 and saved as your default for new sessions" and
+    /// the plain "Set model to Opus 5" the CLI prints for a session-only switch.</summary>
+    private static readonly Regex ModelSetRegex = new(
+        @"set model to\s+([A-Za-z][A-Za-z0-9 ./+-]*?)(?:\s+and saved\b|\s+for this session\b|\s*$)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     /// <summary>Analyzes the visible terminal text and returns everything the UI needs to render badges/indicators. Never throws.</summary>
     /// <param name="screenText">The terminal's visible screen (plus a few dozen lines of scrollback), newline-separated with \n.</param>
     public static TerminalSnapshot Analyze(string screenText)
@@ -156,6 +172,7 @@ public static class TerminalInsight
             var (activity, target) = DetectActivity(lines, isWorking);
             var contextPct = DetectContextRemaining(lines);
             var error = DetectError(lines);
+            var modelSwitchedTo = DetectModelSwitch(lines);
 
             return new TerminalSnapshot
             {
@@ -167,7 +184,8 @@ public static class TerminalInsight
                 ElapsedSeconds = elapsed,
                 IsWorking = isWorking,
                 ContextRemainingPercent = contextPct,
-                Error = error
+                Error = error,
+                ModelSwitchedTo = modelSwitchedTo
             };
         }
         catch
@@ -337,6 +355,16 @@ public static class TerminalInsight
 
             if (int.TryParse(m.Groups[1].Value, out var pct))
                 return Math.Clamp(pct, 0, 100);
+        }
+        return null;
+    }
+
+    private static string? DetectModelSwitch(string[] lines)
+    {
+        for (var i = lines.Length - 1; i >= 0; i--)
+        {
+            var m = ModelSetRegex.Match(lines[i]);
+            if (m.Success) return m.Groups[1].Value.Trim();
         }
         return null;
     }

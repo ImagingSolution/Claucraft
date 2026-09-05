@@ -290,7 +290,7 @@ public sealed class SessionCostMonitor
         ("claude-opus-4-6", "Opus 4.6"),
         ("claude-mythos-5", "Mythos 5"),
         ("claude-sonnet-5", "Sonnet 5"),
-        ("claude-fable-5", "Fable 5"),
+        ("claude-fable-5-1", "Fable 5.1"),
         ("claude-opus-5", "Opus 5"),
     };
 
