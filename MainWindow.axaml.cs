@@ -2337,7 +2337,11 @@ public partial class MainWindow : Window
         try
         {
             // Get remote origin URL -> extract repo name
-            var remoteUrl = GitCli.Run(_projectFolder, "remote", "get-url", "origin");
+            // Trimmed: GitCli.Run hands back git's stdout verbatim, trailing newline and
+            // all. Left on, that newline makes the status-bar label two lines tall - the
+            // name then rides above everything else on the row - and it rides along into
+            // the URL the repo name opens.
+            var remoteUrl = GitCli.Run(_projectFolder, "remote", "get-url", "origin").Trim();
 
             if (!string.IsNullOrEmpty(remoteUrl))
             {
@@ -2365,7 +2369,7 @@ public partial class MainWindow : Window
             }
 
             // Get current branch name
-            var branch = GitCli.Run(_projectFolder, "rev-parse", "--abbrev-ref", "HEAD");
+            var branch = GitCli.Run(_projectFolder, "rev-parse", "--abbrev-ref", "HEAD").Trim();
 
             if (!string.IsNullOrEmpty(branch))
             {
