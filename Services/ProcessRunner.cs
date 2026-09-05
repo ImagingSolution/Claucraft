@@ -44,6 +44,9 @@ public static class ProcessRunner
             {
                 // CreateProcess only ever appends ".exe" when it searches PATH, so an npm-installed
                 // CLI - which is a .cmd shim - cannot be started directly. cmd.exe knows how.
+                var refusal = FirstUnsafeForCmd(exe, args);
+                if (refusal != null) return GitResult.Failed(refusal);
+
                 psi.FileName = "cmd.exe";
                 psi.Arguments = "/s /c \"" + QuoteForCmd(exe) + JoinForCmd(args) + "\"";
             }
@@ -129,14 +132,49 @@ public static class ProcessRunner
     }
 
     /// <summary>
-    /// Quotes one argument for the command line cmd.exe rebuilds. Only arguments the caller
-    /// controls come through here - anything the user typed travels over stdin instead, which
-    /// is the whole reason this can stay this simple.
+    /// The first thing cmd.exe could not carry intact, described, or null when it can carry them
+    /// all. A newline ends a command line and starts a fresh command, and a NUL truncates it;
+    /// neither can be quoted or escaped away, so the only honest answer is to refuse the call
+    /// rather than run something other than what was asked for.
+    /// </summary>
+    private static string? FirstUnsafeForCmd(string exe, string[] args)
+    {
+        if (Unsafe(exe)) return exe + ": the program path contains a line break";
+
+        foreach (var a in args)
+            if (Unsafe(a)) return exe + ": an argument contains a line break";
+
+        return null;
+
+        static bool Unsafe(string? value)
+            => value != null && value.IndexOfAny(new[] { '\r', '\n', '\0' }) >= 0;
+    }
+
+    /// <summary>
+    /// Quotes one argument for the command line cmd.exe rebuilds.
+    ///
+    /// cmd.exe has no notion of a backslash escape: it walks the line counting quotes, and what
+    /// sits between an opening and a closing one is literal. An argument is therefore safe exactly
+    /// as long as that count stays balanced, which is why a literal quote is written as two quotes
+    /// rather than the C-style backslash-quote. The pair closes and immediately reopens, leaving no
+    /// gap for a pipe or an ampersand to sit outside quotes in; backslash-quote instead leaves
+    /// cmd.exe believing the quote was closed, and hands it the rest of the value as commands.
+    ///
+    /// Everything is quoted, harmless-looking values included: whether an argument needs quoting is
+    /// precisely the judgement that goes wrong.
     /// </summary>
     private static string QuoteForCmd(string value)
     {
         value ??= "";
-        bool needsQuotes = value.Length == 0 || value.IndexOfAny(new[] { ' ', '\t', '&', '|', '^', '<', '>', '(', ')' }) >= 0;
-        return needsQuotes ? "\"" + value.Replace("\"", "\\\"") + "\"" : value;
+
+        var sb = new StringBuilder(value.Length + 8);
+        sb.Append('"');
+        foreach (var c in value)
+        {
+            if (c == '"') sb.Append('"');
+            sb.Append(c);
+        }
+        sb.Append('"');
+        return sb.ToString();
     }
 }
