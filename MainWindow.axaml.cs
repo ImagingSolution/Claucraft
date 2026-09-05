@@ -200,6 +200,13 @@ public partial class MainWindow : Window
         public string? Effort { get; set; }
 
         /// <summary>
+        /// Display name of the model this window was launched on, read off its launch line or
+        /// the user's settings. It is what the status bar shows until the transcript names a
+        /// model itself, which cannot happen before the session's first reply.
+        /// </summary>
+        public string? StartingModel { get; set; }
+
+        /// <summary>
         /// Set once CloseChild starts tearing this window down. The strip button lives on while
         /// the CLI takes its time quitting, so this is what keeps a second × click from running
         /// the teardown a second time.
@@ -3010,15 +3017,24 @@ public partial class MainWindow : Window
         var session = ActiveCost.Current;
         // Guarded on the live-status toggle here rather than only at the call site: the meter is
         // now painted from the transcript read as well, which does not go through ApplyLiveStatus.
+        // Shown for any window that is up, rather than only for one with a figure to show: the
+        // meter belongs to the window from the moment it opens, and one that arrived partway
+        // through the row on the first reply read as something having gone wrong until then.
         bool showContext = _settings.EnableLiveStatus && _cli.Features.CompactButton
-                           && session.HasData && session.ContextTokens > 0;
+                           && _activeChildIndex >= 0 && _activeChildIndex < _children.Count;
         StatusContextPanel.IsVisible = showContext;
         if (!showContext) return;
 
         // Reported as context used rather than context left. The two rate-limit meters beside
         // it fill as their window is spent, and a row of bars where one grows the opposite way
         // to its neighbours is read wrong at a glance however it is labelled.
-        int used = SessionCostMonitor.ContextUsedPercent(session.ContextTokens, session.Model);
+        //
+        // A session reads empty until its first reply lands. Nothing has been sent by then, so
+        // nothing has been billed for a prefix - the window really is untouched, and the figure
+        // the first reply brings back is the first one anybody, this app or the CLI, can know.
+        int used = session.HasData && session.ContextTokens > 0
+            ? SessionCostMonitor.ContextUsedPercent(session.ContextTokens, session.Model)
+            : 0;
         StatusContextLabel.Text = Loc.Get("ContextLabel");
         StatusContextText.Text = used + "%";
         StatusContextFill.Width = 48 * (used / 100.0);
@@ -4935,10 +4951,18 @@ public partial class MainWindow : Window
         ApplySessionReadout();
     }
 
+    /// <summary>
+    /// What the bar can say for a window with no transcript to read yet - a session that has
+    /// only just started, or one this CLI keeps no record of. The model still gets named: the
+    /// launch line and the settings file both know which one is about to answer, and leaving
+    /// the slot empty until the first reply made the model look unknown when it was not. The
+    /// context meter stands at empty for the same reason - the window is open and untouched,
+    /// which is a thing worth showing.
+    /// </summary>
     private void ClearSessionReadout()
     {
-        StatusModelName.IsVisible = false;
-        StatusContextPanel.IsVisible = false;
+        ApplyContextMeter();
+        ShowModelName(_pendingModelLabel ?? StartingModelName());
         ApplyEffortReadout();
     }
 
@@ -4969,14 +4993,33 @@ public partial class MainWindow : Window
             }
         }
 
-        StatusModelName.IsVisible = model.Length > 0;
-        if (model.Length > 0)
-        {
-            StatusModelText.Text = model;
-            ToolTip.SetTip(StatusModelName, Loc.Get("ModelTooltip"));
-        }
+        // A transcript names no model until its first reply lands, so until then the window
+        // still speaks for the one it was started on.
+        if (model.Length == 0) model = StartingModelName();
+
+        ShowModelName(model);
 
         ApplyEffortReadout();
+    }
+
+    /// <summary>Puts a model name on the bar, or takes the whole control away when there is
+    /// none to give.</summary>
+    private void ShowModelName(string model)
+    {
+        StatusModelName.IsVisible = model.Length > 0;
+        if (model.Length == 0) return;
+
+        StatusModelText.Text = model;
+        ToolTip.SetTip(StatusModelName, Loc.Get("ModelTooltip"));
+    }
+
+    /// <summary>The model the window in front was started on, as far as anything outside the
+    /// transcript knows it. Empty for a CLI with no model to speak of.</summary>
+    private string StartingModelName()
+    {
+        if (!_cli.Features.CompactButton) return "";
+        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return "";
+        return _children[_activeChildIndex].StartingModel ?? "";
     }
 
     /// <summary>
@@ -5192,6 +5235,51 @@ public partial class MainWindow : Window
             if (string.Equals(candidate, alias, StringComparison.OrdinalIgnoreCase)) return modelId;
         }
         return alias;
+    }
+
+    /// <summary>
+    /// The model a new window starts on, named the way the status bar names one. A launch
+    /// profile that pins a model settles it; otherwise it is whatever the CLI takes from the
+    /// user's settings.json. Null when neither points at a model id, so that a setting that
+    /// names no single model - "default", "opusplan" - leaves the bar to wait for the
+    /// transcript rather than printing a word that is not a model name.
+    /// </summary>
+    private static string? StartingModel(string command)
+    {
+        var pinned = Regex.Match(command, "--model[= ]+\"?([^\\s\"]+)");
+        string? alias = pinned.Success ? pinned.Groups[1].Value : DefaultModel();
+        if (string.IsNullOrWhiteSpace(alias)) return null;
+
+        // A context-window suffix ("opus[1m]") still names the same model, and the id written
+        // to the transcript carries one too - the bar has always read straight past it.
+        int suffix = alias.IndexOf('[');
+        if (suffix > 0) alias = alias[..suffix];
+
+        string? id = ModelIdForAlias(alias);
+        if (id == null || !id.StartsWith("claude-", StringComparison.OrdinalIgnoreCase)) return null;
+
+        string name = SessionCostMonitor.ModelDisplayName(id);
+        return name.Length > 0 ? name : null;
+    }
+
+    /// <summary>
+    /// The model the CLI would start on with nothing said on the command line, out of the
+    /// user's settings.json. Read afresh for every window, like the effort beside it: the CLI
+    /// rewrites the file whenever a model is saved as the default.
+    /// </summary>
+    private static string? DefaultModel()
+    {
+        try
+        {
+            string path = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".claude", "settings.json");
+            if (!File.Exists(path)) return null;
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            return ReadSetting(doc.RootElement, "model");
+        }
+        catch { return null; }
     }
 
     /// <summary>
@@ -6076,6 +6164,7 @@ public partial class MainWindow : Window
             FirstInput = firstInput,
             SessionId = sessionId,
             Effort = StartingEffort(command),
+            StartingModel = StartingModel(command),
             WorktreePath = worktree?.Path,
             WorktreeBranch = worktree?.Branch,
             WorktreeOrigin = worktree?.RepoRoot,
