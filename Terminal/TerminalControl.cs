@@ -28,6 +28,7 @@ public class TerminalControl : Control, IDisposable
     private double _fontSize = 14;
     private bool _disposed;
     private string? _workingDirectory;
+    private DateTime _startedUtc = DateTime.MinValue;
     private bool _isDark = true;
 
     // Selection state
@@ -936,14 +937,42 @@ public class TerminalControl : Control, IDisposable
             Dispatcher.UIThread.Post(() =>
             {
                 _parser.Process("\r\n[Process exited]\r\n");
+                var hint = LaunchCollisionHint();
+                if (hint is not null) _parser.Process(hint);
                 Exited?.Invoke();
             });
         };
 
+        _startedUtc = DateTime.UtcNow;
         _pty.Start(command, workingDirectory, cols, rows);
 
         // Claude Code only — other CLIs prompt differently, and the flag is off for them.
         StartPermissionWatch();
+    }
+
+    /// <summary>
+    /// A launch that collides with a background agent dies before its prompt appears, leaving one
+    /// line of CLI notice and a bare "[Process exited]". Spell out what happened and what to do
+    /// about it. Null for an ordinary exit.
+    /// </summary>
+    private string? LaunchCollisionHint()
+    {
+        try
+        {
+            // A session that ran a while and then quit is just a session that ended.
+            if (DateTime.UtcNow - _startedUtc > TimeSpan.FromSeconds(30)) return null;
+            if (!GetScreenText(0).Contains(Services.RunningSessionService.CollisionMarker,
+                    StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var hint = Services.Loc.Get("SessionBusyHint",
+                    "This session is already open in a background agent, so the CLI exited without "
+                    + "a prompt.\nRun `claude agents` in a terminal to attach to it and /exit to "
+                    + "release it, or start a new session.")
+                .Replace("\r\n", "\n").Replace("\n", "\r\n");
+            return $"\u001b[33m{hint}\u001b[0m\r\n";
+        }
+        catch { return null; }
     }
 
     /// <summary>

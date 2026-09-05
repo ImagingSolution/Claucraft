@@ -2608,6 +2608,17 @@ public partial class MainWindow : Window
 
         if (CmbSessions.SelectedItem is SessionInfo session)
         {
+            // A session runs in one place at a time. Resuming one already held elsewhere would
+            // start a CLI that exits on the spot, leaving the new window at "[Process exited]".
+            if (RunningSessionService.IsLive(session.Id, _projectFolder))
+            {
+                ShowMessageDialog(Loc.Get("SessionBusyTitle"),
+                    Loc.Get(RunningSessionService.IsHeldByAgent(session.Id, _projectFolder)
+                        ? "SessionBusyAgent"
+                        : "SessionBusyElsewhere"));
+                return;
+            }
+
             string cmd = _cli.BuildResumeCommand(session.Id);
             var displayTitle = session.DisplayTitle ?? session.Summary;
             string tabLabel = !string.IsNullOrEmpty(displayTitle)
@@ -6725,18 +6736,56 @@ public partial class MainWindow : Window
         LoadRecentProjectFolders();
         if (continueSession)
         {
-            // Session summaries only exist for CLIs whose history Claucraft can read
-            SessionInfo? resumed = null;
-            if (_cli.Features.SessionList)
-            {
-                // "continue" picks up the most recently modified session: the top of the list
-                var sessions = await SessionService.GetSessionsForProjectAsync(folderPath);
-                resumed = sessions.FirstOrDefault();
-            }
-            CreateNewChild(_cli.BuildContinueCommand(), _cli.Active.Name, resumed?.DisplayTitle, resumed?.Id);
+            var (command, resumed) = await BuildContinueLaunchAsync(folderPath);
+            CreateNewChild(command, _cli.Active.Name, resumed?.DisplayTitle, resumed?.Id);
         }
         else
             LaunchClaudeWithInitialPrompt();
+    }
+
+    /// <summary>
+    /// What a "continue" launch should actually run. <c>claude -c</c> continues the most recent
+    /// session and exits on the spot when that one is already running elsewhere, so as soon as
+    /// anything in this project is running, the newest free session is resumed by id instead.
+    /// </summary>
+    private async Task<(string Command, SessionInfo? Session)> BuildContinueLaunchAsync(string folderPath)
+    {
+        // Session summaries only exist for CLIs whose history Claucraft can read
+        if (!_cli.Features.SessionList)
+            return (_cli.BuildContinueCommand(), null);
+
+        // "continue" picks up the most recently modified session: the top of the list
+        var sessions = await SessionService.GetSessionsForProjectAsync(folderPath);
+        var taken = RunningSessionService.LiveSessionIds(folderPath);
+
+        // Nothing running, nothing to dodge: -c goes exactly where the CLI would take it.
+        if (taken.Count == 0)
+            return (_cli.BuildContinueCommand(), sessions.FirstOrDefault());
+
+        // Otherwise the session is picked here rather than by -c, which walks past the ones
+        // already running and can still land on one a background agent holds - a launch that dies
+        // before its prompt. A window open here counts as taken even before the ledger says so.
+        foreach (var child in _children)
+            if (!string.IsNullOrEmpty(child.SessionId)) taken.Add(child.SessionId!);
+
+        var free = sessions.FirstOrDefault(s => !taken.Contains(s.Id));
+        if (free is null)
+        {
+            // Every session here is running somewhere, so a new one is all that can start.
+            if (sessions.Count > 0)
+                ShowMessageDialog(Loc.Get("SessionBusyTitle"), Loc.Get("SessionBusyAllBusy"));
+            return (_cli.BuildNewCommand(null, ActiveLaunchProfile()), null);
+        }
+
+        // Skipping a session that is merely open in another window is routine and goes unsaid;
+        // a background agent is the case worth explaining, since it is invisible from here.
+        if (sessions.Count > 0 && RunningSessionService.IsHeldByAgent(sessions[0].Id, folderPath))
+        {
+            ShowMessageDialog(Loc.Get("SessionBusyTitle"), string.Format(
+                Loc.Get("SessionBusyFallbackFmt"),
+                string.IsNullOrEmpty(free.DisplayTitle) ? free.Id : free.DisplayTitle));
+        }
+        return (_cli.BuildResumeCommand(free.Id), free);
     }
 
     private static void AttachHoverEffect(Border border, Color? hoverColor = null)
