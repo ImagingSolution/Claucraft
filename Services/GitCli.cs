@@ -1,9 +1,8 @@
 using System;
-using System.Diagnostics;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace Claucraft.Services;
 
@@ -38,6 +37,13 @@ public static class GitCli
     /// </summary>
     private const int TimeoutMs = 60_000;
 
+    /// <summary>
+    /// The allowance for anything that talks to a remote. A fetch or push over a slow link, or
+    /// against a large repository, routinely runs past the local-command timeout, and a spurious
+    /// "timed out" on a push is worse than waiting.
+    /// </summary>
+    private const int NetworkTimeoutMs = 180_000;
+
     private const int MaxDiffLines = 5000;
 
     /// <summary>Runs git with the given arguments (no shell quoting needed) and returns stdout.</summary>
@@ -50,62 +56,17 @@ public static class GitCli
     /// command-line quoting or the console code page.
     /// </summary>
     public static GitResult Execute(string workingDirectory, string? stdin, params string[] args)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "git",
-                WorkingDirectory = workingDirectory,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8,
-                RedirectStandardInput = stdin != null,
-            };
-            if (stdin != null)
-                psi.StandardInputEncoding = new UTF8Encoding(false);
-            foreach (var a in args)
-                psi.ArgumentList.Add(a);
+        => ProcessRunner.Run("git", workingDirectory, stdin, TimeoutMs, null, args);
 
-            using var proc = Process.Start(psi);
-            if (proc == null) return GitResult.Failed("git could not be started");
-
-            if (stdin != null)
-            {
-                proc.StandardInput.Write(stdin);
-                proc.StandardInput.Close();
-            }
-
-            // Both pipes have to be drained at once. Reading one to the end while the other
-            // fills its buffer wedges git on its next write and this thread on a read that
-            // never returns -- git only has to be chatty on stderr, which a repository with
-            // ambiguous refs or a stale lock manages easily.
-            var stdout = proc.StandardOutput.ReadToEndAsync();
-            var stderr = proc.StandardError.ReadToEndAsync();
-
-            if (!proc.WaitForExit(TimeoutMs) || !Task.WaitAll(new Task[] { stdout, stderr }, TimeoutMs))
-            {
-                try
-                {
-                    if (!proc.HasExited) proc.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Nothing further can be done about a process that will not die.
-                }
-                return GitResult.Failed("git timed out");
-            }
-
-            return new GitResult(proc.ExitCode, stdout.Result, stderr.Result);
-        }
-        catch (Exception ex)
-        {
-            return GitResult.Failed(ex.Message);
-        }
-    }
+    /// <summary>
+    /// Runs a git command that reaches the network, with the longer allowance and optionally
+    /// extra environment variables. <paramref name="env"/> is how a background fetch says
+    /// GIT_TERMINAL_PROMPT=0, so it fails instead of blocking on a credential prompt nobody
+    /// asked for; a fetch the user pressed leaves it null so the prompt can still appear.
+    /// </summary>
+    public static GitResult ExecuteRemote(string workingDirectory,
+        IReadOnlyDictionary<string, string>? env, params string[] args)
+        => ProcessRunner.Run("git", workingDirectory, null, NetworkTimeoutMs, env, args);
 
     /// <summary>
     /// The top of the working tree <paramref name="folder"/> sits in, or null when it is not in

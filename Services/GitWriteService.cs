@@ -12,16 +12,35 @@ public sealed record BranchState(string Current, int Ahead, int Behind, bool Has
 }
 
 /// <summary>
+/// A multi-step operation git has started and not finished. It changes what "continue" and
+/// "abort" have to run, and it is the reason the panel refuses to commit while one is open.
+/// </summary>
+public enum RepoOperation
+{
+    None,
+    Rebase,
+    Merge,
+}
+
+/// <summary>
 /// The write half of the git integration: staging, committing, branching and pushing. Split from
 /// <see cref="GitChangeService"/> so the read path stays plainly read-only, and every call here
 /// reports what git said rather than swallowing it - a refused push is only useful with its
 /// reason attached.
 ///
 /// Nothing in here rewrites history or forces anything: the destructive verbs are deliberately
-/// absent rather than merely unused.
+/// absent rather than merely unused. The two that sound destructive are not - `branch -d`
+/// refuses a branch whose work is not already merged, and `--abort` puts back exactly what the
+/// merge or rebase started from. `-D`, `push --force` and `reset --hard` have no entry point here.
 /// </summary>
 public static class GitWriteService
 {
+    /// <summary>Environment for a fetch nobody asked for: fail rather than block on a prompt.</summary>
+    private static readonly Dictionary<string, string> NoPromptEnv = new()
+    {
+        ["GIT_TERMINAL_PROMPT"] = "0",
+    };
+
     /// <summary>Stages the given repository-relative paths. Untracked files included.</summary>
     public static Task<GitResult> StageAsync(string repoRoot, IReadOnlyList<string> paths)
         => RunOnPaths(repoRoot, paths, new[] { "add", "--" });
@@ -112,8 +131,8 @@ public static class GitWriteService
             if (string.IsNullOrEmpty(state.Current)) return GitResult.Failed("no branch");
 
             return state.HasUpstream
-                ? GitCli.Execute(repoRoot, null, "push")
-                : GitCli.Execute(repoRoot, null, "push", "--set-upstream", "origin", state.Current);
+                ? GitCli.ExecuteRemote(repoRoot, null, "push")
+                : GitCli.ExecuteRemote(repoRoot, null, "push", "--set-upstream", "origin", state.Current);
         });
     }
 
@@ -141,6 +160,201 @@ public static class GitWriteService
             int ahead = parts.Length > 1 && int.TryParse(parts[1], out var a) ? a : 0;
 
             return new BranchState(current, ahead, behind, true);
+        });
+    }
+
+    // ── Remote traffic ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Brings the remote's refs up to date without touching the working tree - the one network
+    /// call that cannot lose anything, which is why the panel offers it as the safe first move.
+    /// <paramref name="quiet"/> marks the timer's own fetch: it must fail rather than sit on a
+    /// credential prompt no one is watching.
+    /// </summary>
+    public static Task<GitResult> FetchAsync(string repoRoot, bool quiet)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return GitResult.Failed("not a repository");
+
+            return GitCli.ExecuteRemote(repoRoot, quiet ? NoPromptEnv : null, "fetch", "--prune");
+        });
+    }
+
+    /// <summary>
+    /// Takes the remote's commits and replays the local ones on top. Rebasing keeps the history
+    /// a single line, which is what makes the graph readable for people who are not going to
+    /// untangle a merge bubble.
+    /// </summary>
+    public static Task<GitResult> PullRebaseAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return GitResult.Failed("not a repository");
+
+            return GitCli.ExecuteRemote(repoRoot, null, "pull", "--rebase");
+        });
+    }
+
+    // ── Branch work ────────────────────────────────────────────────────
+
+    /// <summary>Brings <paramref name="branch"/> into the current one. --no-edit keeps git from opening an editor.</summary>
+    public static Task<GitResult> MergeAsync(string repoRoot, string branch)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return GitResult.Failed("not a repository");
+            if (string.IsNullOrWhiteSpace(branch)) return GitResult.Failed("no branch given");
+
+            return GitCli.Execute(repoRoot, null, "merge", "--no-edit", "--", branch);
+        });
+    }
+
+    /// <summary>
+    /// Deletes a local branch. Lower-case -d only: git refuses a branch holding work that is not
+    /// merged anywhere else, so the button cannot throw away commits. Its refusal is the answer
+    /// the user is shown, and -D is never offered as the way past it.
+    /// </summary>
+    public static Task<GitResult> DeleteBranchAsync(string repoRoot, string branch)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return GitResult.Failed("not a repository");
+            if (string.IsNullOrWhiteSpace(branch)) return GitResult.Failed("no branch given");
+
+            return GitCli.Execute(repoRoot, null, "branch", "-d", "--", branch);
+        });
+    }
+
+    // ── Interrupted merges and rebases ─────────────────────────────────
+
+    /// <summary>Files git has left with conflict markers in them.</summary>
+    public static Task<List<string>> GetConflictsAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            var files = new List<string>();
+            if (!Usable(repoRoot)) return files;
+
+            var output = GitCli.Run(repoRoot, "-c", "core.quotepath=false",
+                "diff", "--name-only", "--diff-filter=U");
+
+            foreach (var line in output.Split('\n'))
+            {
+                var path = GitPath.Unquote(line.Trim()).Replace('\\', '/').Trim();
+                if (path.Length > 0) files.Add(path);
+            }
+            return files;
+        });
+    }
+
+    /// <summary>
+    /// Whether the repository is part-way through something. Read from the git directory rather
+    /// than from a status message, so it is the same answer in any locale - and via
+    /// --absolute-git-dir, so it is still right inside a worktree, where .git is a file.
+    /// </summary>
+    public static Task<RepoOperation> GetRepoOperationAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return RepoOperation.None;
+
+            var gitDir = GitCli.Run(repoRoot, "rev-parse", "--absolute-git-dir").Trim();
+            if (gitDir.Length == 0) return RepoOperation.None;
+
+            gitDir = gitDir.Replace('/', Path.DirectorySeparatorChar);
+
+            if (Directory.Exists(Path.Combine(gitDir, "rebase-merge")) ||
+                Directory.Exists(Path.Combine(gitDir, "rebase-apply")))
+                return RepoOperation.Rebase;
+
+            if (File.Exists(Path.Combine(gitDir, "MERGE_HEAD")))
+                return RepoOperation.Merge;
+
+            return RepoOperation.None;
+        });
+    }
+
+    /// <summary>Puts the tree back the way it was before the merge or rebase started.</summary>
+    public static Task<GitResult> AbortAsync(string repoRoot, RepoOperation operation)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return GitResult.Failed("not a repository");
+
+            return operation switch
+            {
+                RepoOperation.Rebase => GitCli.Execute(repoRoot, null, "rebase", "--abort"),
+                RepoOperation.Merge => GitCli.Execute(repoRoot, null, "merge", "--abort"),
+                _ => GitResult.Failed("nothing in progress"),
+            };
+        });
+    }
+
+    /// <summary>
+    /// Carries on once the conflicts are resolved and staged. core.editor=true stands in for the
+    /// editor git would otherwise open and wait on forever, there being no terminal to open it in.
+    /// </summary>
+    public static Task<GitResult> ContinueAsync(string repoRoot, RepoOperation operation)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return GitResult.Failed("not a repository");
+
+            return operation switch
+            {
+                RepoOperation.Rebase => GitCli.Execute(repoRoot, null, "-c", "core.editor=true", "rebase", "--continue"),
+                RepoOperation.Merge => GitCli.Execute(repoRoot, null, "-c", "core.editor=true", "merge", "--continue"),
+                _ => GitResult.Failed("nothing in progress"),
+            };
+        });
+    }
+
+    // ── Reading, for the commit-message draft ──────────────────────────
+
+    /// <summary>
+    /// What a commit right now would record. Falls back to the unstaged diff so pressing the
+    /// draft button before staging anything still describes something rather than nothing.
+    /// </summary>
+    public static Task<string> GetStagedDiffAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return "";
+
+            var staged = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--cached");
+            if (string.IsNullOrWhiteSpace(staged))
+                staged = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff");
+
+            return GitCli.TruncateDiff(staged ?? "");
+        });
+    }
+
+    /// <summary>
+    /// One line per staged file. The diff itself is cut down before it reaches an AI, so this is
+    /// what keeps a draft describing the whole change rather than only the files that fit.
+    /// </summary>
+    public static Task<string> GetStagedStatAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return "";
+
+            var stat = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--cached", "--stat");
+            if (string.IsNullOrWhiteSpace(stat))
+                stat = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--stat");
+
+            return stat ?? "";
+        });
+    }
+
+    /// <summary>The subject line of the newest commit, used as the default pull-request title.</summary>
+    public static Task<string> GetLastSubjectAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return "";
+            return GitCli.Run(repoRoot, "log", "-1", "--pretty=%s").Trim();
         });
     }
 

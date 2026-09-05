@@ -448,6 +448,18 @@ public class CliProviderService
                 }
             }
 
+            // Same story for the one-shot arguments the commit-message draft needs: an install
+            // that predates them would otherwise show the button permanently greyed out.
+            if (string.IsNullOrWhiteSpace(stale.OneShotArgs))
+            {
+                var match = presets.FirstOrDefault(p => p.Id == stale.Id);
+                if (match != null && !string.IsNullOrWhiteSpace(match.OneShotArgs))
+                {
+                    stale.OneShotArgs = match.OneShotArgs;
+                    changed = true;
+                }
+            }
+
             result.Add(stale);
         }
 
@@ -472,6 +484,15 @@ public class CliProviderService
             NewArgs = "{prompt}",
             ContinueArgs = "-c",
             ResumeArgs = "-r {sessionId}",
+            // Drafting a commit message is summarisation and runs on every commit, so everything
+            // here exists to keep the fixed prefix off the bill: the cheapest model, no MCP
+            // servers, no tool definitions, no settings sources (which is what drops CLAUDE.md,
+            // skills and plugins) and a one-line system prompt in place of the built-in one.
+            // Measured on this repo, that takes a draft from ~67k input tokens to ~4k - about
+            // 6.6 yen down to 0.7. Anyone who wants a better writer edits providers.json to
+            // --model sonnet; no rebuild needed.
+            OneShotArgs = "-p --model haiku --strict-mcp-config --tools \"\" --setting-sources \"\" "
+                          + "--system-prompt \"You write git commit messages.\"",
             ConfigDir = ".claude",
             InstallHint = "npm i -g @anthropic-ai/claude-code",
             Features = new CliFeatures
@@ -524,6 +545,7 @@ public class CliProviderService
             NewArgs = "-i {prompt}",
             ContinueArgs = "-c",
             ResumeArgs = "--conversation {sessionId}",
+            OneShotArgs = "-p {prompt}",
             ConfigDir = @".gemini\antigravity-cli",
             InstallHint = "irm https://antigravity.google/cli/install.ps1 | iex",
             Features = new CliFeatures(),
@@ -536,6 +558,9 @@ public class CliProviderService
             NewArgs = "{prompt}",
             ContinueArgs = "resume --last",
             ResumeArgs = "resume {sessionId}",
+            // `codex exec` with no PROMPT argument reads the instructions from stdin, which
+            // spares the prompt a trip through the .cmd shim's quoting.
+            OneShotArgs = "exec",
             ConfigDir = ".codex",
             InstallHint = "npm i -g @openai/codex",
             Features = new CliFeatures(),
@@ -548,6 +573,7 @@ public class CliProviderService
             NewArgs = "-i {prompt}",
             ContinueArgs = "--continue",
             ResumeArgs = "--resume={sessionId}",
+            OneShotArgs = "-p {prompt}",
             ConfigDir = ".copilot",
             InstallHint = "npm i -g @github/copilot",
             Features = new CliFeatures(),

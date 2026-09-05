@@ -334,10 +334,10 @@
                             <PathIcon Data="M17.5 0H8.5L7 1.5V6H2.5L1 7.5V22.57L2.5 24H13.5L15 22.57V18H19.5L21 16.5V3.5L17.5 0ZM13.5 22.57H2.5V7.5H7V16.5L8.5 18H13.5V22.57ZM19.5 16.5H8.5V1.5H14.5V5.5H19.5V16.5ZM15.5 1.5L19.5 4.5H15.5V1.5Z"
                                       Width="20" Height="20" />
                         </Button>
-                        <Button x:Name="BtnActivityChanges" Classes="activity-btn"
-                                ToolTip.Tip="Changed files"
-                                Click="OnActivityChanges">
-                            <PathIcon Data="M13 3C8.03 3 4 7.03 4 12H1L4.89 15.89L4.96 16.03L9 12H6C6 8.13 9.13 5 13 5C16.87 5 20 8.13 20 12C20 15.87 16.87 19 13 19C11.07 19 9.32 18.21 8.06 16.94L6.64 18.36C8.27 19.99 10.51 21 13 21C17.97 21 22 16.97 22 12C22 7.03 17.97 3 13 3ZM12 8V13L16.28 15.54L17 14.33L13.5 12.25V8H12Z"
+                        <Button x:Name="BtnActivitySourceControl" Classes="activity-btn"
+                                ToolTip.Tip="Source control (Ctrl+Shift+G)"
+                                Click="OnActivitySourceControl">
+                            <PathIcon Data="M21.007 8.222A3.738 3.738 0 0 0 15.045 5.2a3.737 3.737 0 0 0 1.156 6.583 2.988 2.988 0 0 1-2.668 1.67h-2.99a4.456 4.456 0 0 0-2.989 1.165V7.4a3.737 3.737 0 1 0-1.494 0v9.117a3.776 3.776 0 1 0 1.816.099 2.99 2.99 0 0 1 2.668-1.667h2.99a4.484 4.484 0 0 0 4.223-3.039 3.736 3.736 0 0 0 3.25-3.687zM4.565 3.738a2.242 2.242 0 1 1 4.484 0 2.242 2.242 0 0 1-4.484 0zm4.484 16.441a2.242 2.242 0 1 1-4.484 0 2.242 2.242 0 0 1 4.484 0zm8.221-9.715a2.242 2.242 0 1 1 0-4.485 2.242 2.242 0 0 1 0 4.485z"
                                       Width="20" Height="20" />
                         </Button>
                         <Button x:Name="BtnActivityWindows" Classes="activity-btn"
@@ -688,6 +688,17 @@
                                               IsCheckedChanged="OnLiveStatusSettingChanged" />
                                 </StackPanel>
                                 <StackPanel Spacing="4" Margin="0,12,0,0">
+                                    <TextBlock x:Name="LblSourceControlSettings" Text="Source control" FontSize="13"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <TextBlock x:Name="LblCommitLanguage" Text="Commit message language" FontSize="12"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <ComboBox x:Name="CmbCommitLanguage" HorizontalAlignment="Stretch"
+                                              SelectionChanged="OnCommitLanguageChanged" />
+                                    <CheckBox x:Name="ChkGitAutoFetch" Content="Fetch from the remote every 5 minutes"
+                                              Foreground="{DynamicResource SubtleText}"
+                                              IsCheckedChanged="OnGitAutoFetchChanged" />
+                                </StackPanel>
+                                <StackPanel Spacing="4" Margin="0,12,0,0">
                                     <TextBlock x:Name="LblPlanTier" Text="Plan" FontSize="13"
                                                Foreground="{DynamicResource SubtleText}" />
                                     <ComboBox x:Name="CmbPlanTier" HorizontalAlignment="Stretch"
@@ -733,56 +744,8 @@
                             </ScrollViewer>
                         </DockPanel>
 
-                        <!-- Changed Files Panel -->
-                        <DockPanel x:Name="ChangesPanel" IsVisible="False">
-                            <Border DockPanel.Dock="Top" Padding="10,6">
-                                <Grid ColumnDefinitions="Auto,*,Auto">
-                                    <CheckBox x:Name="ChkStageAll" Grid.Column="0"
-                                              Margin="0,0,4,0" Padding="0" MinWidth="0"
-                                              IsVisible="False"
-                                              ToolTip.Tip="Stage all"
-                                              IsCheckedChanged="OnStageAllChanged" />
-                                    <TextBlock x:Name="LblChangesSummary" Grid.Column="1" Text=""
-                                               FontSize="11" VerticalAlignment="Center"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <Button x:Name="BtnRefreshChanges" Grid.Column="2"
-                                            Classes="icon-btn" Padding="4"
-                                            ToolTip.Tip="Refresh" Click="OnRefreshChanges">
-                                        <PathIcon Data="M17.65 6.35C16.2 4.9 14.21 4 12 4C7.58 4 4 7.58 4 12C4 16.42 7.58 20 12 20C15.73 20 18.84 17.45 19.73 14H17.65C16.83 16.33 14.61 18 12 18C8.69 18 6 15.31 6 12C6 8.69 8.69 6 12 6C13.66 6 15.14 6.69 16.22 7.78L13 11H20V4L17.65 6.35Z"
-                                                  Width="13" Height="13" />
-                                    </Button>
-                                </Grid>
-                            </Border>
-                            <!-- Commit and push, below the list they act on. -->
-                            <Border x:Name="CommitBox" DockPanel.Dock="Bottom" Padding="8,8"
-                                    IsVisible="False"
-                                    BorderThickness="0,0.5,0,0"
-                                    BorderBrush="{DynamicResource DividerColor}">
-                                <StackPanel Spacing="6">
-                                    <TextBox x:Name="TxtCommitMessage"
-                                             AcceptsReturn="True" TextWrapping="Wrap"
-                                             MinHeight="52" MaxHeight="120" FontSize="12"
-                                             PlaceholderText="Commit message" />
-                                    <Grid ColumnDefinitions="*,6,Auto">
-                                        <Button x:Name="BtnCommit" Grid.Column="0"
-                                                HorizontalAlignment="Stretch"
-                                                HorizontalContentAlignment="Center"
-                                                Click="OnCommit">
-                                            <TextBlock x:Name="LblCommit" Text="Commit" FontSize="12" />
-                                        </Button>
-                                        <Button x:Name="BtnPush" Grid.Column="2"
-                                                HorizontalContentAlignment="Center"
-                                                Click="OnPush">
-                                            <TextBlock x:Name="LblPush" Text="Push" FontSize="12" />
-                                        </Button>
-                                    </Grid>
-                                </StackPanel>
-                            </Border>
-                            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                                          VerticalScrollBarVisibility="Auto">
-                                <StackPanel x:Name="ChangesList" Spacing="1" Margin="4,4" />
-                            </ScrollViewer>
-                        </DockPanel>
+                        <!-- Source Control Panel — built in code, see Controls/SourceControlPanel.cs -->
+                        <ContentControl x:Name="SourceControlHost" IsVisible="False" />
 
                         <!-- Windows Panel -->
                         <ScrollViewer x:Name="WindowsPanel" IsVisible="False"

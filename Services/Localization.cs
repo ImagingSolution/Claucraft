@@ -313,9 +313,94 @@ public static class Loc
         ["RiskFileChange"] = new() { ["English"] = "Changes files", ["日本語"] = "ファイルを変更します" },
         ["RiskDangerous"] = new() { ["English"] = "Deletes or reaches the network", ["日本語"] = "削除・ネットワーク通信" },
 
+        // ── Source control ──
+        ["SOURCE_CONTROL"] = new() { ["English"] = "SOURCE CONTROL", ["日本語"] = "ソース管理" },
+        ["SourceControlTooltip"] = new() { ["English"] = "Source control (Ctrl+Shift+G)", ["日本語"] = "ソース管理 (Ctrl+Shift+G)" },
+        ["PaletteSourceControl"] = new() { ["English"] = "Source Control", ["日本語"] = "ソース管理" },
+
+        // Toolbar. The buttons are named for what they do, not for the git verb.
+        ["FetchAction"] = new() { ["English"] = "Fetch", ["日本語"] = "取得" },
+        ["FetchTooltip"] = new() { ["English"] = "Ask the remote what is new. Nothing in your files changes.", ["日本語"] = "リモートの最新状況を確認します。手元のファイルは変わりません。" },
+        ["PullAction"] = new() { ["English"] = "Pull", ["日本語"] = "取込" },
+        ["PullTooltip"] = new() { ["English"] = "Bring the remote's commits into this branch and put yours on top.", ["日本語"] = "リモートのコミットを取り込み、自分のコミットをその上に積み直します。" },
+        ["PushTooltip"] = new() { ["English"] = "Send your commits to the remote so others can see them.", ["日本語"] = "自分のコミットをリモートに送り、他のメンバーが見られるようにします。" },
+        ["MergeAction"] = new() { ["English"] = "Merge", ["日本語"] = "マージ" },
+        ["MergeTooltip"] = new() { ["English"] = "Take another branch's work into the branch you are on.", ["日本語"] = "他のブランチの作業を、いま作業中のブランチに取り込みます。" },
+        ["CreatePrAction"] = new() { ["English"] = "Pull request", ["日本語"] = "プルリク" },
+        ["OpenGraphAction"] = new() { ["English"] = "Open in a window", ["日本語"] = "別ウィンドウで開く" },
+        ["BranchMenuTooltip"] = new() { ["English"] = "Switch, create or delete a branch", ["日本語"] = "ブランチの切替・作成・削除" },
+        ["HistorySection"] = new() { ["English"] = "History", ["日本語"] = "履歴" },
+
+        // Branch state, shown next to the branch name.
+        ["NoUpstream"] = new() { ["English"] = "not published", ["日本語"] = "未公開" },
+        ["UpToDate"] = new() { ["English"] = "up to date", ["日本語"] = "最新です" },
+
+        // Changed files, split into what will be committed and what will not.
+        ["StagedSectionFmt"] = new() { ["English"] = "Staged ({0})", ["日本語"] = "ステージ済み ({0})" },
+        ["UnstagedSectionFmt"] = new() { ["English"] = "Changes ({0})", ["日本語"] = "変更 ({0})" },
+
+        // Commit box.
+        ["GenerateMessage"] = new() { ["English"] = "AI draft", ["日本語"] = "AI生成" },
+        ["GeneratingMessage"] = new() { ["English"] = "Drafting...", ["日本語"] = "生成中..." },
+        ["GenerateTooltipFmt"] = new() { ["English"] = "Draft a message with {0}", ["日本語"] = "{0} にコミットメッセージを書かせます" },
+        ["GenerateUnavailableFmt"] = new() { ["English"] = "{0} has no one-shot mode", ["日本語"] = "{0} は単発実行に対応していません" },
+        ["GenerateFailed"] = new() { ["English"] = "The CLI returned no message. Write one by hand, or check the one-shot arguments in providers.json.", ["日本語"] = "CLI がメッセージを返しませんでした。手入力するか、providers.json の単発実行引数を確認してください。" },
+        ["CommitLanguageTooltip"] = new() { ["English"] = "Language the AI writes the commit message in", ["日本語"] = "AI が書くコミットメッセージの言語" },
+        ["CommitAndPush"] = new() { ["English"] = "Commit & push", ["日本語"] = "コミットして送信" },
+
+        // Pull requests.
+        ["PullRequests"] = new() { ["English"] = "Pull requests", ["日本語"] = "プルリクエスト" },
+        ["PullRequestsFmt"] = new() { ["English"] = "Pull requests ({0})", ["日本語"] = "プルリクエスト ({0})" },
+        ["NoPullRequests"] = new() { ["English"] = "No open pull requests", ["日本語"] = "開いているプルリクエストはありません" },
+        ["PrDraft"] = new() { ["English"] = "draft", ["日本語"] = "下書き" },
+        ["PrApproved"] = new() { ["English"] = "approved", ["日本語"] = "承認済み" },
+        ["ApproveAction"] = new() { ["English"] = "Approve", ["日本語"] = "承認" },
+        ["OpenInBrowser"] = new() { ["English"] = "Open", ["日本語"] = "開く" },
+        ["PrTitleLabel"] = new() { ["English"] = "Title", ["日本語"] = "タイトル" },
+        ["PrBodyLabel"] = new() { ["English"] = "What does this change, and why?", ["日本語"] = "何を、なぜ変えたのか" },
+        ["PrBaseLabel"] = new() { ["English"] = "Merge into", ["日本語"] = "取り込み先" },
+
+        // Conflicts and unfinished operations.
+        ["ConflictCountFmt"] = new() { ["English"] = "{0} file(s) conflict", ["日本語"] = "{0} 件のファイルが衝突しています" },
+        ["RebaseInProgress"] = new() { ["English"] = "A pull is unfinished", ["日本語"] = "取り込みが途中で止まっています" },
+        ["MergeInProgress"] = new() { ["English"] = "A merge is unfinished", ["日本語"] = "マージが途中で止まっています" },
+        ["AskAiAction"] = new() { ["English"] = "Ask the AI", ["日本語"] = "AIに相談" },
+        ["ContinueAction"] = new() { ["English"] = "Continue", ["日本語"] = "続行" },
+        ["AbortAction"] = new() { ["English"] = "Abort", ["日本語"] = "中止" },
+        ["AbortConfirmTitle"] = new() { ["English"] = "Abort", ["日本語"] = "中止" },
+        ["AbortConfirmText"] = new() { ["English"] = "Put the repository back exactly as it was before this operation started?", ["日本語"] = "この操作を始める前の状態に、そっくり戻しますか？" },
+
+        // Branch and merge confirmations.
+        ["MergeConfirmTitle"] = new() { ["English"] = "Merge", ["日本語"] = "マージ" },
+        ["MergeConfirmFmt"] = new() { ["English"] = "Bring \"{0}\" into \"{1}\"?", ["日本語"] = "「{0}」を「{1}」に取り込みますか？" },
+        ["NoOtherBranch"] = new() { ["English"] = "There is no other branch to merge.", ["日本語"] = "取り込めるブランチが他にありません。" },
+        ["DeleteBranch"] = new() { ["English"] = "Delete branch", ["日本語"] = "ブランチを削除" },
+        ["DeleteBranchConfirmTitle"] = new() { ["English"] = "Delete branch", ["日本語"] = "ブランチの削除" },
+        ["DeleteBranchConfirmFmt"] = new() { ["English"] = "Delete the local branch \"{0}\"? Work that has not been merged is kept - git refuses in that case.", ["日本語"] = "ローカルブランチ「{0}」を削除しますか？未マージの作業は失われません（その場合 git が削除を拒否します）。" },
+
+        // What is happening right now, shown as one line under the toolbar.
+        ["FetchingStatus"] = new() { ["English"] = "Fetching...", ["日本語"] = "取得しています..." },
+        ["PullingStatus"] = new() { ["English"] = "Pulling...", ["日本語"] = "取り込んでいます..." },
+        ["PushingStatus"] = new() { ["English"] = "Pushing...", ["日本語"] = "送信しています..." },
+        ["MergingStatus"] = new() { ["English"] = "Merging...", ["日本語"] = "マージしています..." },
+        ["SwitchingStatus"] = new() { ["English"] = "Switching...", ["日本語"] = "切り替えています..." },
+        ["CommittingStatus"] = new() { ["English"] = "Committing...", ["日本語"] = "コミットしています..." },
+        ["StagingStatus"] = new() { ["English"] = "Staging...", ["日本語"] = "ステージしています..." },
+        ["UnstagingStatus"] = new() { ["English"] = "Unstaging...", ["日本語"] = "ステージを外しています..." },
+        ["DeletingBranchStatus"] = new() { ["English"] = "Deleting...", ["日本語"] = "削除しています..." },
+        ["AbortingStatus"] = new() { ["English"] = "Aborting...", ["日本語"] = "中止しています..." },
+        ["ContinuingStatus"] = new() { ["English"] = "Continuing...", ["日本語"] = "続行しています..." },
+        ["CreatingPrStatus"] = new() { ["English"] = "Creating the pull request...", ["日本語"] = "プルリクエストを作成しています..." },
+        ["ApprovingStatus"] = new() { ["English"] = "Approving...", ["日本語"] = "承認しています..." },
+
+        // Settings screen.
+        ["CommitLanguage"] = new() { ["English"] = "Commit message language", ["日本語"] = "コミットメッセージの言語" },
+        ["CommitLanguageAuto"] = new() { ["English"] = "Follow the app language", ["日本語"] = "アプリの言語に合わせる" },
+        ["CommitLanguageJa"] = new() { ["English"] = "Japanese", ["日本語"] = "日本語" },
+        ["CommitLanguageEn"] = new() { ["English"] = "English", ["日本語"] = "英語" },
+        ["GitAutoFetch"] = new() { ["English"] = "Fetch from the remote every 5 minutes", ["日本語"] = "5分ごとにリモートを自動で取得する" },
+
         // ── Changed files ──
-        ["CHANGES"] = new() { ["English"] = "CHANGES", ["日本語"] = "変更ファイル" },
-        ["ChangesTooltip"] = new() { ["English"] = "Changed files", ["日本語"] = "変更ファイル" },
         ["Refresh"] = new() { ["English"] = "Refresh", ["日本語"] = "更新" },
         ["NoChanges"] = new() { ["English"] = "No changes", ["日本語"] = "変更はありません" },
         ["NotAGitRepo"] = new() { ["English"] = "Not a git repository", ["日本語"] = "git リポジトリではありません" },
@@ -385,7 +470,6 @@ public static class Loc
 
         // ── Commit graph ──
         ["CommitGraphTitle"] = new() { ["English"] = "Commit Graph", ["日本語"] = "コミットグラフ" },
-        ["CommitGraphTooltip"] = new() { ["English"] = "Current branch - double-click for the commit graph", ["日本語"] = "現在のブランチ - ダブルクリックでコミットグラフ" },
         ["GraphRefresh"] = new() { ["English"] = "Refresh", ["日本語"] = "更新" },
         ["GraphLoadMore"] = new() { ["English"] = "Load more", ["日本語"] = "さらに読み込む" },
         ["GraphLoading"] = new() { ["English"] = "Loading...", ["日本語"] = "読み込み中..." },
@@ -495,7 +579,6 @@ public static class Loc
         ["CmdExplainEchoDetail"] = new() { ["English"] = "Prints text to the terminal. It does not change anything unless combined with a redirect.", ["日本語"] = "テキストをターミナルに出力します。リダイレクトと組み合わせない限り何も変更しません。" },
 
         // -- Command palette: entries with no label of their own elsewhere --
-        ["PaletteChangedFiles"] = new() { ["English"] = "Changed Files", ["日本語"] = "変更ファイル" },
         ["PaletteCloseTab"] = new() { ["English"] = "Close Tab", ["日本語"] = "タブを閉じる" },
         ["PaletteNextTab"] = new() { ["English"] = "Next Tab", ["日本語"] = "次のタブ" },
         ["PalettePrevTab"] = new() { ["English"] = "Previous Tab", ["日本語"] = "前のタブ" },

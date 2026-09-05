@@ -26,6 +26,27 @@ public sealed class CommitGraphView : Control
     /// <summary>Width of the date column; the window's header uses it to line up.</summary>
     public const double DateWidth = 120;
 
+    /// <summary>
+    /// Drops the author and date columns and gives the whole width to the subject. Set for the
+    /// graph inside the source-control panel, where 260 columns of author and date would leave
+    /// nothing to read; the full listing is a double-click away in the window.
+    /// </summary>
+    public bool CompactColumns
+    {
+        get => _compactColumns;
+        set
+        {
+            if (_compactColumns == value) return;
+            _compactColumns = value;
+            InvalidateVisual();
+        }
+    }
+
+    private bool _compactColumns;
+
+    private double AuthorColumn => _compactColumns ? 0 : AuthorWidth;
+    private double DateColumn => _compactColumns ? 0 : DateWidth;
+
     private const double LaneWidth = 14;
 
     /// <summary>
@@ -429,8 +450,10 @@ public sealed class CommitGraphView : Control
 
     private void DrawText(DrawingContext context, int firstRow, int lastRow, double graphWidth, double width)
     {
-        double authorX = Math.Max(graphWidth, width - AuthorWidth - DateWidth - ColumnGap);
-        double dateX = authorX + AuthorWidth;
+        double authorW = AuthorColumn;
+        double dateW = DateColumn;
+        double authorX = Math.Max(graphWidth, width - authorW - dateW - ColumnGap);
+        double dateX = authorX + authorW;
         double subjectWidth = Math.Max(40, authorX - graphWidth - ColumnGap);
 
         for (int row = firstRow; row <= lastRow; row++)
@@ -458,10 +481,12 @@ public sealed class CommitGraphView : Control
             }
 
             Draw(context, commit.Subject, _ui, _textBrush, x, top, remaining);
-            Draw(context, commit.Author, _ui, _dimBrush, authorX, top, AuthorWidth - ColumnGap);
+            if (_compactColumns) continue;
+
+            Draw(context, commit.Author, _ui, _dimBrush, authorX, top, authorW - ColumnGap);
             // The listing is walked in commit-date order, so that is the date the column shows;
             // an author date would be out of sequence after any rebase or cherry-pick.
-            Draw(context, FormatDate(commit.CommitDate), _ui, _dimBrush, dateX, top, DateWidth);
+            Draw(context, FormatDate(commit.CommitDate), _ui, _dimBrush, dateX, top, dateW);
         }
     }
 

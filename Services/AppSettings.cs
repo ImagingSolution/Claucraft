@@ -46,6 +46,18 @@ public class AppSettings
     /// <summary>Launch profile applied to new sessions, matched against CliProvider.Profiles.</summary>
     public string ActiveProfileId { get; set; } = CliProviderService.StandardProfileId;
 
+    // ── Source control ──
+
+    /// <summary>
+    /// Language the AI writes commit messages in: "auto" follows the UI language, "ja" and "en"
+    /// pin it. Separate from the UI setting because a team often works in one language and
+    /// writes its history in another.
+    /// </summary>
+    public string CommitMessageLanguage { get; set; } = "auto";
+
+    /// <summary>Fetch from the remote every few minutes while the source-control panel is open.</summary>
+    public bool GitAutoFetch { get; set; } = true;
+
     /// <summary>
     /// Context-remaining percentage at or below which the hand-off banner appears.
     /// Continuing past this point costs more per turn than starting fresh with a brief.

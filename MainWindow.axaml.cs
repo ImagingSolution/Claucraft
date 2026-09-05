@@ -30,7 +30,7 @@ namespace Claucraft;
 public partial class MainWindow : Window
 {
     private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical, Cascade }
-    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, Changes, Slash, Extensions }
+    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, SourceControl, Slash, Extensions }
 
     private string? _projectFolderBacking;
 
@@ -88,9 +88,11 @@ public partial class MainWindow : Window
     /// <summary>
     /// The model the user just picked, held until the transcript confirms it. The name on the
     /// bar is read from the transcript, which only learns about a switch when the next reply
-    /// lands - without this the bar would keep naming the old model until then.
+    /// lands - without this the bar would keep naming the old model until then. Set both when
+    /// Claucraft's own dropdown sends the switch and when the CLI's own "Set model to X" banner
+    /// is spotted on screen, so a model changed by typing "/model" directly, or through the
+    /// CLI's own picker, is not missed either.
     /// </summary>
-    private string? _pendingModelAlias;
     private string? _pendingModelLabel;
     private List<LaunchProfile> _profiles = new();
     private bool _suppressProfileChange;
@@ -135,8 +137,12 @@ public partial class MainWindow : Window
     private string? _bannerKey;
     private string? _bannerActionCommand;
     private readonly HashSet<string> _dismissedBanners = new();
-    private List<GitChange> _changes = new();
-    private bool _changesLoading;
+    /// <summary>
+    /// The source-control panel, built in code and hosted by SourceControlHost. It owns every
+    /// git readout the sidebar shows; the window only tells it which repository to look at and
+    /// when to reload.
+    /// </summary>
+    private Controls.SourceControlPanel? _sourceControl;
 
     /// <summary>Plan ids in the order the settings combo lists them.</summary>
     private static readonly string[] PlanTierIds = { "Pro", "Max5x", "Max20x" };
@@ -314,6 +320,10 @@ public partial class MainWindow : Window
             UpdateThemeResources();
         }
 
+        // Built after the theme is settled: the panel bakes its colours in at construction,
+        // so OnDarkModeChanged rebuilds it rather than restyling it.
+        CreateSourceControlPanel();
+
         RefreshGitInfo();
         RefreshSessionList();
         RefreshFileTree();
@@ -435,18 +445,16 @@ public partial class MainWindow : Window
         LblCheckpoints.Text = Loc.Get("Checkpoints");
         ChkEnableCheckpoints.Content = Loc.Get("EnableCheckpoints");
 
-        // Changed files, tokens & cost, and the live status readouts
-        ToolTip.SetTip(BtnActivityChanges, Loc.Get("ChangesTooltip"));
-        ToolTip.SetTip(StatusBranchName, Loc.Get("CommitGraphTooltip"));
+        // Source control, tokens & cost, and the live status readouts
+        ToolTip.SetTip(BtnActivitySourceControl, Loc.Get("SourceControlTooltip"));
+        ToolTip.SetTip(StatusBranchName, Loc.Get("SourceControlTooltip"));
         ToolTip.SetTip(BtnBranchSwitch, Loc.Get("BranchSwitchTooltip"));
         LblIsolate.Text = Loc.Get("IsolateSession");
         ToolTip.SetTip(ChkIsolate, Loc.Get("IsolateTooltip"));
-        ToolTip.SetTip(ChkStageAll, Loc.Get("StageAll"));
-        TxtCommitMessage.PlaceholderText = Loc.Get("CommitMessage");
-        LblCommit.Text = Loc.Get("CommitAction");
-        LblPush.Text = Loc.Get("PushAction");
+        LblSourceControlSettings.Text = Loc.Get("SOURCE_CONTROL");
+        LblCommitLanguage.Text = Loc.Get("CommitLanguage");
+        ChkGitAutoFetch.Content = Loc.Get("GitAutoFetch");
         ToolTip.SetTip(BtnActivityCost, Loc.Get("CostTooltip"));
-        ToolTip.SetTip(BtnRefreshChanges, Loc.Get("Refresh"));
         ToolTip.SetTip(StatusModeBadge, Loc.Get("ModeBadgeTooltip"));
         ToolTip.SetTip(StatusContextPanel, Loc.Get("ContextMeterTooltip"));
         ToolTip.SetTip(BtnBannerDismiss, Loc.Get("Dismiss"));
@@ -891,6 +899,8 @@ public partial class MainWindow : Window
             SaveSidePanelWidth();
             _activeSidePanel = SidebarPanel.None;
             SetSidePanelVisible(false);
+            // Stop the auto-fetch timer; a hidden panel has nothing to show for the spawn.
+            if (panel == SidebarPanel.SourceControl) _sourceControl?.OnPanelHidden();
         }
         else
         {
@@ -943,7 +953,7 @@ public partial class MainWindow : Window
         SettingsPanel.IsVisible = panel == SidebarPanel.Settings;
         SnippetsPanel.IsVisible = panel == SidebarPanel.Snippets;
         WindowsPanel.IsVisible = panel == SidebarPanel.Windows;
-        ChangesPanel.IsVisible = panel == SidebarPanel.Changes;
+        SourceControlHost.IsVisible = panel == SidebarPanel.SourceControl;
         SlashPanel.IsVisible = panel == SidebarPanel.Slash;
         ExtensionsPanel.IsVisible = panel == SidebarPanel.Extensions;
         SidePanelTitle.Text = panel switch
@@ -952,7 +962,7 @@ public partial class MainWindow : Window
             SidebarPanel.Settings => Loc.Get("SETTINGS"),
             SidebarPanel.Snippets => Loc.Get("SNIPPETS"),
             SidebarPanel.Windows => Loc.Get("WINDOWS"),
-            SidebarPanel.Changes => Loc.Get("CHANGES"),
+            SidebarPanel.SourceControl => Loc.Get("SOURCE_CONTROL"),
             SidebarPanel.Slash => Loc.Get("SLASH"),
             SidebarPanel.Extensions => Loc.Get("EXTENSIONS"),
             _ => ""
@@ -960,8 +970,18 @@ public partial class MainWindow : Window
         BtnBrowseFolder.IsVisible = panel == SidebarPanel.Explorer;
         if (panel == SidebarPanel.Windows)
             RefreshWindowsPanel();
-        if (panel == SidebarPanel.Changes)
-            RefreshChangesPanel();
+        if (panel == SidebarPanel.Settings && _settingsInitialized)
+        {
+            // The source-control panel has its own [JA|EN] toggle over the same setting.
+            _suppressSettingsChanged = true;
+            FillCommitLanguageCombo();
+            _suppressSettingsChanged = false;
+        }
+        // Shown starts the auto-fetch timer and reloads; anything else stops it.
+        if (panel == SidebarPanel.SourceControl)
+            _sourceControl?.OnPanelShown();
+        else
+            _sourceControl?.OnPanelHidden();
         if (panel == SidebarPanel.Slash)
             RefreshSlashPanel();
         if (panel == SidebarPanel.Extensions)
@@ -974,7 +994,7 @@ public partial class MainWindow : Window
         SetActivityButtonActive(BtnActivitySnippets, _activeSidePanel == SidebarPanel.Snippets);
         SetActivityButtonActive(BtnActivitySettings, _activeSidePanel == SidebarPanel.Settings);
         SetActivityButtonActive(BtnActivityWindows, _activeSidePanel == SidebarPanel.Windows);
-        SetActivityButtonActive(BtnActivityChanges, _activeSidePanel == SidebarPanel.Changes);
+        SetActivityButtonActive(BtnActivitySourceControl, _activeSidePanel == SidebarPanel.SourceControl);
         SetActivityButtonActive(BtnActivitySlash, _activeSidePanel == SidebarPanel.Slash);
         SetActivityButtonActive(BtnActivityExtensions, _activeSidePanel == SidebarPanel.Extensions);
         // DocView button state is managed by OnActivityDocView, not side panel
@@ -1771,6 +1791,8 @@ public partial class MainWindow : Window
         ChkEnableCheckpoints.IsChecked = _settings.EnableCheckpoints;
         ChkEnableLiveStatus.IsChecked = _settings.EnableLiveStatus;
         ChkEnableErrorBanner.IsChecked = _settings.EnableErrorBanner;
+        ChkGitAutoFetch.IsChecked = _settings.GitAutoFetch;
+        FillCommitLanguageCombo();
         FillPlanTierCombo();
         _suppressSettingsChanged = false;
     }
@@ -1816,6 +1838,10 @@ public partial class MainWindow : Window
             child.TitleText.Foreground = new SolidColorBrush(titleFg);
         }
         // DocView theme is updated via terminal.ApplyThemeColors()
+
+        // The source-control panel resolves its colours once, at construction, so the only
+        // way to re-theme it is to build it again.
+        CreateSourceControlPanel();
     }
 
     private void UpdateThemeResources()
@@ -2260,21 +2286,46 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    /// <summary>Opens the commit graph for the active project, the way Git Graph does in VS Code.</summary>
+    /// <summary>
+    /// Builds the source-control panel and hands it to the host in the sidebar. Called once at
+    /// startup and again whenever the theme flips, since the panel resolves its colours at
+    /// construction.
+    /// </summary>
+    private void CreateSourceControlPanel()
+    {
+        var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
+        var host = new Controls.SourceControlHost(
+            SendToActiveTerminal,
+            ShowMessageDialog,
+            ShowConfirmDialog,
+            (title, watermark, initial) => ShowTextInputDialog(title, watermark, initial));
+
+        var panel = new Controls.SourceControlPanel(_isDark, typeface, _settings, _cli, host);
+        // A write inside the panel moves the branch or the working tree, which the status bar
+        // and the file tree also read. Route it through the one refresh the window already has.
+        panel.GitChanged += (_, _) => RefreshGitInfo();
+
+        _sourceControl = panel;
+        SourceControlHost.Content = panel;
+        panel.SetRepository(_projectFolder);
+        if (_activeSidePanel == SidebarPanel.SourceControl) panel.OnPanelShown();
+    }
+
+    /// <summary>Opens the source-control panel, where the commit graph now lives.</summary>
     private void OnBranchNameDoubleTapped(object? sender, TappedEventArgs e)
     {
         e.Handled = true;
 
-        if (string.IsNullOrEmpty(_projectFolder) || !GitChangeService.IsGitRepository(_projectFolder))
-            return;
-
-        var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
-        new Controls.CommitGraphWindow(_projectFolder, StatusRepoName.Text ?? "", _isDark, typeface,
-            SendToActiveTerminal).Show(this);
+        if (_activeSidePanel != SidebarPanel.SourceControl)
+            ToggleSidePanel(SidebarPanel.SourceControl);
     }
 
     private void RefreshGitInfo()
     {
+        // Set before the early return: a folder that is not a repository still has to reach
+        // the panel, or it keeps showing the previous project's branch.
+        _sourceControl?.SetRepository(_projectFolder);
+
         StatusRepoName.Text = "";
         StatusBranchName.Text = "";
         BtnBranchSwitch.IsVisible = false;
@@ -2286,19 +2337,7 @@ public partial class MainWindow : Window
         try
         {
             // Get remote origin URL -> extract repo name
-            var remoteInfo = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = "remote get-url origin",
-                WorkingDirectory = _projectFolder,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var remoteProc = Process.Start(remoteInfo);
-            var remoteUrl = remoteProc?.StandardOutput.ReadToEnd().Trim() ?? "";
-            remoteProc?.WaitForExit();
+            var remoteUrl = GitCli.Run(_projectFolder, "remote", "get-url", "origin");
 
             if (!string.IsNullOrEmpty(remoteUrl))
             {
@@ -2326,19 +2365,7 @@ public partial class MainWindow : Window
             }
 
             // Get current branch name
-            var branchInfo = new ProcessStartInfo
-            {
-                FileName = "git",
-                Arguments = "rev-parse --abbrev-ref HEAD",
-                WorkingDirectory = _projectFolder,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using var branchProc = Process.Start(branchInfo);
-            var branch = branchProc?.StandardOutput.ReadToEnd().Trim() ?? "";
-            branchProc?.WaitForExit();
+            var branch = GitCli.Run(_projectFolder, "rev-parse", "--abbrev-ref", "HEAD");
 
             if (!string.IsNullOrEmpty(branch))
             {
@@ -2350,8 +2377,9 @@ public partial class MainWindow : Window
 
         UpdateIsolateToggle();
 
-        // Keep the changed-files list on the project the status bar just switched to.
-        if (ChangesPanel.IsVisible) RefreshChangesPanel();
+        // Keep the source-control panel on the project the status bar just switched to. It
+        // returns immediately while another sidebar panel is up.
+        _ = _sourceControl?.RefreshAsync();
         if (SlashPanel.IsVisible) RefreshSlashPanel();
     }
 
@@ -2688,6 +2716,13 @@ public partial class MainWindow : Window
         if (e.Key == Key.E && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift))
         {
             ToggleSidePanel(SidebarPanel.Explorer);
+            e.Handled = true;
+            return;
+        }
+        // Ctrl+Shift+G: Toggle source control
+        if (e.Key == Key.G && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift))
+        {
+            ToggleSidePanel(SidebarPanel.SourceControl);
             e.Handled = true;
             return;
         }
@@ -3196,61 +3231,11 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    // ── Changed Files ──
+    // ── Source control ──
 
-    private void OnActivityChanges(object? sender, RoutedEventArgs e)
+    private void OnActivitySourceControl(object? sender, RoutedEventArgs e)
     {
-        ToggleSidePanel(SidebarPanel.Changes);
-    }
-
-    private void OnRefreshChanges(object? sender, RoutedEventArgs e)
-    {
-        RefreshChangesPanel();
-    }
-
-    private async void RefreshChangesPanel()
-    {
-        if (_changesLoading || !ChangesPanel.IsVisible) return;
-
-        var repo = _projectFolder;
-        ChangesList.Children.Clear();
-
-        if (string.IsNullOrEmpty(repo) || !GitChangeService.IsGitRepository(repo))
-        {
-            LblChangesSummary.Text = Loc.Get("NotAGitRepo");
-            _changes = new List<GitChange>();
-            ApplyCommitBoxState(repo ?? "");
-            return;
-        }
-
-        _changesLoading = true;
-        LblChangesSummary.Text = Loc.Get("LoadingChanges");
-        try
-        {
-            _changes = await GitChangeService.GetChangesAsync(repo);
-        }
-        catch
-        {
-            _changes = new List<GitChange>();
-        }
-        finally
-        {
-            _changesLoading = false;
-        }
-
-        // The user may have switched panels or projects while git was running.
-        if (!ChangesPanel.IsVisible || !string.Equals(repo, _projectFolder, StringComparison.OrdinalIgnoreCase))
-            return;
-
-        ChangesList.Children.Clear();
-        LblChangesSummary.Text = _changes.Count == 0
-            ? Loc.Get("NoChanges")
-            : string.Format(Loc.Get("ChangedFilesCount"), _changes.Count);
-
-        foreach (var change in _changes)
-            ChangesList.Children.Add(BuildChangeRow(repo, change));
-
-        ApplyCommitBoxState(repo);
+        ToggleSidePanel(SidebarPanel.SourceControl);
     }
 
     // ── Isolated sessions (git worktree) ──
@@ -3357,124 +3342,19 @@ public partial class MainWindow : Window
         // not a preference to inherit silently on the next launch.
     }
 
-    // ── Git write: stage, commit, branch, push ──
+    // ── Git write: the status bar's branch switcher ──
+    //
+    // Staging, committing, pushing and the rest live in Controls/SourceControlPanel.cs. What
+    // stays here is the branch dropdown next to the branch name in the status bar, which is
+    // reachable without opening the sidebar.
 
-    /// <summary>Set while the "stage all" box is being brought in line with the list.</summary>
-    private bool _suppressStageAll;
-
-    /// <summary>One git write at a time: the panel is rebuilt from the result of each.</summary>
+    /// <summary>One git write at a time: the readouts are rebuilt from the result of each.</summary>
     private bool _gitWriteBusy;
-
-    private BranchState _branchState = BranchState.None;
-
-    /// <summary>
-    /// Turns the commit controls on for a repository and off for anything else, and says what
-    /// they would act on - how many files are staged, and how far the branch has run ahead of
-    /// what it tracks.
-    /// </summary>
-    private async void ApplyCommitBoxState(string repo)
-    {
-        bool isRepo = !string.IsNullOrEmpty(repo) && GitChangeService.IsGitRepository(repo);
-        CommitBox.IsVisible = isRepo;
-        ChkStageAll.IsVisible = isRepo && _changes.Count > 0;
-        if (!isRepo)
-        {
-            _branchState = BranchState.None;
-            BtnBranchSwitch.IsVisible = false;
-            return;
-        }
-
-        int staged = _changes.Count(c => c.Staged);
-
-        _suppressStageAll = true;
-        ChkStageAll.IsChecked = _changes.Count > 0 && staged == _changes.Count;
-        _suppressStageAll = false;
-
-        BtnCommit.IsEnabled = staged > 0 && !_gitWriteBusy;
-
-        var state = await GitWriteService.GetBranchStateAsync(repo);
-
-        // The project can change while git is running; a stale answer must not land.
-        if (!string.Equals(repo, _projectFolder, StringComparison.OrdinalIgnoreCase)) return;
-
-        _branchState = state;
-        BtnPush.IsEnabled = state.Current.Length > 0 && !_gitWriteBusy;
-        LblPush.Text = state.Ahead > 0
-            ? Loc.Get("PushAction") + " ↑" + state.Ahead
-            : Loc.Get("PushAction");
-    }
-
-    private async void OnStageAllChanged(object? sender, RoutedEventArgs e)
-    {
-        if (_suppressStageAll || _gitWriteBusy) return;
-
-        var repo = _projectFolder;
-        if (string.IsNullOrEmpty(repo)) return;
-
-        bool stage = ChkStageAll.IsChecked == true;
-        var paths = _changes
-            .Where(c => c.Staged != stage)
-            .Select(c => c.Path)
-            .ToList();
-        if (paths.Count == 0) return;
-
-        await RunGitWriteAsync(stage
-            ? GitWriteService.StageAsync(repo, paths)
-            : GitWriteService.UnstageAsync(repo, paths));
-    }
-
-    private async void OnCommit(object? sender, RoutedEventArgs e)
-    {
-        var repo = _projectFolder;
-        if (string.IsNullOrEmpty(repo) || _gitWriteBusy) return;
-
-        if (!_changes.Any(c => c.Staged))
-        {
-            ShowMessageDialog(Loc.Get("CommitAction"), Loc.Get("NothingStaged"));
-            return;
-        }
-
-        var message = TxtCommitMessage.Text ?? "";
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            ShowMessageDialog(Loc.Get("CommitAction"), Loc.Get("NoCommitMessage"));
-            TxtCommitMessage.Focus();
-            return;
-        }
-
-        if (await RunGitWriteAsync(GitWriteService.CommitAsync(repo, message)))
-            TxtCommitMessage.Text = "";
-    }
-
-    private async void OnPush(object? sender, RoutedEventArgs e)
-    {
-        var repo = _projectFolder;
-        if (string.IsNullOrEmpty(repo) || _gitWriteBusy) return;
-
-        var state = _branchState;
-        if (state.Current.Length == 0) return;
-
-        if (state.HasUpstream && state.Ahead == 0)
-        {
-            ShowMessageDialog(Loc.Get("PushAction"), Loc.Get("NothingToPush"));
-            return;
-        }
-
-        // Publishing is outward-facing and awkward to walk back, so it is always confirmed.
-        var detail = state.HasUpstream
-            ? string.Format(Loc.Get("PushConfirmFmt"),
-                string.Format(Loc.Get("BranchAheadFmt"), state.Ahead), state.Current)
-            : Loc.Get("PushConfirmNewUpstream");
-
-        if (!await ShowConfirmDialog(Loc.Get("PushConfirmTitle"), detail)) return;
-
-        await RunGitWriteAsync(GitWriteService.PushAsync(repo, state));
-    }
 
     private async void OnBranchSwitch(object? sender, RoutedEventArgs e)
     {
         var repo = _projectFolder;
-        if (string.IsNullOrEmpty(repo)) return;
+        if (string.IsNullOrEmpty(repo) || _gitWriteBusy) return;
 
         var (branches, current) = await GitWriteService.GetBranchesAsync(repo);
         if (!string.Equals(repo, _projectFolder, StringComparison.OrdinalIgnoreCase)) return;
@@ -3535,8 +3415,6 @@ public partial class MainWindow : Window
     private async Task<bool> RunGitWriteAsync(Task<GitResult> work)
     {
         _gitWriteBusy = true;
-        BtnCommit.IsEnabled = false;
-        BtnPush.IsEnabled = false;
         try
         {
             var result = await work;
@@ -3552,106 +3430,9 @@ public partial class MainWindow : Window
         finally
         {
             _gitWriteBusy = false;
+            // RefreshGitInfo also reloads the source-control panel.
             RefreshGitInfo();
-            RefreshChangesPanel();
         }
-    }
-
-    private Control BuildChangeRow(string repo, GitChange change)
-    {
-        var glyphColor = change.StatusGlyph switch
-        {
-            "A" => Color.FromRgb(48, 209, 88),
-            "D" => Color.FromRgb(255, 69, 58),
-            "R" => Color.FromRgb(10, 132, 255),
-            "?" => Color.FromRgb(142, 142, 147),
-            _ => Color.FromRgb(255, 214, 10),
-        };
-
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*") };
-
-        // Staged state is git's, not the panel's: the box shows what the index already holds and
-        // a click asks git to change it, so the two can never drift.
-        var stage = new CheckBox
-        {
-            IsChecked = change.Staged,
-            MinWidth = 0,
-            Padding = new Thickness(0),
-            Margin = new Thickness(0, 0, 4, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        ToolTip.SetTip(stage, Loc.Get(change.Staged ? "UnstageFile" : "StageFile"));
-        stage.IsCheckedChanged += (_, _) =>
-        {
-            bool want = stage.IsChecked == true;
-            if (want == change.Staged || _gitWriteBusy) return;
-            var one = new List<string> { change.Path };
-            _ = RunGitWriteAsync(want
-                ? GitWriteService.StageAsync(repo, one)
-                : GitWriteService.UnstageAsync(repo, one));
-        };
-
-        var glyph = new TextBlock
-        {
-            Text = change.StatusGlyph,
-            Width = 14,
-            FontSize = 11,
-            FontWeight = FontWeight.Bold,
-            Foreground = new SolidColorBrush(glyphColor),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var name = new TextBlock
-        {
-            Text = change.DisplayName,
-            FontSize = 12,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var dir = new TextBlock
-        {
-            Text = change.DisplayDir,
-            FontSize = 10,
-            Opacity = 0.55,
-            Margin = new Thickness(6, 0, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        Grid.SetColumn(stage, 0);
-        Grid.SetColumn(glyph, 1);
-        Grid.SetColumn(name, 2);
-        Grid.SetColumn(dir, 3);
-        grid.Children.Add(stage);
-        grid.Children.Add(glyph);
-        grid.Children.Add(name);
-        grid.Children.Add(dir);
-
-        var row = new Border
-        {
-            Padding = new Thickness(6, 4),
-            CornerRadius = new CornerRadius(4),
-            Background = Brushes.Transparent,
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Child = grid,
-        };
-        ToolTip.SetTip(row, change.Path + "  -  " + change.StatusLabel);
-
-        var hover = new SolidColorBrush(_isDark
-            ? Color.FromArgb(30, 255, 255, 255)
-            : Color.FromArgb(20, 0, 0, 0));
-        row.PointerEntered += (_, _) => row.Background = hover;
-        row.PointerExited += (_, _) => row.Background = Brushes.Transparent;
-        // Left button only, or the right-click that opens the menu below would open the diff
-        // window behind it as well.
-        row.PointerPressed += (_, e) =>
-        {
-            if (e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) ShowDiff(repo, change);
-        };
-
-        var comment = new MenuItem { Header = Loc.Get("CommentOnFile", "Comment on this file...") };
-        comment.Click += (_, _) => CommentOnFile(change);
-        row.ContextMenu = new ContextMenu { ItemsSource = new[] { comment } };
-
-        return row;
     }
 
     // ── Extensions: MCP servers, skills and plugins ──
@@ -4033,48 +3814,6 @@ public partial class MainWindow : Window
         catch { }
     }
 
-    private async void ShowDiff(string repo, GitChange change)
-    {
-        string diff;
-        try
-        {
-            diff = await GitChangeService.GetDiffAsync(repo, change);
-        }
-        catch
-        {
-            diff = "";
-        }
-
-        if (string.IsNullOrWhiteSpace(diff))
-        {
-            ShowMessageDialog(Loc.Get("Diff"), Loc.Get("DiffEmpty"));
-            return;
-        }
-
-        var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
-        new Controls.DiffWindow(change.Path, diff, _isDark, typeface, change.Path, SendToActiveTerminal)
-            .Show(this);
-    }
-
-    /// <summary>
-    /// Asks for a comment about a whole file and hands it to the session as "@path &lt;comment&gt;".
-    /// The diff window does the same for a range of lines; this is the version for a file the
-    /// user has already made up their mind about.
-    /// </summary>
-    private async void CommentOnFile(GitChange change)
-    {
-        var comment = await ShowTextInputDialog(
-            change.Path,
-            Loc.Get("CommentOnFileHint", "What should change in this file?"),
-            "",
-            Loc.Get("SendToConsole"));
-        if (comment == null) return;
-
-        // Only real line breaks: a comment may legitimately mention "\n" and mean the text.
-        comment = Regex.Replace(comment, @"\s*\r?\n\s*", " ").Trim();
-        SendToActiveTerminal(comment.Length > 0 ? "@" + change.Path + " " + comment : "@" + change.Path + " ");
-    }
-
     // ── Tokens & Cost ──
 
     private void OnActivityCost(object? sender, RoutedEventArgs e)
@@ -4115,6 +3854,42 @@ public partial class MainWindow : Window
         UsageTracker.DailyLimit = PlanDailyLimit(_settings.PlanTier);
     }
 
+    /// <summary>Commit-message languages in the order the settings combo lists them.</summary>
+    private static readonly string[] CommitLanguageIds = { "auto", "ja", "en" };
+
+    private void FillCommitLanguageCombo()
+    {
+        CmbCommitLanguage.ItemsSource = new List<string>
+        {
+            Loc.Get("CommitLanguageAuto"),
+            Loc.Get("CommitLanguageJa"),
+            Loc.Get("CommitLanguageEn"),
+        };
+        int idx = Array.IndexOf(CommitLanguageIds, _settings.CommitMessageLanguage);
+        CmbCommitLanguage.SelectedIndex = idx >= 0 ? idx : 0;
+    }
+
+    private void OnCommitLanguageChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (!_settingsInitialized || _suppressSettingsChanged) return;
+
+        int idx = CmbCommitLanguage.SelectedIndex;
+        if (idx < 0 || idx >= CommitLanguageIds.Length) return;
+
+        _settings.CommitMessageLanguage = CommitLanguageIds[idx];
+        _settings.Save();
+        // The panel shows the same setting on its own [JA|EN] toggle.
+        _sourceControl?.OnSettingsChanged();
+    }
+
+    private void OnGitAutoFetchChanged(object? sender, RoutedEventArgs e)
+    {
+        if (!_settingsInitialized || _suppressSettingsChanged) return;
+
+        _settings.GitAutoFetch = ChkGitAutoFetch.IsChecked == true;
+        _settings.Save();
+    }
+
     private void OnLiveStatusSettingChanged(object? sender, RoutedEventArgs e)
     {
         if (!_settingsInitialized || _suppressSettingsChanged) return;
@@ -4137,7 +3912,7 @@ public partial class MainWindow : Window
         var commands = new List<(string Key, string English, string Shortcut, Action Execute)>
         {
             ("NewSession", "New Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
-            ("PaletteChangedFiles", "Changed Files", "", () => ToggleSidePanel(SidebarPanel.Changes)),
+            ("PaletteSourceControl", "Source Control", "Ctrl+Shift+G", () => ToggleSidePanel(SidebarPanel.SourceControl)),
             ("CostDashboard", "Tokens & Cost", "", () => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this)),
             ("PaletteCloseTab", "Close Tab", "Ctrl+W", () => { if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count) CloseChild(_children[_activeChildIndex]); }),
             ("PaletteNextTab", "Next Tab", "Ctrl+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex + 1) % _children.Count); }),
@@ -4729,6 +4504,7 @@ public partial class MainWindow : Window
             ("ShortcutsPanels", new[]
             {
                 ("Ctrl+Shift+E", Loc.Get("EXPLORER")),
+                ("Ctrl+Shift+G", Loc.Get("SOURCE_CONTROL")),
                 ("Ctrl+Shift+P", Loc.Get("CommandPalette")),
                 ("Ctrl+/", Loc.Get("SlashCommands")),
                 ("F1", Loc.Get("Shortcuts")),
@@ -4929,6 +4705,11 @@ public partial class MainWindow : Window
     /// </summary>
     private async void RefreshSessionReadout(TerminalSnapshot snap)
     {
+        // Caught here regardless of what triggered it - Claucraft's own dropdown, "/model x"
+        // typed straight at the prompt, or the CLI's own interactive picker - since all three
+        // end with the CLI printing this same banner.
+        if (snap.ModelSwitchedTo is { Length: > 0 } switched) _pendingModelLabel = switched;
+
         if (!_cli.Features.CompactButton)
         {
             ClearSessionReadout();
@@ -4945,7 +4726,6 @@ public partial class MainWindow : Window
 
         if (!string.Equals(monitor.Path, path, StringComparison.OrdinalIgnoreCase))
         {
-            _pendingModelAlias = null;
             _pendingModelLabel = null;
             monitor.Track(path);
         }
@@ -4989,19 +4769,13 @@ public partial class MainWindow : Window
         var model = SessionCostMonitor.ModelDisplayName(session.Model);
 
         // A switch only reaches the transcript with the next reply, so the picked name stands
-        // in until then. The alias is enough to recognise: every id in a line contains it
-        // ("opus" in "claude-opus-5").
-        if (_pendingModelAlias != null)
+        // in until then - cleared once the transcript names the same model itself.
+        if (_pendingModelLabel != null)
         {
-            if (session.Model.Contains(_pendingModelAlias, StringComparison.OrdinalIgnoreCase))
-            {
-                _pendingModelAlias = null;
+            if (string.Equals(model, _pendingModelLabel, StringComparison.OrdinalIgnoreCase))
                 _pendingModelLabel = null;
-            }
-            else if (_pendingModelLabel != null)
-            {
+            else
                 model = _pendingModelLabel;
-            }
         }
 
         // A transcript names no model until its first reply lands, so until then the window
@@ -5042,7 +4816,7 @@ public partial class MainWindow : Window
     /// </summary>
     private static readonly (string Alias, string ModelId)[] SwitchableModels =
     {
-        ("fable", "claude-fable-5"),
+        ("fable", "claude-fable-5-1"),
         ("opus", "claude-opus-5"),
         ("sonnet", "claude-sonnet-5"),
         ("haiku", "claude-haiku-4-5"),
@@ -5088,9 +4862,8 @@ public partial class MainWindow : Window
         _children[_activeChildIndex].Terminal.SendText(
             alias == null ? "/model\r" : "/model " + alias + "\r");
 
-        if (alias == null || label == null) return;
+        if (label == null) return;
 
-        _pendingModelAlias = alias;
         _pendingModelLabel = label;
         StatusModelText.Text = label;
         StatusModelName.IsVisible = true;
@@ -5920,8 +5693,7 @@ public partial class MainWindow : Window
         // window taking over here rather than on the next poll, so the context meter cannot
         // spend a frame reporting the session the user just switched away from. Its monitor is
         // still parsed, so this is a swap rather than a re-read.
-        _pendingModelAlias = null;   // a model picked in the old window says nothing about this one
-        _pendingModelLabel = null;
+        _pendingModelLabel = null;   // a model picked in the old window says nothing about this one
         ApplySessionReadout();
 
         // Switch project context to match the active child

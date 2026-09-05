@@ -83,6 +83,14 @@ public class CliProvider
     /// <summary>Args that resume a specific session. Supports the {sessionId} placeholder.</summary>
     public string ResumeArgs { get; set; } = "";
 
+    /// <summary>
+    /// Args that run one prompt without a session and print the answer, used for the commit
+    /// message draft. Without {prompt} the prompt is written to stdin, which is what a .cmd
+    /// shim needs - cmd.exe rebuilds the command line and would mangle a long prompt on it.
+    /// Empty means the CLI has no one-shot mode here and the draft button stays off.
+    /// </summary>
+    public string OneShotArgs { get; set; } = "";
+
     /// <summary>Config directory name under the user profile, e.g. ".claude".</summary>
     public string ConfigDir { get; set; } = "";
 
@@ -121,6 +129,7 @@ public class CliProvider
         NewArgs = NewArgs,
         ContinueArgs = ContinueArgs,
         ResumeArgs = ResumeArgs,
+        OneShotArgs = OneShotArgs,
         ConfigDir = ConfigDir,
         InstallHint = InstallHint,
         Features = Features.Clone(),
