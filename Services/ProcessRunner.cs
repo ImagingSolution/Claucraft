@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -40,10 +41,25 @@ public static class ProcessRunner
             if (stdin != null)
                 psi.StandardInputEncoding = new UTF8Encoding(false);
 
-            if (NeedsShell(exe))
+            var batch = IsBatch(exe);
+            var shim = batch ? ResolveNpmShim(exe) : null;
+
+            if (shim != null)
             {
-                // CreateProcess only ever appends ".exe" when it searches PATH, so an npm-installed
-                // CLI - which is a .cmd shim - cannot be started directly. cmd.exe knows how.
+                // An npm CLI is a batch file wrapped around "node <script>". Starting node
+                // ourselves keeps the call off cmd.exe's command line, where every argument would
+                // have to survive being re-parsed by quote counting.
+                psi.FileName = shim.Node;
+                foreach (var f in shim.Flags)
+                    psi.ArgumentList.Add(f);
+                psi.ArgumentList.Add(shim.Script);
+                foreach (var a in args)
+                    psi.ArgumentList.Add(a);
+            }
+            else if (batch)
+            {
+                // CreateProcess only ever appends ".exe" when it searches PATH, so a batch file
+                // cannot be started directly. cmd.exe knows how.
                 var refusal = FirstUnsafeForCmd(exe, args);
                 if (refusal != null) return GitResult.Failed(refusal);
 
@@ -113,12 +129,158 @@ public static class ProcessRunner
         }
     }
 
-    /// <summary>Whether this executable has to be launched through cmd.exe to run at all.</summary>
-    public static bool NeedsShell(string exe)
+    /// <summary>
+    /// Whether this executable has to be launched through cmd.exe to run at all - which is to say,
+    /// whether its arguments are about to be handed to a parser that rebuilds them by counting
+    /// quotes.
+    ///
+    /// A batch file cannot be started any other way. An npm shim is a batch file, but only
+    /// nominally: what it runs is node, node is a real executable, and starting it directly avoids
+    /// cmd.exe entirely. So a shim this can see through is not a shell case.
+    /// </summary>
+    public static bool NeedsShell(string exe) => IsBatch(exe) && ResolveNpmShim(exe) == null;
+
+    private static bool IsBatch(string? exe)
     {
         var ext = Path.GetExtension(exe ?? "");
         return ext.Equals(".cmd", StringComparison.OrdinalIgnoreCase)
             || ext.Equals(".bat", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ---- npm shims ----
+
+    /// <summary>What an npm shim really launches, once its batch plumbing is read away.</summary>
+    private sealed record NpmShim(string Node, string[] Flags, string Script);
+
+    /// <summary>
+    /// Parsed shims, by path. A shim is written once at install time and then only ever replaced
+    /// wholesale, so re-reading it on every call would buy nothing. A path that was not a shim
+    /// when first asked about stays that way for this run, which at worst means falling back to
+    /// the cmd.exe route the code already had.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, NpmShim?> ShimCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static NpmShim? ResolveNpmShim(string? exe) =>
+        ShimCache.GetOrAdd(exe ?? "", ParseNpmShim);
+
+    /// <summary>
+    /// Reads a .cmd back to the node invocation it exists to perform, or null when it is some
+    /// other batch script.
+    ///
+    /// Every npm shim ends on one line that forwards the caller's arguments with %*, and on that
+    /// line sits the interpreter, whatever flags the package asked node for, and the script. That
+    /// is the whole shape being matched: the script has to be a file that is actually there, which
+    /// is what keeps an unrelated batch file from being mistaken for a shim.
+    /// </summary>
+    private static NpmShim? ParseNpmShim(string shimPath)
+    {
+        string text;
+        string dir;
+        try
+        {
+            dir = Path.GetDirectoryName(Path.GetFullPath(shimPath)) ?? "";
+            text = File.ReadAllText(shimPath);
+        }
+        catch
+        {
+            return null;
+        }
+
+        foreach (var line in text.Split('\n'))
+        {
+            if (!line.Contains("%*", StringComparison.Ordinal)) continue;
+
+            var tokens = SplitBatchTokens(line, dir);
+
+            var script = tokens.FindIndex(IsNodeScript);
+            if (script < 0) continue;
+
+            var node = FindNode(dir);
+            if (node == null) return null;
+
+            // Flags the package asked node for - --no-warnings and the like - sit between the
+            // interpreter and the script, and some packages do not run right without them.
+            var flags = new List<string>();
+            for (int i = script - 1; i >= 0 && tokens[i].StartsWith("-", StringComparison.Ordinal); i--)
+                flags.Insert(0, tokens[i]);
+
+            return new NpmShim(node, flags.ToArray(), Path.GetFullPath(tokens[script]));
+        }
+
+        return null;
+    }
+
+    private static bool IsNodeScript(string token)
+    {
+        // A leftover % means a batch variable this does not understand, so the path is not real.
+        if (token.Length == 0 || token.Contains('%', StringComparison.Ordinal)) return false;
+
+        var ext = Path.GetExtension(token);
+        if (!ext.Equals(".js", StringComparison.OrdinalIgnoreCase)
+            && !ext.Equals(".cjs", StringComparison.OrdinalIgnoreCase)
+            && !ext.Equals(".mjs", StringComparison.OrdinalIgnoreCase)) return false;
+
+        try { return File.Exists(token); }
+        catch { return false; }
+    }
+
+    /// <summary>The node the shim itself would have picked: the one beside it, else PATH.</summary>
+    private static string? FindNode(string shimDir)
+    {
+        try
+        {
+            var local = Path.Combine(shimDir, "node.exe");
+            if (File.Exists(local)) return local;
+        }
+        catch
+        {
+            // A shim directory that cannot be combined with a name is no reason to skip PATH.
+        }
+
+        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var raw in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                var candidate = Path.Combine(raw.Trim().Trim('"'), "node.exe");
+                if (File.Exists(candidate)) return candidate;
+            }
+            catch
+            {
+                // One unusable PATH entry says nothing about the rest.
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Splits one batch line the way cmd.exe would, expanding the shim's own %dp0%.</summary>
+    private static List<string> SplitBatchTokens(string line, string shimDir)
+    {
+        var dir = shimDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var tokens = new List<string>();
+        var sb = new StringBuilder();
+        bool quoted = false, any = false;
+
+        foreach (var c in line)
+        {
+            if (c == '"') { quoted = !quoted; any = true; continue; }
+            if (!quoted && (c == ' ' || c == '\t' || c == '\r'))
+            {
+                if (any) { tokens.Add(Expand(sb.ToString())); sb.Clear(); any = false; }
+                continue;
+            }
+            sb.Append(c);
+            any = true;
+        }
+        if (any) tokens.Add(Expand(sb.ToString()));
+
+        return tokens;
+
+        string Expand(string token) => token
+            .Replace("%~dp0", dir, StringComparison.OrdinalIgnoreCase)
+            .Replace("%dp0%", dir, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string JoinForCmd(string[] args)

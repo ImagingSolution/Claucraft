@@ -81,12 +81,12 @@ public static class CommitMessageService
             Truncate(diff, inline ? MaxDiffCharsArgs : MaxDiffCharsStdin));
         var exe = string.IsNullOrEmpty(provider.ResolvedPath) ? provider.Exe : provider.ResolvedPath!;
 
-        // A .cmd shim can only be started through cmd.exe, and cmd.exe rebuilds its command line by
-        // counting quotes. The prompt carries a diff - on a shared branch, someone else's diff - so
-        // it is the one value here an outsider gets to write, and it is multi-line besides, which no
-        // command line can carry at all. So it never goes there: a shim is handed the prompt on
-        // stdin, and a preset that can only take it as an argument gets no draft rather than a
-        // command line assembled out of a stranger's diff.
+        // The prompt carries a diff - on a shared branch, someone else's diff - so it is the one
+        // value here that an outsider gets to write. Anything ProcessRunner has to start through
+        // cmd.exe gets its command line rebuilt by quote counting, which is no place for that, so
+        // such a preset gets no draft at all rather than a command line assembled out of a
+        // stranger's diff. Most CLIs are not that case: an .exe, and an npm shim ProcessRunner can
+        // read back to node, both take their arguments as arguments.
         if (inline && ProcessRunner.NeedsShell(exe)) return null;
 
         string? stdin = inline ? null : prompt;
