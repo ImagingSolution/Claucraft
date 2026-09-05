@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -66,8 +66,21 @@ public partial class MainWindow : Window
     private DispatcherTimer? _gitInfoDebounce;
     private readonly UsageTracker _usageTracker = new();
 
-    /// <summary>Marginal cost of the session in the active window. See SessionCostMonitor.</summary>
-    private readonly SessionCostMonitor _costMonitor = new();
+    /// <summary>
+    /// Stands in for the cost readout when no window is active. Never tracked, so it reports an
+    /// empty session and every readout built from it hides itself.
+    /// </summary>
+    private readonly SessionCostMonitor _noCost = new();
+
+    /// <summary>
+    /// Marginal cost of the session in the active window. Each window owns its own monitor -
+    /// see <see cref="MdiChildInfo.Cost"/> - so switching windows swaps the readout rather than
+    /// re-deriving it, and a window can never report a neighbour's numbers.
+    /// </summary>
+    private SessionCostMonitor ActiveCost =>
+        _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+            ? _children[_activeChildIndex].Cost
+            : _noCost;
 
     /// <summary>The account's real 5-hour and 7-day limits. See RateLimitService.</summary>
     private readonly RateLimitService _rateLimits = new();
@@ -81,7 +94,6 @@ public partial class MainWindow : Window
     private string? _pendingModelLabel;
     private List<LaunchProfile> _profiles = new();
     private bool _suppressProfileChange;
-    private bool _wasWorking;
     private bool _costRefreshInFlight;
 
     /// <summary>Turn-end tracking for the frame blink. See NoteRunState.</summary>
@@ -171,6 +183,14 @@ public partial class MainWindow : Window
 
         /// <summary>Session this window resumed, so the Session box can show it as selected.</summary>
         public string? SessionId { get; set; }
+
+        /// <summary>
+        /// Cost and context readout for this window's transcript. One per window: a single
+        /// shared monitor had to be re-pointed on every switch, which threw away the parse of
+        /// a multi-megabyte transcript and left the status bar reporting the window the user
+        /// had just left until the re-read finished.
+        /// </summary>
+        public SessionCostMonitor Cost { get; } = new();
 
         /// <summary>
         /// Reasoning effort this window is running at. Effort never reaches the transcript, so
@@ -647,14 +667,14 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Window title, e.g. "[Claude Code] Claucraft Ver.0.1.12.244". Called from
+    /// Window title, e.g. "Claucraft Ver.0.1.12.244". Called from
     /// ApplyProviderUi() so it follows both a language change and an AI switch.
     /// </summary>
     private void UpdateWindowTitle()
     {
         var ver = Assembly.GetExecutingAssembly().GetName().Version;
         var verStr = ver != null ? $"Ver.{ver.Major}.{ver.Minor}.{ver.Build}.{ver.Revision}" : "";
-        Title = $"[{_cli.Active.Name}] {Loc.Get("AppTitle")} {verStr}";
+        Title = $"{Loc.Get("AppTitle")} {verStr}";
     }
 
     /// <summary>
@@ -2987,8 +3007,11 @@ public partial class MainWindow : Window
     /// </summary>
     private void ApplyContextMeter()
     {
-        var session = _costMonitor.Current;
-        bool showContext = _cli.Features.CompactButton && session.HasData && session.ContextTokens > 0;
+        var session = ActiveCost.Current;
+        // Guarded on the live-status toggle here rather than only at the call site: the meter is
+        // now painted from the transcript read as well, which does not go through ApplyLiveStatus.
+        bool showContext = _settings.EnableLiveStatus && _cli.Features.CompactButton
+                           && session.HasData && session.ContextTokens > 0;
         StatusContextPanel.IsVisible = showContext;
         if (!showContext) return;
 
@@ -3031,7 +3054,7 @@ public partial class MainWindow : Window
                  && left <= _settings.HandoffBannerThreshold)
         {
             key = "compact";
-            var cost = _costMonitor.Current;
+            var cost = ActiveCost.Current;
 
             // Handing off is the cheaper of the two ways out, so it gets the button. /compact
             // stays one click away on the context meter itself.
@@ -4847,9 +4870,7 @@ public partial class MainWindow : Window
     // ── Marginal cost ──
 
     /// <summary>
-    /// Transcript backing the active window. Prefers the session the window actually resumed;
-    /// falls back to the newest transcript in the project, which can belong to a sibling window
-    /// when several share one folder and none has reported its id yet.
+    /// Transcript backing the active window, or null while the window has no session of its own.
     /// </summary>
     private string? ResolveActiveSessionPath()
         => _activeChildIndex >= 0 && _activeChildIndex < _children.Count
@@ -4861,19 +4882,23 @@ public partial class MainWindow : Window
         var folder = string.IsNullOrEmpty(child.ProjectFolder) ? _projectFolder : child.ProjectFolder;
         if (string.IsNullOrEmpty(folder)) return null;
 
-        if (!string.IsNullOrEmpty(child.SessionId))
-        {
-            var byId = SessionMessageReader.FindSessionFile(folder, child.SessionId!);
-            if (byId != null) return byId;
-        }
-
-        return SessionMessageReader.FindMostRecentSession(folder);
+        // Only the window's own session, never a guess. Falling back to the newest transcript in
+        // the project put whichever session happened to be written last on the status bar - a
+        // neighbouring window mid-turn, or a CLI running outside Claucraft altogether - under
+        // this window's name. TrackSessionIdAsync learns the real id within a poll or two of
+        // launch, and until it does, no readout at all beats a confident wrong one.
+        if (string.IsNullOrEmpty(child.SessionId)) return null;
+        return SessionMessageReader.FindSessionFile(folder, child.SessionId!);
     }
 
     /// <summary>
-    /// Keeps the session readout - which model is answering, and how long the session has been
-    /// running - in step with the active transcript. New usage only reaches the file when a turn
-    /// ends, so it is re-read on that edge rather than every tick.
+    /// Keeps the session readout - which model is answering, how much context it has filled,
+    /// how long the session has been running - in step with the active transcript.
+    ///
+    /// Read every tick rather than on the turn-end edge. The read is incremental and stops at a
+    /// length check when nothing has been appended, so the cost of polling is negligible, while
+    /// waiting for an edge meant a compaction - which rewrites the prefix without a reply of its
+    /// own - left the meter on the pre-compact figure until the user sent another message.
     /// </summary>
     private async void RefreshSessionReadout(TerminalSnapshot snap)
     {
@@ -4883,33 +4908,27 @@ public partial class MainWindow : Window
             return;
         }
 
+        var monitor = ActiveCost;
         string? path = ResolveActiveSessionPath();
-        if (path == null)
+        if (path == null || ReferenceEquals(monitor, _noCost))
         {
             ClearSessionReadout();
             return;
         }
 
-        bool attaching = !string.Equals(_costMonitor.Path, path, StringComparison.OrdinalIgnoreCase);
-        if (attaching)
+        if (!string.Equals(monitor.Path, path, StringComparison.OrdinalIgnoreCase))
         {
             _pendingModelAlias = null;
             _pendingModelLabel = null;
-        }
-        _costMonitor.Track(path);
-
-        bool turnEnded = _wasWorking && !snap.IsWorking;
-        _wasWorking = snap.IsWorking;
-
-        if (!attaching && !turnEnded)
-        {
-            ApplySessionReadout();
-            return;
+            monitor.Track(path);
         }
 
+        // One read at a time across all windows: the first read of a large transcript can outrun
+        // the poll, and stacking those would have several threads parsing megabytes at once. A
+        // skipped tick costs nothing - the next one picks up from the same offset.
         if (_costRefreshInFlight) return;
         _costRefreshInFlight = true;
-        try { await _costMonitor.RefreshAsync(); }
+        try { await monitor.RefreshAsync(); }
         catch { /* a transcript that cannot be read just leaves the readout as it was */ }
         finally { _costRefreshInFlight = false; }
 
@@ -4919,13 +4938,18 @@ public partial class MainWindow : Window
     private void ClearSessionReadout()
     {
         StatusModelName.IsVisible = false;
+        StatusContextPanel.IsVisible = false;
         ApplyEffortReadout();
     }
 
-    /// <summary>The model that is answering, and the effort it is answering at.</summary>
+    /// <summary>The model that is answering, the context it has filled, and the effort it is
+    /// answering at. Painting the meter here as well as on the live-status tick is what keeps
+    /// it from trailing the transcript by a poll after a switch or a compaction.</summary>
     private void ApplySessionReadout()
     {
-        var session = _costMonitor.Current;
+        var session = ActiveCost.Current;
+
+        ApplyContextMeter();
 
         var model = SessionCostMonitor.ModelDisplayName(session.Model);
 
@@ -5792,12 +5816,14 @@ public partial class MainWindow : Window
         }
 
         UpdateStripSelection();
-        ApplyEffortReadout();
 
-        // The transcript readouts belong to the window that was active until now. Drop them here
-        // rather than on the next poll, so the context meter cannot spend a frame reporting the
-        // window the user just left.
-        _costMonitor.Track(null);
+        // The transcript readouts belong to the window being left behind. Repaint them from the
+        // window taking over here rather than on the next poll, so the context meter cannot
+        // spend a frame reporting the session the user just switched away from. Its monitor is
+        // still parsed, so this is a swap rather than a re-read.
+        _pendingModelAlias = null;   // a model picked in the old window says nothing about this one
+        _pendingModelLabel = null;
+        ApplySessionReadout();
 
         // Switch project context to match the active child
         var childFolder = _children[index].ProjectFolder;

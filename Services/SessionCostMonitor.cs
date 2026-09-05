@@ -149,7 +149,16 @@ public sealed class SessionCostMonitor
         // first line of the file rather than at the first reply.
         bool changed = ReadTimestamp(root);
 
-        if (!root.TryGetProperty("type", out var typeProp) || typeProp.GetString() != "assistant") return changed;
+        if (!root.TryGetProperty("type", out var typeProp)) return changed;
+        var type = typeProp.GetString();
+
+        // A compaction rewrites the conversation prefix without a reply of its own, so nothing
+        // in the usage records says it happened. The boundary the CLI writes carries the new
+        // prefix size, and taking it here is what keeps the meter from reporting the pre-compact
+        // figure until the user happens to send another message.
+        if (type == "system") return ReadCompactBoundary(root) || changed;
+
+        if (type != "assistant") return changed;
         if (!root.TryGetProperty("message", out var msgProp) || msgProp.ValueKind != JsonValueKind.Object) return changed;
         if (!msgProp.TryGetProperty("usage", out var usageProp) || usageProp.ValueKind != JsonValueKind.Object) return changed;
 
@@ -180,6 +189,28 @@ public sealed class SessionCostMonitor
         _state.LastTurnUsd = cost;
         _state.ContextTokens = input + cacheRead + cacheCreation;
         _state.NextTurnUsd = CostAnalytics.EstimateNextTurnCostUsd(model, _state.ContextTokens);
+        return true;
+    }
+
+    /// <summary>
+    /// Takes the post-compaction prefix size from a "compact_boundary" record, which the CLI
+    /// writes for both a typed /compact and an automatic one. Returns false for every other
+    /// system record.
+    /// </summary>
+    private bool ReadCompactBoundary(JsonElement root)
+    {
+        if (!root.TryGetProperty("subtype", out var subProp)
+            || subProp.ValueKind != JsonValueKind.String
+            || subProp.GetString() != "compact_boundary") return false;
+
+        if (!root.TryGetProperty("compactMetadata", out var meta)
+            || meta.ValueKind != JsonValueKind.Object) return false;
+
+        long post = ReadLong(meta, "postTokens");
+        if (post <= 0) return false;
+
+        _state.ContextTokens = post;
+        _state.NextTurnUsd = CostAnalytics.EstimateNextTurnCostUsd(_state.Model, post);
         return true;
     }
 
