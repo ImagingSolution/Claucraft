@@ -1148,27 +1148,41 @@ public partial class MainWindow : Window
 
         foreach (var editor in _editorChildren)
             WindowsList.Children.Add(BuildEditorWindowRow(editor));
+
+        foreach (var graph in _graphChildren)
+            WindowsList.Children.Add(BuildGraphWindowRow(graph));
     }
 
     /// <summary>
     /// An open file window, listed alongside the sessions: same click-to-activate and close as a
     /// session row, with the path on the tooltip since the row only has room for a file name.
     /// </summary>
-    private Control BuildEditorWindowRow(EditorChildInfo editor)
+    private Control BuildEditorWindowRow(EditorChildInfo editor) =>
+        BuildLayoutWindowRow(editor, editor.StripText.Text ?? "", editor.Doc.Path, EditorDotColor);
+
+    /// <summary>The commit history, listed the same way an open file is.</summary>
+    private Control BuildGraphWindowRow(GraphChildInfo graph) =>
+        BuildLayoutWindowRow(graph, graph.StripText.Text ?? "", graph.RepoRoot, GraphDotColor);
+
+    /// <summary>
+    /// One non-terminal MDI window as a row in the windows panel: a coloured dot naming what
+    /// kind of window it is, its title, and a close button.
+    /// </summary>
+    private Control BuildLayoutWindowRow(IMdiLayoutItem item, string text, string tooltip, Color dotColor)
     {
-        bool isActive = ReferenceEquals(editor, _activeLayoutItem);
+        bool isActive = ReferenceEquals(item, _activeLayoutItem);
 
         var dot = new Ellipse
         {
             Width = 8, Height = 8,
-            Fill = new SolidColorBrush(Color.FromRgb(0, 122, 255)),
+            Fill = new SolidColorBrush(dotColor),
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(0, 5, 0, 0),
         };
 
         var title = new TextBlock
         {
-            Text = editor.StripText.Text,
+            Text = text,
             FontSize = 13,
             FontWeight = FontWeight.Normal,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -1187,7 +1201,7 @@ public partial class MainWindow : Window
             Cursor = new Cursor(StandardCursorType.Hand),
             Margin = new Thickness(4, 2, 0, 0),
         };
-        closeBtn.Click += (_, ev) => { _ = CloseEditorWindowAsync(editor); ev.Handled = true; };
+        closeBtn.Click += (_, ev) => { CloseLayoutItem(item); ev.Handled = true; };
 
         var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
         Grid.SetColumn(dot, 0);
@@ -1198,7 +1212,7 @@ public partial class MainWindow : Window
         grid.Children.Add(closeBtn);
         grid.Margin = new Thickness(4, 0);
 
-        var item = new Border
+        var row = new Border
         {
             Child = grid,
             Padding = new Thickness(6, 5),
@@ -1208,20 +1222,20 @@ public partial class MainWindow : Window
                 : Brushes.Transparent,
             Cursor = new Cursor(StandardCursorType.Hand),
         };
-        ToolTip.SetTip(item, editor.Doc.Path);
-        ToolTip.SetShowDelay(item, 300);
+        ToolTip.SetTip(row, tooltip);
+        ToolTip.SetShowDelay(row, 300);
 
-        item.PointerPressed += (_, _) => ActivateLayoutItem(editor);
-        item.PointerEntered += (s, _) =>
+        row.PointerPressed += (_, _) => ActivateLayoutItem(item);
+        row.PointerEntered += (s, _) =>
         {
             if (!isActive) ((Border)s!).Background = new SolidColorBrush(_isDark ? Color.FromArgb(20, 255, 255, 255) : Color.FromArgb(20, 0, 0, 0));
         };
-        item.PointerExited += (s, _) =>
+        row.PointerExited += (s, _) =>
         {
             if (!isActive) ((Border)s!).Background = Brushes.Transparent;
         };
 
-        return item;
+        return row;
     }
 
     /// <summary>
@@ -1771,6 +1785,11 @@ public partial class MainWindow : Window
                 SetActiveLayoutItem(editor);
                 editor.EditorBox.Focus();
                 break;
+
+            case GraphChildInfo graph:
+                SetActiveLayoutItem(graph);
+                graph.Panel.Focus();
+                break;
         }
     }
 
@@ -1778,6 +1797,7 @@ public partial class MainWindow : Window
     {
         if (item is MdiChildInfo child) CloseChild(child);
         else if (item is EditorChildInfo editor) _ = CloseEditorWindowAsync(editor);
+        else if (item is GraphChildInfo graph) CloseGraphWindow(graph);
     }
 
     /// <summary>
@@ -1854,6 +1874,227 @@ public partial class MainWindow : Window
         ArrangeChildren();
         // ArrangeChildren bails out when nothing is left on the canvas, so the strip and the
         // windows panel would keep showing a closed file's row without this.
+        UpdateStripSelection();
+        RefreshWindowsPanel();
+    }
+
+
+    // ── Commit graph (floating MDI windows) ──
+
+    /// <summary>Apple Blue: an open file.</summary>
+    private static readonly Color EditorDotColor = Color.FromRgb(0, 122, 255);
+
+    /// <summary>Apple Purple: a repository's history, so it reads apart from files at a glance.</summary>
+    private static readonly Color GraphDotColor = Color.FromRgb(191, 90, 242);
+
+    /// <summary>
+    /// One commit-history window on the MDI canvas. Built like <see cref="EditorChildInfo"/> and
+    /// for the same reason: the history has no session, no file and nothing to save, so it gets
+    /// its own small lifecycle rather than being fitted into either of the other two.
+    /// </summary>
+    private sealed class GraphChildInfo : IMdiLayoutItem
+    {
+        public required Border Container { get; init; }
+        public required Border TitleBar { get; init; }
+        public required Controls.CommitGraphPanel Panel { get; init; }
+        public required Button StripButton { get; init; }
+        public required TextBlock StripText { get; init; }
+
+        /// <summary>The repository being shown. One window per repository.</summary>
+        public required string RepoRoot { get; init; }
+    }
+
+    private readonly List<GraphChildInfo> _graphChildren = new();
+
+    /// <summary>
+    /// Opens the commit history for <paramref name="repoRoot"/> in its own window on the MDI
+    /// canvas, or brings the existing one to front if that repository is already showing.
+    /// </summary>
+    private void OpenCommitGraphWindow(string repoRoot, string repoLabel)
+    {
+        if (string.IsNullOrEmpty(repoRoot)) return;
+
+        var existing = _graphChildren.FirstOrDefault(g =>
+            string.Equals(g.RepoRoot, repoRoot, StringComparison.OrdinalIgnoreCase));
+        if (existing != null) { ActivateLayoutItem(existing); return; }
+
+        var panel = new Controls.CommitGraphPanel(
+            repoRoot, repoLabel, _isDark,
+            new Typeface(_settings.FontFamily + ", Consolas, Courier New"),
+            SendToActiveTerminal);
+
+        var titleText = new TextBlock
+        {
+            Text = panel.GraphTitle,
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 215)),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        ToolTip.SetTip(titleText, repoRoot);
+
+        var closeButton = new Button
+        {
+            Content = "×",
+            FontSize = 14,
+            Padding = new Thickness(6, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        var titleLeft = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Margin = new Thickness(8, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        titleLeft.Children.Add(titleText);
+
+        var titleRight = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        titleRight.Children.Add(closeButton);
+
+        var titleGrid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("*,Auto") };
+        Grid.SetColumn(titleLeft, 0);
+        Grid.SetColumn(titleRight, 1);
+        titleGrid.Children.Add(titleLeft);
+        titleGrid.Children.Add(titleRight);
+
+        var titleBar = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),  // Apple elevated surface
+            Padding = new Thickness(0, 6),
+            Child = titleGrid,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        var dockPanel = new DockPanel();
+        DockPanel.SetDock(titleBar, Dock.Top);
+        dockPanel.Children.Add(titleBar);
+        dockPanel.Children.Add(panel);
+
+        var container = new Border
+        {
+            Child = dockPanel,
+            BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+            BorderThickness = new Thickness(0.5),
+            ClipToBounds = true,
+            Background = new SolidColorBrush(Color.FromRgb(28, 28, 30))
+        };
+
+        // --- Window strip button, built like an editor window's so the two read as one set ---
+        var stripDot = new Ellipse
+        {
+            Width = 7, Height = 7,
+            Fill = new SolidColorBrush(GraphDotColor),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var stripText = new TextBlock
+        {
+            Text = panel.GraphTitle,
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 120
+        };
+        var stripCloseBtn = new Button
+        {
+            Content = "×",
+            FontSize = 12,
+            Padding = new Thickness(3, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            CornerRadius = new CornerRadius(3),
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        var stripContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+        stripContent.Children.Add(stripDot);
+        stripContent.Children.Add(stripText);
+        stripContent.Children.Add(stripCloseBtn);
+
+        var stripButton = new Button
+        {
+            Content = stripContent,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brushes.Transparent,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 4),
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        ToolTip.SetTip(stripButton, repoRoot);
+
+        var entry = new GraphChildInfo
+        {
+            Container = container,
+            TitleBar = titleBar,
+            Panel = panel,
+            StripButton = stripButton,
+            StripText = stripText,
+            RepoRoot = repoRoot
+        };
+
+        stripButton.Click += (_, _) => ActivateLayoutItem(entry);
+        stripCloseBtn.Click += (_, e) => { CloseGraphWindow(entry); e.Handled = true; };
+        closeButton.Click += (_, _) => CloseGraphWindow(entry);
+        panel.CloseRequested += (_, _) => CloseGraphWindow(entry);
+
+        bool dragging = false;
+        Point dragStart = default;
+        double dragLeft = 0, dragTop = 0;
+        // The graph list and the detail pane mark PointerPressed handled, so a plain bubbling
+        // handler here would only ever see clicks on the window's padding. Tunnel runs before
+        // them, which is what makes clicking anywhere in the window select it.
+        container.AddHandler(InputElement.PointerPressedEvent,
+            (_, _) => SetActiveLayoutItem(entry), RoutingStrategies.Tunnel);
+        titleBar.PointerPressed += (_, e) =>
+        {
+            dragging = true;
+            dragStart = e.GetPosition(MdiContainer);
+            double left = Canvas.GetLeft(container);
+            double top = Canvas.GetTop(container);
+            dragLeft = double.IsNaN(left) ? 0 : left;
+            dragTop = double.IsNaN(top) ? 0 : top;
+            e.Pointer.Capture(titleBar);
+            e.Handled = true;
+        };
+        titleBar.PointerMoved += (_, e) =>
+        {
+            if (!dragging) return;
+            var pos = e.GetPosition(MdiContainer);
+            Canvas.SetLeft(container, dragLeft + pos.X - dragStart.X);
+            Canvas.SetTop(container, dragTop + pos.Y - dragStart.Y);
+            e.Handled = true;
+        };
+        titleBar.PointerReleased += (_, e) =>
+        {
+            dragging = false;
+            e.Pointer.Capture(null);
+            e.Handled = true;
+        };
+
+        _graphChildren.Add(entry);
+        MdiContainer.Children.Add(container);
+        WindowStrip.Children.Add(stripButton);
+        _activeLayoutItem = entry;
+        ArrangeChildren();
+        Dispatcher.UIThread.Post(() => panel.Focus());
+    }
+
+    private void CloseGraphWindow(GraphChildInfo entry)
+    {
+        _graphChildren.Remove(entry);
+        MdiContainer.Children.Remove(entry.Container);
+        WindowStrip.Children.Remove(entry.StripButton);
+        if (ReferenceEquals(_activeLayoutItem, entry)) _activeLayoutItem = null;
+        ArrangeChildren();
+        // ArrangeChildren bails out when nothing is left on the canvas, so the strip and the
+        // windows panel would keep showing a closed window's row without this.
         UpdateStripSelection();
         RefreshWindowsPanel();
     }
@@ -2678,7 +2919,8 @@ public partial class MainWindow : Window
             SendToActiveTerminal,
             ShowMessageDialog,
             ShowConfirmDialog,
-            (title, watermark, initial) => ShowTextInputDialog(title, watermark, initial));
+            (title, watermark, initial) => ShowTextInputDialog(title, watermark, initial),
+            OpenCommitGraphWindow);
 
         var panel = new Controls.SourceControlPanel(_isDark, typeface, _settings, _cli, host);
         // A write inside the panel moves the branch or the working tree, which the status bar
@@ -6061,10 +6303,25 @@ public partial class MainWindow : Window
     /// </summary>
     private List<IMdiLayoutItem> AllLayoutItems()
     {
-        var list = new List<IMdiLayoutItem>(_children.Count + _editorChildren.Count);
+        var list = new List<IMdiLayoutItem>(_children.Count + _editorChildren.Count + _graphChildren.Count);
         list.AddRange(_children);
         list.AddRange(_editorChildren);
+        list.AddRange(_graphChildren);
         return list;
+    }
+
+    /// <summary>
+    /// Tile modes fill their slots in list order, so that order decides which side each window
+    /// lands on. The rule the arrange buttons follow: side by side, terminals go on the right;
+    /// stacked, terminals go on top. Creation order already puts terminals first, which is the
+    /// top slot - only the left-right splits have to push them to the end.
+    /// </summary>
+    private static List<IMdiLayoutItem> TerminalsLast(List<IMdiLayoutItem> items)
+    {
+        var reordered = new List<IMdiLayoutItem>(items.Count);
+        reordered.AddRange(items.Where(x => x is not MdiChildInfo));
+        reordered.AddRange(items.Where(x => x is MdiChildInfo));
+        return reordered;
     }
 
     private void ArrangeChildren()
@@ -6111,9 +6368,13 @@ public partial class MainWindow : Window
                 double cw = w / cols;
                 double ch = h / rows;
 
+                // A single-row grid is just a left-right split, so terminals belong on the right.
+                // Taller grids keep them in the top row, where creation order already puts them.
+                var tiled = rows == 1 ? TerminalsLast(items) : items;
+
                 for (int i = 0; i < count; i++)
                 {
-                    var c = items[i];
+                    var c = tiled[i];
                     c.Container.IsVisible = true;
                     c.TitleBar.IsVisible = false;
                     Canvas.SetLeft(c.Container, (i % cols) * cw);
@@ -6129,6 +6390,7 @@ public partial class MainWindow : Window
             {
                 int count = items.Count;
                 double ch = h / count;
+                // Top-bottom split: terminals on top, which creation order already gives.
                 for (int i = 0; i < count; i++)
                 {
                     var c = items[i];
@@ -6147,9 +6409,11 @@ public partial class MainWindow : Window
             {
                 int count = items.Count;
                 double cw = w / count;
+                // Left-right split: editors on the left, terminals on the right.
+                var tiled = TerminalsLast(items);
                 for (int i = 0; i < count; i++)
                 {
-                    var c = items[i];
+                    var c = tiled[i];
                     c.Container.IsVisible = true;
                     c.TitleBar.IsVisible = false;
                     Canvas.SetLeft(c.Container, i * cw);
@@ -6261,6 +6525,10 @@ public partial class MainWindow : Window
         foreach (var editor in _editorChildren)
             PaintStripSelection(editor.StripButton, editor.Container,
                 ReferenceEquals(editor, _activeLayoutItem));
+
+        foreach (var graph in _graphChildren)
+            PaintStripSelection(graph.StripButton, graph.Container,
+                ReferenceEquals(graph, _activeLayoutItem));
     }
 
     private static void PaintStripSelection(Button stripButton, Border container, bool active)

@@ -18,14 +18,21 @@ namespace Claucraft.Controls;
 
 /// <summary>
 /// The few things the panel needs from the window it sits in: somewhere to put text the user
-/// wants the AI to read, and the three dialogs the app already has. Bundled into one record so
-/// the panel's constructor does not grow a parameter per callback.
+/// wants the AI to read, the three dialogs the app already has, and a way to open the commit
+/// history as an MDI child. Bundled into one record so the panel's constructor does not grow a
+/// parameter per callback.
 /// </summary>
+/// <param name="OpenCommitGraph">
+/// Opens the full history for a repository root (first argument) under a display label (second)
+/// as a window on the MDI canvas. The panel does not own that window: it lives alongside the
+/// terminals and file editors, not on top of them.
+/// </param>
 public sealed record SourceControlHost(
     Action<string> SendToTerminal,
     Action<string, string> ShowMessage,
     Func<string, string, Task<bool>> Confirm,
-    Func<string, string, string, Task<string?>> TextInput);
+    Func<string, string, string, Task<string?>> TextInput,
+    Action<string, string> OpenCommitGraph);
 
 /// <summary>
 /// Everything git and GitHub in one panel: what has changed, what is staged, the branch and how
@@ -1375,10 +1382,8 @@ public sealed class SourceControlPanel : UserControl
     private void OpenGraphWindow()
     {
         if (_repo.Length == 0) return;
-        if (TopLevel.GetTopLevel(this) is not Window owner) return;
 
-        new CommitGraphWindow(_repo, System.IO.Path.GetFileName(_repo.TrimEnd('\\', '/')),
-            _isDark, _mono, _host.SendToTerminal).Show(owner);
+        _host.OpenCommitGraph(_repo, System.IO.Path.GetFileName(_repo.TrimEnd('\\', '/')));
     }
 
     private async void ShowDiff(GitChange change)
