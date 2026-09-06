@@ -91,6 +91,7 @@ public sealed class SourceControlPanel : UserControl
 
     private DispatcherTimer? _fetchTimer;
     private CancellationTokenSource? _generateCts;
+    private CancellationTokenSource? _scanCts;
 
     // ── Controls ──
 
@@ -340,7 +341,7 @@ public sealed class SourceControlPanel : UserControl
         listHeader.Children.Add(_lblSummary);
         DockPanel.SetDock(listHeader, Dock.Top);
 
-        _changesList = new StackPanel { Spacing = 1, Margin = new Thickness(4, 2) };
+        _changesList = new StackPanel { Spacing = 0, Margin = new Thickness(4, 2) };
         var changesScroller = new ScrollViewer
         {
             Content = _changesList,
@@ -426,6 +427,7 @@ public sealed class SourceControlPanel : UserControl
         var next = projectFolder ?? "";
         if (string.Equals(next, _folder, StringComparison.OrdinalIgnoreCase)) return;
 
+        _scanCts?.Cancel();
         _folder = next;
         _repo = "";
         _changes = new List<GitChange>();
@@ -684,9 +686,8 @@ public sealed class SourceControlPanel : UserControl
         {
             IsChecked = change.Staged,
             MinWidth = 0,
+            MinHeight = 0,
             Padding = new Thickness(0),
-            Margin = new Thickness(0, 0, 4, 0),
-            VerticalAlignment = VerticalAlignment.Center,
         };
         ToolTip.SetTip(stage, Loc.Get(change.Staged ? "UnstageFile" : "StageFile"));
         stage.IsCheckedChanged += (_, _) =>
@@ -694,10 +695,7 @@ public sealed class SourceControlPanel : UserControl
             bool want = stage.IsChecked == true;
             if (want == change.Staged || _busy) return;
             var one = new List<string> { change.Path };
-            _ = RunAsync(Loc.Get(want ? "StagingStatus" : "UnstagingStatus", "..."),
-                () => want
-                    ? GitWriteService.StageAsync(repo, one)
-                    : GitWriteService.UnstageAsync(repo, one));
+            _ = StageChangeAsync(repo, want, one);
         };
 
         var glyph = new TextBlock
@@ -725,18 +723,33 @@ public sealed class SourceControlPanel : UserControl
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        Grid.SetColumn(stage, 0);
+        // A Fluent CheckBox is 32 tall whatever its minimum is set to - the template holds a
+        // band of that height - and squeezing it only makes the template clip its own tick. So
+        // it keeps the 32 it wants, on a canvas that measures children freely and answers for
+        // 20 itself, lifted by the half-difference so the 20px tick lands over the slot. What
+        // the row is spaced by is the slot, which is the height of the tick and nothing more.
+        var stageSlot = new Canvas
+        {
+            Width = 20,
+            Height = 20,
+            Margin = new Thickness(0, 0, 4, 0),
+        };
+        Canvas.SetLeft(stage, 0);
+        Canvas.SetTop(stage, -6);
+        stageSlot.Children.Add(stage);
+
+        Grid.SetColumn(stageSlot, 0);
         Grid.SetColumn(glyph, 1);
         Grid.SetColumn(name, 2);
         Grid.SetColumn(dir, 3);
-        grid.Children.Add(stage);
+        grid.Children.Add(stageSlot);
         grid.Children.Add(glyph);
         grid.Children.Add(name);
         grid.Children.Add(dir);
 
         var row = new Border
         {
-            Padding = new Thickness(6, 4),
+            Padding = new Thickness(6, 1),
             CornerRadius = new CornerRadius(4),
             Background = Brushes.Transparent,
             Cursor = new Cursor(StandardCursorType.Hand),
@@ -1050,10 +1063,170 @@ public sealed class SourceControlPanel : UserControl
             .ToList();
         if (paths.Count == 0) return;
 
-        _ = RunAsync(Loc.Get(stage ? "StagingStatus" : "UnstagingStatus", "..."),
+        _ = StageChangeAsync(_repo, stage, paths);
+    }
+
+    /// <summary>
+    /// Stages or unstages the given paths, then - only for a stage that succeeded - hands the
+    /// paths it just staged to the secret scan. Unstaging never triggers a scan: it can only make
+    /// what is staged safer, never riskier.
+    /// </summary>
+    private async Task StageChangeAsync(string repo, bool stage, List<string> paths)
+    {
+        if (stage && !await ConfirmRiskyAsync(repo, paths, staging: true))
+        {
+            // The row's checkbox has already flipped itself; the reload is what puts it back.
+            GitChanged?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        bool ok = await RunAsync(Loc.Get(stage ? "StagingStatus" : "UnstagingStatus", "..."),
             () => stage
-                ? GitWriteService.StageAsync(_repo, paths)
-                : GitWriteService.UnstageAsync(_repo, paths));
+                ? GitWriteService.StageAsync(repo, paths)
+                : GitWriteService.UnstageAsync(repo, paths));
+
+        if (ok && stage) TriggerSecretScan(repo, paths);
+    }
+
+    /// <summary>
+    /// True when nothing in <paramref name="paths"/> is the kind of file that does not belong in a
+    /// commit, and otherwise whatever the user answers to being shown the list. This is the cheap
+    /// half of the two checks: it reads names and sizes, so it can run in front of the action it
+    /// guards, where the AI scan can only follow behind one.
+    /// </summary>
+    private async Task<bool> ConfirmRiskyAsync(string repo, List<string> paths, bool staging)
+    {
+        var risks = StagingPolicy.Inspect(repo, paths);
+        if (risks.Count == 0) return true;
+
+        return await _host.Confirm(Loc.Get("RiskyFilesTitle"),
+            Loc.Get(staging ? "RiskyFilesStageIntro" : "RiskyFilesCommitIntro")
+                + "\n\n" + StagingPolicy.Describe(risks));
+    }
+
+    // ── Secret scan ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Starts a background check of everything now staged, cancelling whatever scan was already
+    /// running - only the most recent staged set is worth an answer about. A result only reaches
+    /// the user when it is RISK: SAFE and "no verdict at all" (wrong provider, empty diff, an
+    /// answer the parser could not read) both mean silence, because a scan this app cannot back
+    /// up must never masquerade as a clean bill of health.
+    /// </summary>
+    private void TriggerSecretScan(string repo, List<string> justStagedPaths)
+    {
+        var provider = _cli.Active;
+        if (string.IsNullOrWhiteSpace(provider.OneShotArgs)) return;
+
+        _scanCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _scanCts = cts;
+        var language = _settings.CommitMessageLanguage;
+
+        _ = ScanAsync();
+
+        async Task ScanAsync()
+        {
+            SecretScanResult? result;
+            try
+            {
+                result = await SecretScanService.CheckStagedAsync(repo, provider, language, cts.Token);
+            }
+            catch
+            {
+                // A scan the panel cannot complete must never block staging - it just says nothing.
+                return;
+            }
+
+            if (cts.IsCancellationRequested) return;
+            if (result == null || result.Verdict != SecretScanVerdict.Risk) return;
+            if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
+
+            ShowSecretWarning(result, repo, justStagedPaths);
+        }
+    }
+
+    /// <summary>
+    /// The dialog for a RISK verdict: the AI's own words, and a choice between leaving the file(s)
+    /// staged and undoing exactly the stage action that triggered this scan.
+    /// </summary>
+    private void ShowSecretWarning(SecretScanResult result, string repo, List<string> justStagedPaths)
+    {
+        var owner = TopLevel.GetTopLevel(this) as Window;
+        if (owner == null) return;
+
+        var intro = new TextBlock
+        {
+            Text = Loc.Get("SecretScanIntro", "The AI flagged this staged change:"),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var detail = new TextBlock
+        {
+            Text = result.Detail,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0),
+        };
+        var detailScroller = new ScrollViewer
+        {
+            Content = detail,
+            MaxHeight = 220,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+
+        var unstage = new Button
+        {
+            Content = Loc.Get("SecretScanUnstage", "Unstage"),
+            MinWidth = 110,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var keep = new Button
+        {
+            Content = Loc.Get("SecretScanContinue", "Keep staged"),
+            MinWidth = 110,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0),
+        };
+        buttons.Children.Add(unstage);
+        buttons.Children.Add(keep);
+
+        var panel = new StackPanel { Margin = new Thickness(22, 20) };
+        panel.Children.Add(intro);
+        panel.Children.Add(detailScroller);
+        panel.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = Loc.Get("SecretScanTitle", "Possibly sensitive content"),
+            Width = 480,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(_isDark
+                ? Color.FromRgb(30, 30, 32)
+                : Color.FromRgb(246, 246, 250)),
+            Content = panel,
+        };
+
+        unstage.Click += (_, _) =>
+        {
+            dialog.Close();
+            if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
+            _ = RunAsync(Loc.Get("UnstagingStatus", "..."),
+                () => GitWriteService.UnstageAsync(repo, justStagedPaths));
+        };
+        keep.Click += (_, _) => dialog.Close();
+
+        _ = dialog.ShowDialog(owner);
     }
 
     private async void OnCommit() => await CommitAsync();
@@ -1079,6 +1252,11 @@ public sealed class SourceControlPanel : UserControl
             _host.ShowMessage(Loc.Get("CommitAction"), Loc.Get("NothingStaged"));
             return false;
         }
+
+        // Everything staged, not just what this panel staged: the index may have been filled by
+        // another tool, or by a session that ended before the commit did.
+        var staged = _changes.Where(c => c.Staged).Select(c => c.Path).ToList();
+        if (!await ConfirmRiskyAsync(_repo, staged, staging: false)) return false;
 
         var message = _txtMessage.Text ?? "";
         if (string.IsNullOrWhiteSpace(message))

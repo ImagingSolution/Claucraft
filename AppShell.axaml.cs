@@ -11,6 +11,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -28,7 +29,7 @@ using Claucraft.Terminal;
 
 namespace Claucraft;
 
-internal partial class MainWindow : Window, IDockOwner
+internal partial class AppShell : UserControl, IDockOwner
 {
     /// <summary>
     /// A whole-tree arrangement of the open windows. Presets, not positions: the dock tree is
@@ -36,6 +37,33 @@ internal partial class MainWindow : Window, IDockOwner
     /// </summary>
     private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical }
     private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, SourceControl, Slash, Extensions }
+
+    /// <summary>
+    /// Every shell alive in the process, in creation order. The first is the application's own;
+    /// the rest are windows a terminal was dragged out into.
+    /// </summary>
+    private static readonly List<AppShell> Shells = new();
+
+    /// <summary>
+    /// True for the application's own shell. It is the one that loads and saves what the shells
+    /// share, the only one that opens the welcome page and the first-run checks, and the only
+    /// one that stays open with nothing in it.
+    /// </summary>
+    private readonly bool _primary;
+
+    /// <summary>Set while this shell is following a setting another one changed, so the echo stops here.</summary>
+    private bool _followingShared;
+
+    /// <summary>Set once this shell has been wound down, so a second window close is a no-op.</summary>
+    private bool _shutdown;
+
+    /// <summary>
+    /// The window this shell is in. Cached at attach: the docking code asks for it while windows
+    /// are closing, by which point the visual tree no longer has an answer.
+    /// </summary>
+    private Window? _host;
+
+    internal Window HostWindow => _host ??= (Window)TopLevel.GetTopLevel(this)!;
 
     private string? _projectFolderBacking;
 
@@ -156,7 +184,7 @@ internal partial class MainWindow : Window, IDockOwner
     private bool _suppressSettingsChanged;
     private readonly SnippetStore _snippetStore;
     private readonly NotificationService _notifications = new();
-    private readonly CheckpointService _checkpoints = new();
+    private readonly CheckpointService _checkpoints = CheckpointService.Shared;
 
     // Live status read off the terminal screen (mode / activity / context / errors)
     private DispatcherTimer? _insightTimer;
@@ -273,17 +301,25 @@ internal partial class MainWindow : Window, IDockOwner
         public string? WorktreeOrigin { get; set; }
     };
 
-    public MainWindow()
-    {
-        InitializeComponent();
-        DockOwners.Register(this);
+    public AppShell() : this(true) { }
 
-        _settings = AppSettings.Load();
-        _snippetStore = SnippetStore.Load();
+    /// <summary>
+    /// A shell for a window a terminal was dragged out into is not the primary one: it shares
+    /// the settings and the checkpoints rather than loading them, and it skips everything the
+    /// application does once at startup - the welcome page, the auto-launch, the setup doctor.
+    /// </summary>
+    internal AppShell(bool primary)
+    {
+        _primary = primary;
+        InitializeComponent();
+        Shells.Add(this);
+
+        _settings = AppSettings.Shared;
+        _snippetStore = SnippetStore.Shared;
         _snippetStore.SeedDefaultsIfEmpty(_settings.Language);
         _isDark = _settings.IsDark;
 
-        _checkpoints.Load();
+        if (_primary) _checkpoints.Load();
         _notifications.EnableToast = _settings.NotifyOnComplete;
         _notifications.EnableSound = _settings.NotifySound;
 
@@ -349,6 +385,10 @@ internal partial class MainWindow : Window, IDockOwner
         RefreshFileTree();
         HookFileTreeDrag();
 
+        // What follows is the application starting up, and that happens once. A shell opened by
+        // dragging a terminal out is handed a window rather than opening the application.
+        if (!_primary) return;
+
         // Probe `--version` off the UI thread; labels fill in as results arrive
         _ = DetectProviderVersionsAsync();
 
@@ -371,6 +411,27 @@ internal partial class MainWindow : Window, IDockOwner
             _ = ShowSetupDoctorIfProblemsAsync();
         }
     }
+
+    /// <summary>
+    /// A drop target from the moment the shell is in a window - not before. Registering asks for
+    /// the window, and the constructor runs while there is still nothing to answer with.
+    /// </summary>
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _host = TopLevel.GetTopLevel(this) as Window;
+
+        if (_registered) return;
+        _registered = true;
+        DockOwners.Register(this);
+        UpdateWindowTitle();
+    }
+
+    private bool _registered;
+
+    /// <summary>Which shell holds <paramref name="item"/>, and so is what opened and closes it.</summary>
+    internal static AppShell? OwnerOf(IMdiLayoutItem item) =>
+        Shells.FirstOrDefault(s => s.AllLayoutItems().Contains(item));
 
     // ── Localization ──
 
@@ -706,7 +767,8 @@ internal partial class MainWindow : Window, IDockOwner
     {
         var ver = Assembly.GetExecutingAssembly().GetName().Version;
         var verStr = ver != null ? $"Ver.{ver.Major}.{ver.Minor}.{ver.Build}.{ver.Revision}" : "";
-        Title = $"{Loc.Get("AppTitle")} {verStr}";
+        if (TopLevel.GetTopLevel(this) is Window window)
+            window.Title = $"{Loc.Get("AppTitle")} {verStr}";
     }
 
     /// <summary>
@@ -737,14 +799,28 @@ internal partial class MainWindow : Window, IDockOwner
         var provider = _cli.Active;
         LblAiSelector.Text = provider.DisplayName;
 
+        var (activeData, activeColor) = GetProviderIconSpec(provider.Id);
+        IconAiSelector.Data = Geometry.Parse(activeData);
+        IconAiSelector.Foreground = new SolidColorBrush(activeColor);
+
         var installed = _cli.InstalledProviders.ToList();
         BtnAiSelector.IsEnabled = installed.Count > 0;
 
         var flyout = new MenuFlyout { Placement = PlacementMode.Top };
         foreach (var candidate in installed)
         {
-            var item = new MenuItem { Header = candidate.DisplayName };
-            if (candidate.Id == provider.Id)
+            var isActive = candidate.Id == provider.Id;
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            header.Children.Add(BuildProviderIcon(candidate.Id));
+            header.Children.Add(new TextBlock
+            {
+                Text = candidate.DisplayName,
+                FontWeight = isActive ? FontWeight.SemiBold : FontWeight.Normal,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+            var item = new MenuItem { Header = header };
+            if (isActive)
             {
                 item.Icon = new PathIcon
                 {
@@ -762,6 +838,42 @@ internal partial class MainWindow : Window, IDockOwner
         ToolTip.SetTip(BtnAiSelector, provider.IsInstalled
             ? provider.ResolvedPath
             : Loc.Get("SwitchAiTooltip"));
+    }
+
+    /// <summary>Brand-colored glyph geometry and color for a provider, keyed by <see cref="CliProvider.Id"/>.</summary>
+    private static (string Data, Color Color) GetProviderIconSpec(string providerId) => providerId switch
+    {
+        CliProviderService.ClaudeId => (
+            "M12,2 L13.34,8.77 L19.07,4.93 L15.23,10.66 L22,12 L15.23,13.34 L19.07,19.07 L13.34,15.23 "
+            + "L12,22 L10.66,15.23 L4.93,19.07 L8.77,13.34 L2,12 L8.77,10.66 L4.93,4.93 L10.66,8.77 Z",
+            Color.FromRgb(0xDA, 0x77, 0x56)),
+        "codex" => (
+            "M12,3 L19.79,7.5 L19.79,16.5 L12,21 L4.21,16.5 L4.21,7.5 Z",
+            Color.FromRgb(0x6E, 0x6E, 0x73)),
+        "copilot" => (
+            "M8,4 L16,4 A5,5 0 0 1 21,9 L21,15 A5,5 0 0 1 16,20 L8,20 A5,5 0 0 1 3,15 L3,9 A5,5 0 0 1 8,4 Z "
+            + "M7.3,11 A1.7,1.7 0 1 0 10.7,11 A1.7,1.7 0 1 0 7.3,11 Z "
+            + "M13.3,11 A1.7,1.7 0 1 0 16.7,11 A1.7,1.7 0 1 0 13.3,11 Z",
+            Color.FromRgb(0x8E, 0x8E, 0x93)),
+        "antigravity" => (
+            "M12,3 L21,19 L3,19 Z",
+            Color.FromRgb(0x42, 0x85, 0xF4)),
+        _ => (
+            "M12,2 L14,9 L21,11 L14,13 L12,20 L10,13 L3,11 L10,9 Z",
+            Color.FromRgb(0x8E, 0x8E, 0x93)),
+    };
+
+    /// <summary>Small brand-colored glyph shown next to each provider in the AI selector flyout.</summary>
+    private static PathIcon BuildProviderIcon(string providerId)
+    {
+        var (data, color) = GetProviderIconSpec(providerId);
+        return new PathIcon
+        {
+            Data = Geometry.Parse(data),
+            Width = 14,
+            Height = 14,
+            Foreground = new SolidColorBrush(color),
+        };
     }
 
     private async Task DetectProviderVersionsAsync()
@@ -820,7 +932,7 @@ internal partial class MainWindow : Window, IDockOwner
         {
             if (args.Key == Key.Escape || args.Key == Key.Enter) dialog.Close();
         };
-        _ = dialog.ShowDialog(this);
+        _ = dialog.ShowDialog(HostWindow);
     }
 
     // ── Sidebar Panel ──
@@ -876,12 +988,12 @@ internal partial class MainWindow : Window, IDockOwner
         {
             // Show the most recent cached/detected diagram
             var win = new Terminal.DiagramWindow(diagrams[^1], _isDark, typeface);
-            win.Show(this);
+            win.Show(HostWindow);
         }
         else
         {
             // No diagrams - open file dialog
-            await Terminal.DiagramWindow.OpenFile(this, _isDark, typeface);
+            await Terminal.DiagramWindow.OpenFile(HostWindow, _isDark, typeface);
         }
     }
 
@@ -1840,6 +1952,12 @@ internal partial class MainWindow : Window, IDockOwner
 
     private async Task CloseEditorWindowAsync(EditorChildInfo entry)
     {
+        if (OwnerOf(entry) is { } holder && !ReferenceEquals(holder, this))
+        {
+            await holder.CloseEditorWindowAsync(entry);
+            return;
+        }
+
         if (!await ReleaseEditorAsync(entry)) return;
         _editorChildren.Remove(entry);
         entry.Owner?.Release(entry);
@@ -1924,7 +2042,7 @@ internal partial class MainWindow : Window, IDockOwner
     /// </summary>
     private bool _customLayout;
 
-    Window IDockOwner.Window => this;
+    Window IDockOwner.Window => HostWindow;
     DockHost IDockOwner.Host => MdiHost;
     Panel IDockOwner.Strip => WindowStrip;
     Control IDockOwner.StripScroll => WindowStripScroll;
@@ -1950,6 +2068,7 @@ internal partial class MainWindow : Window, IDockOwner
     /// <summary>Takes a window in: back from a detached window, or across from another one.</summary>
     void IDockOwner.Adopt(IMdiLayoutItem item, DockDropTarget target)
     {
+        Absorb(item);
         item.Owner = this;
         WindowStrip.Children.Add(item.StripButton);
 
@@ -1987,8 +2106,84 @@ internal partial class MainWindow : Window, IDockOwner
 
     void IDockOwner.SetActive(IMdiLayoutItem item) => SetActiveLayoutItem(item);
 
-    /// <summary>This window stays open with nothing in it - that is what the welcome page is for.</summary>
-    void IDockOwner.CloseIfEmpty() { }
+    /// <summary>
+    /// The application's own window stays open with nothing in it - that is what the welcome
+    /// page is for. A window dragged out has nothing to stay open for.
+    /// </summary>
+    void IDockOwner.CloseIfEmpty()
+    {
+        // Not "nothing docked here": a window of this shell's can be showing in a detached
+        // window, and this shell is still what closes it.
+        if (_primary || AllLayoutItems().Count > 0) return;
+        HostWindow.Close();
+    }
+
+    /// <summary>
+    /// A dragged-out shell holding nothing but the one window. Pulling that one out would close
+    /// this window and open an identical one in its place.
+    /// </summary>
+    internal bool IsLoneSecondary => !_primary && AllLayoutItems().Count <= 1;
+
+    /// <summary>Set once this shell is on its way to a lighter window, so the swap happens once.</summary>
+    private bool _demoting;
+
+    /// <summary>Set while the window around this shell is closing what is in it, one at a time.</summary>
+    internal bool Closing { get; set; }
+
+    /// <summary>The application's own shell, which is open for as long as the application is.</summary>
+    private static AppShell? Primary => Shells.FirstOrDefault(s => s._primary);
+
+    /// <summary>
+    /// A shell with no terminal left in it is a toolbar, an IME box and a status bar wrapped
+    /// around windows that have no use for any of them, so what is left moves to a window of the
+    /// lighter kind and this one goes. The application's own window keeps its shell regardless.
+    /// </summary>
+    private void MaybeDemote()
+    {
+        if (_primary || _demoting || Closing || _shutdown) return;
+        if (_children.Count > 0) return;
+
+        // Nothing left at all is not a demotion: there is nothing to show in a lighter window,
+        // and the drag that emptied this one is already closing it.
+        if (DockedItems().Count == 0) return;
+
+        _demoting = true;
+
+        // On a later pass: this runs in the middle of a window changing hands, and the windows
+        // that are staying have not finished moving yet.
+        Dispatcher.UIThread.Post(Demote, DispatcherPriority.Background);
+    }
+
+    private void Demote()
+    {
+        var host = HostWindow;
+        var items = DockedItems();
+        var window = new DetachedWindow
+        {
+            Position = host.Position,
+            Width = host.Width,
+            Height = host.Height
+        };
+
+        // Handed to the application's own shell on the way out. A lighter window only says where
+        // a window is shown; the shell behind it is what closes it, and this one is about to go.
+        foreach (var item in items)
+        {
+            ((IDockOwner)this).Release(item);
+            Primary?.Absorb(item);
+        }
+
+        window.Show();
+
+        // Into the new window only on a later pass, for the same reason a detach defers it: a
+        // control that changes window inside one layout pass leaves the window it left holding
+        // an invalidation for a control it no longer owns.
+        Dispatcher.UIThread.Post(() =>
+        {
+            foreach (var item in items) window.Adopt(item, default);
+            host.Close();
+        }, DispatcherPriority.Background);
+    }
 
     /// <summary>
     /// Moves a tab to <paramref name="index"/> in the strip and re-applies the layout, so a
@@ -2158,6 +2353,12 @@ internal partial class MainWindow : Window, IDockOwner
 
     private void CloseGraphWindow(GraphChildInfo entry)
     {
+        if (OwnerOf(entry) is { } holder && !ReferenceEquals(holder, this))
+        {
+            holder.CloseGraphWindow(entry);
+            return;
+        }
+
         _graphChildren.Remove(entry);
         entry.Owner?.Release(entry);
     }
@@ -2242,8 +2443,8 @@ internal partial class MainWindow : Window, IDockOwner
         try
         {
             IStorageItem? item = node.IsDirectory
-                ? await StorageProvider.TryGetFolderFromPathAsync(path)
-                : await StorageProvider.TryGetFileFromPathAsync(path);
+                ? await HostWindow.StorageProvider.TryGetFolderFromPathAsync(path)
+                : await HostWindow.StorageProvider.TryGetFileFromPathAsync(path);
             if (item != null)
                 entry.SetFile(item);
         }
@@ -2501,6 +2702,8 @@ internal partial class MainWindow : Window, IDockOwner
 
     private void OnDarkModeChanged(object? sender, RoutedEventArgs e)
     {
+        if (_followingShared) return;
+
         _isDark = ChkDarkMode.IsChecked == true;
         _settings.IsDark = _isDark;
         _settings.Save();
@@ -2510,6 +2713,19 @@ internal partial class MainWindow : Window, IDockOwner
         // Update application-wide color resources
         UpdateThemeResources();
 
+        ApplyThemeToChildren();
+
+        // The source-control panel resolves its colours once, at construction, so the only
+        // way to re-theme it is to build it again.
+        CreateSourceControlPanel();
+
+        // The theme is the application's, not this window's.
+        Broadcast(s => s.AdoptSharedTheme());
+    }
+
+    /// <summary>Repaints the terminal windows in this shell for the theme now in force.</summary>
+    private void ApplyThemeToChildren()
+    {
         var containerBg = _isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(255, 255, 255);
         var titleBarBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(235, 235, 240);
         var titleFg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(40, 40, 45);
@@ -2522,10 +2738,6 @@ internal partial class MainWindow : Window, IDockOwner
             child.TitleText.Foreground = new SolidColorBrush(titleFg);
         }
         // DocView theme is updated via terminal.ApplyThemeColors()
-
-        // The source-control panel resolves its colours once, at construction, so the only
-        // way to re-theme it is to build it again.
-        CreateSourceControlPanel();
     }
 
     private void UpdateThemeResources()
@@ -2572,6 +2784,8 @@ internal partial class MainWindow : Window, IDockOwner
         {
             child.Terminal.SetFont(_settings.FontFamily, _settings.FontSize);
         }
+
+        Broadcast(s => s.AdoptSharedLanguage());
     }
 
     private void OnOpenClaudeFolder(object? sender, RoutedEventArgs e)
@@ -2936,10 +3150,10 @@ internal partial class MainWindow : Window, IDockOwner
     private async void OnBrowseFolder(object? sender, RoutedEventArgs e)
     {
         var startLocation = !string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder)
-            ? await StorageProvider.TryGetFolderFromPathAsync(_projectFolder)
+            ? await HostWindow.StorageProvider.TryGetFolderFromPathAsync(_projectFolder)
             : null;
 
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        var folders = await HostWindow.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
             Title = "Select Project Folder",
             AllowMultiple = false,
@@ -3517,7 +3731,7 @@ internal partial class MainWindow : Window, IDockOwner
     {
         try
         {
-            if (TryGetPlatformHandle() is { } handle)
+            if (HostWindow.TryGetPlatformHandle() is { } handle)
                 FlashWindow(handle.Handle, true);
         }
         catch { }
@@ -4610,7 +4824,7 @@ internal partial class MainWindow : Window, IDockOwner
 
     private void OnActivityCost(object? sender, RoutedEventArgs e)
     {
-        new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this);
+        new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(HostWindow);
     }
 
     // ── Plan ──
@@ -4705,7 +4919,7 @@ internal partial class MainWindow : Window, IDockOwner
         {
             ("NewSession", "New Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
             ("PaletteSourceControl", "Source Control", "Ctrl+Shift+G", () => ToggleSidePanel(SidebarPanel.SourceControl)),
-            ("CostDashboard", "Tokens & Cost", "", () => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this)),
+            ("CostDashboard", "Tokens & Cost", "", () => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(HostWindow)),
             ("PaletteCloseTab", "Close Tab", "Ctrl+W", CloseActiveWindow),
             ("PaletteNextTab", "Next Tab", "Ctrl+Tab", () => CycleWindows(1)),
             ("PalettePrevTab", "Previous Tab", "Ctrl+Shift+Tab", () => CycleWindows(-1)),
@@ -4726,7 +4940,7 @@ internal partial class MainWindow : Window, IDockOwner
             ("SlashCommands", "Slash Commands", "Ctrl+/", ToggleSlashPanel),
             ("Checkpoints", "Checkpoints", "", ShowCheckpointList),
             ("StopTask", "Stop", "Esc", () => OnStopTask(null, null!)),
-            ("PaletteUsageChart", "Usage Chart", "", () => new UsageChartWindow().Show(this)),
+            ("PaletteUsageChart", "Usage Chart", "", () => new UsageChartWindow().Show(HostWindow)),
             ("SetupDoctor", "Setup Check", "", () => _ = ShowSetupDoctorAsync()),
             ("Shortcuts", "Keyboard Shortcuts", "F1", ShowShortcutSheet),
             ("CommandPalette", "Command Palette", "Ctrl+Shift+P", ShowCommandPalette),
@@ -4841,7 +5055,7 @@ internal partial class MainWindow : Window, IDockOwner
         dialog.Content = dock;
 
         UpdateList("");
-        dialog.ShowDialog(this);
+        dialog.ShowDialog(HostWindow);
         Dispatcher.UIThread.Post(() => searchBox.Focus());
     }
 
@@ -4872,7 +5086,7 @@ internal partial class MainWindow : Window, IDockOwner
     private void OnShowCheckpoints(object? sender, RoutedEventArgs e) => ShowCheckpointList();
 
     private void OnShowUsageChart(object? sender, RoutedEventArgs e)
-        => new UsageChartWindow().Show(this);
+        => new UsageChartWindow().Show(HostWindow);
 
     private void OnShowWorkspaces(object? sender, RoutedEventArgs e) => ShowWorkspaceList();
 
@@ -5021,7 +5235,7 @@ internal partial class MainWindow : Window, IDockOwner
             RefreshFileTree();
         };
 
-        _ = dialog.ShowDialog(this);
+        _ = dialog.ShowDialog(HostWindow);
     }
 
     // ── Slash command panel (v0.2) ──
@@ -5274,7 +5488,7 @@ internal partial class MainWindow : Window, IDockOwner
         };
 
         rerun.Click += (_, _) => { dialog.Close(); _ = ShowSetupDoctorAsync(); };
-        _ = dialog.ShowDialog(this);
+        _ = dialog.ShowDialog(HostWindow);
     }
 
     // ── Keyboard shortcut cheat sheet (v0.2) ──
@@ -5362,7 +5576,7 @@ internal partial class MainWindow : Window, IDockOwner
         {
             if (args.Key == Key.Escape || args.Key == Key.F1) dialog.Close();
         };
-        _ = dialog.ShowDialog(this);
+        _ = dialog.ShowDialog(HostWindow);
     }
 
     // ── Shared dialog chrome ──
@@ -5435,7 +5649,7 @@ internal partial class MainWindow : Window, IDockOwner
         cancel.Click += (_, _) => { answered = true; source.TrySetResult(false); dialog.Close(); };
         dialog.Closed += (_, _) => { if (!answered) source.TrySetResult(false); };
 
-        _ = dialog.ShowDialog(this);
+        _ = dialog.ShowDialog(HostWindow);
         return source.Task;
     }
 
@@ -6012,7 +6226,7 @@ internal partial class MainWindow : Window, IDockOwner
         cancel.Click += (_, _) => { answered = true; source.TrySetResult(null); dialog.Close(); };
         dialog.Closed += (_, _) => { if (!answered) source.TrySetResult(null); };
 
-        _ = dialog.ShowDialog(this);
+        _ = dialog.ShowDialog(HostWindow);
         return source.Task;
     }
 
@@ -6048,7 +6262,7 @@ internal partial class MainWindow : Window, IDockOwner
         var exportItem = new MenuItem { Header = Loc.Get("ExportOutput") };
         exportItem.Click += async (_, _) =>
         {
-            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            var file = await HostWindow.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
                 Title = Loc.Get("ExportOutput"),
                 DefaultExtension = "txt",
@@ -6229,7 +6443,7 @@ internal partial class MainWindow : Window, IDockOwner
             if (name != null) RestoreWorkspace(name);
         };
 
-        _ = dialog.ShowDialog(this);
+        _ = dialog.ShowDialog(HostWindow);
     }
 
     /// <param name="okLabel">
@@ -6294,7 +6508,7 @@ internal partial class MainWindow : Window, IDockOwner
         };
         dialog.Closed += (_, _) => { if (!answered) source.TrySetResult(null); };
 
-        _ = dialog.ShowDialog(this);
+        _ = dialog.ShowDialog(HostWindow);
         Dispatcher.UIThread.Post(() => { box.Focus(); box.SelectAll(); });
         return source.Task;
     }
@@ -6348,8 +6562,86 @@ internal partial class MainWindow : Window, IDockOwner
     /// The windows this one is showing. A window dragged out is still in the lists above - this
     /// window still owns its session or its file - but it is laid out by the window it went to.
     /// </summary>
-    private List<IMdiLayoutItem> DockedItems() =>
+    internal List<IMdiLayoutItem> DockedItems() =>
         AllLayoutItems().Where(x => ReferenceEquals(x.Owner, this)).ToList();
+
+    /// <summary>
+    /// Takes a window into this shell's lists, out of whichever shell had it. A shell is not
+    /// only where a window is drawn: the IME box, the toolbar, the status bar and the close path
+    /// all read these lists, so a window shown here has to be listed here.
+    /// </summary>
+    private void Absorb(IMdiLayoutItem item)
+    {
+        if (OwnerOf(item) is { } from && !ReferenceEquals(from, this)) from.Evict(item);
+
+        switch (item)
+        {
+            case MdiChildInfo child when !_children.Contains(child):
+                _children.Add(child);
+                _activeChild = child;
+                break;
+            case EditorChildInfo editor when !_editorChildren.Contains(editor):
+                _editorChildren.Add(editor);
+                break;
+            case GraphChildInfo graph when !_graphChildren.Contains(graph):
+                _graphChildren.Add(graph);
+                break;
+        }
+    }
+
+    /// <summary>Lets a window go to another shell. It is no longer this one's to show or to close.</summary>
+    private void Evict(IMdiLayoutItem item)
+    {
+        switch (item)
+        {
+            case MdiChildInfo child: _children.Remove(child); break;
+            case EditorChildInfo editor: _editorChildren.Remove(editor); break;
+            case GraphChildInfo graph: _graphChildren.Remove(graph); break;
+        }
+
+        if (ReferenceEquals(_activeChild, item)) _activeChild = _children.LastOrDefault();
+        if (ReferenceEquals(_activeLayoutItem, item)) _activeLayoutItem = null;
+
+        RefreshWindowsPanel();
+        RefreshSessionList();
+        ApplySessionReadout();
+
+        // The window that just left may have been the last terminal keeping this shell useful.
+        MaybeDemote();
+    }
+
+    /// <summary>
+    /// Runs <paramref name="apply"/> on every other shell. The language, the theme and the fonts
+    /// are the application's rather than one window's, so the shell that changes one says so.
+    /// </summary>
+    private void Broadcast(Action<AppShell> apply)
+    {
+        foreach (var shell in Shells.ToList())
+            if (!ReferenceEquals(shell, this)) apply(shell);
+    }
+
+    /// <summary>Follows a theme another shell has just switched to.</summary>
+    private void AdoptSharedTheme()
+    {
+        _followingShared = true;
+        try
+        {
+            _isDark = _settings.IsDark;
+            ChkDarkMode.IsChecked = _isDark;
+            UpdateThemeResources();
+            ApplyThemeToChildren();
+            CreateSourceControlPanel();
+        }
+        finally { _followingShared = false; }
+    }
+
+    /// <summary>Follows a language and font another shell has just applied.</summary>
+    private void AdoptSharedLanguage()
+    {
+        ApplyLocalization();
+        foreach (var child in _children)
+            child.Terminal.SetFont(_settings.FontFamily, _settings.FontSize);
+    }
 
     /// <summary>
     /// Tile modes fill their slots in list order, so that order decides which side each window
@@ -6468,6 +6760,15 @@ internal partial class MainWindow : Window, IDockOwner
     /// </summary>
     private void ActivateTerminal(MdiChildInfo child)
     {
+        // The handlers on a terminal were wired by the shell that opened it, and it may have
+        // been dragged into another one since. Working on it means working in the shell that
+        // shows it now - that is whose IME box and status bar it answers.
+        if (OwnerOf(child) is { } shell && !ReferenceEquals(shell, this))
+        {
+            shell.ActivateTerminal(child);
+            return;
+        }
+
         if (!_children.Contains(child)) return;
         _activeChild = child;
         SetActiveLayoutItem(child);
@@ -6823,7 +7124,7 @@ internal partial class MainWindow : Window, IDockOwner
             PaintChildDots(entry);   // grey: the pty handle is already signalled here
             RefreshSessionList();
             // Flash the taskbar and raise a toast when the window is not focused
-            if (!IsActive)
+            if (!HostWindow.IsActive)
             {
                 FlashTaskbar();
                 if (_settings.NotifyOnComplete)
@@ -6907,6 +7208,12 @@ internal partial class MainWindow : Window, IDockOwner
 
     private async Task CloseChildAsync(MdiChildInfo entry)
     {
+        if (OwnerOf(entry) is { } holder && !ReferenceEquals(holder, this))
+        {
+            await holder.CloseChildAsync(entry);
+            return;
+        }
+
         // The wait below runs for up to three seconds, and the × stays clickable the whole time.
         // Without this guard a second click re-enters and tears the same window down twice.
         if (entry.IsClosing || !_children.Contains(entry)) return;
@@ -6948,6 +7255,7 @@ internal partial class MainWindow : Window, IDockOwner
             _activeChild = _children.Count == 0 ? null : _children[Math.Max(0, idx - 1)];
 
         ArrangeChildren();
+        MaybeDemote();
 
         // The checkout is only free once the terminal above has been disposed.
         await ReleaseWorktreeAsync(entry);
@@ -7194,7 +7502,7 @@ internal partial class MainWindow : Window, IDockOwner
     /// </summary>
     private async Task PickNewProjectAsync()
     {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        var folders = await HostWindow.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
             Title = Loc.Get("SelectProjectFolder"),
             AllowMultiple = false
@@ -7292,13 +7600,31 @@ internal partial class MainWindow : Window, IDockOwner
     /// <summary>The launch profile new sessions start with, or null when the CLI defines none.</summary>
     private LaunchProfile? ActiveLaunchProfile() => _cli.FindProfile(_settings.ActiveProfileId);
 
-    protected override async void OnClosed(EventArgs e)
+    /// <summary>
+    /// Winds the shell down once the window holding it has closed. Awaited rather than fired and
+    /// forgotten: the terminals are sent /exit and given their time to go down on their own.
+    /// </summary>
+    internal async Task ShutdownAsync()
     {
-        base.OnClosed(e);
+        // A window can be closed twice on the way out - once by its own button, once by the
+        // application ending - and the shell behind it only goes down the first time.
+        if (_shutdown) return;
+        _shutdown = true;
+
+        Shells.Remove(this);
+        DockOwners.Unregister(this);
+
         CloseWelcomePage();
-        _settings.ProjectFolder = _projectFolder ?? "";
-        _settings.Save();
-        _snippetStore.Save();
+        _insightTimer?.Stop();
+
+        // The shells share these, so only the application's own writes them out: a dragged-out
+        // window closing would otherwise save its own project folder over the main window's.
+        if (_primary)
+        {
+            _settings.ProjectFolder = _projectFolder ?? "";
+            _settings.Save();
+            _snippetStore.Save();
+        }
 
         // Send /exit to all terminals and wait for graceful shutdown
         try
@@ -7316,6 +7642,31 @@ internal partial class MainWindow : Window, IDockOwner
         _rateLimits.Dispose();
         _fileWatcher?.Dispose();
         _notifications.Dispose();
-        _checkpoints.Save();
+        if (_primary) _checkpoints.Save();
+    }
+
+    /// <summary>
+    /// Ends the application. The shells are wound down first, while their windows are still up -
+    /// winding one down sends /exit to the terminals it holds, and the application must not end
+    /// out from under that. Only then do the windows things were dragged out into close: the main
+    /// window has already gone, so the last of those closing is the application ending.
+    /// </summary>
+    internal static async Task ShutdownApplicationAsync()
+    {
+        foreach (var shell in Shells.ToList())
+            await shell.ShutdownAsync();
+
+        if (Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
+            return;
+
+        foreach (var window in desktop.Windows.ToList())
+        {
+            switch (window)
+            {
+                case ShellWindow shell: shell.Discard(); break;
+                case DetachedWindow detached: detached.Discard(); break;
+                default: window.Close(); break;
+            }
+        }
     }
 }

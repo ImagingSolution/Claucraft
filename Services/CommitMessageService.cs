@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,31 +31,6 @@ public static class CommitMessageService
     private const int TimeoutMs = 120_000;
 
     /// <summary>
-    /// What a Claude Code session exports to everything it starts. Claucraft may itself have been
-    /// launched from inside one, and a CLI that inherits these joins that session instead of
-    /// running once on its own - so they are cleared for this call.
-    /// </summary>
-    private static readonly string[] SessionVars =
-    {
-        "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ID",
-        "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_BRIDGE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET",
-        "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_EFFORT",
-    };
-
-    private static Dictionary<string, string> CleanEnvironment()
-    {
-        var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        // ProcessRunner reads an empty value as "remove this variable".
-        foreach (var name in SessionVars) env[name] = "";
-
-        // Claude Code's knob for extended thinking, ignored by every other CLI. Summarising a
-        // diff does not need it, and it was over half the bill: measured here, turning it off
-        // took a draft from 5,900 output tokens to 138.
-        env["MAX_THINKING_TOKENS"] = "0";
-        return env;
-    }
-
-    /// <summary>
     /// Writes a commit message for what is staged, or null when there is nothing to describe,
     /// the CLI has no one-shot preset, or it produced nothing usable. The panel turns a null
     /// into a message of its own rather than leaving the box mysteriously empty.
@@ -74,36 +48,14 @@ public static class CommitMessageService
 
         var stat = await GitWriteService.GetStagedStatAsync(repoRoot);
 
-        var args = SplitArgs(provider.OneShotArgs);
-        bool inline = Array.Exists(args, a => a.Contains("{prompt}", StringComparison.Ordinal));
-
+        // The {prompt} placeholder only fits on the command line, which has a tighter budget
+        // than stdin, so the diff is cut down further for that path.
+        bool inline = Array.Exists(CliOneShotRunner.SplitArgs(provider.OneShotArgs),
+            a => a.Contains("{prompt}", StringComparison.Ordinal));
         var prompt = BuildPrompt(language, stat,
             Truncate(diff, inline ? MaxDiffCharsArgs : MaxDiffCharsStdin));
-        var exe = string.IsNullOrEmpty(provider.ResolvedPath) ? provider.Exe : provider.ResolvedPath!;
 
-        // The prompt carries a diff - on a shared branch, someone else's diff - so it is the one
-        // value here that an outsider gets to write. Anything ProcessRunner has to start through
-        // cmd.exe gets its command line rebuilt by quote counting, which is no place for that, so
-        // such a preset gets no draft at all rather than a command line assembled out of a
-        // stranger's diff. Most CLIs are not that case: an .exe, and an npm shim ProcessRunner can
-        // read back to node, both take their arguments as arguments.
-        if (inline && ProcessRunner.NeedsShell(exe)) return null;
-
-        string? stdin = inline ? null : prompt;
-        if (inline)
-        {
-            for (int i = 0; i < args.Length; i++)
-                args[i] = args[i].Replace("{prompt}", prompt, StringComparison.Ordinal);
-        }
-
-        var result = await Task.Run(
-            () => ProcessRunner.Run(exe, repoRoot, stdin, TimeoutMs, CleanEnvironment(), args), ct);
-
-        ct.ThrowIfCancellationRequested();
-        if (!result.Ok) return null;
-
-        var text = Clean(result.StdOut);
-        return string.IsNullOrWhiteSpace(text) ? null : text;
+        return await CliOneShotRunner.RunAsync(repoRoot, provider, prompt, TimeoutMs, ct);
     }
 
     /// <summary>
@@ -214,62 +166,4 @@ public static class CommitMessageService
         return sb.ToString();
     }
 
-    // ── Output ─────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Strips what a CLI adds around an answer: a fenced block, and the blank lines either side.
-    /// A message that legitimately contains a fenced block keeps it - only an outer fence that
-    /// wraps the whole reply is removed.
-    /// </summary>
-    internal static string Clean(string output)
-    {
-        var text = (output ?? "").Replace("\r\n", "\n").Trim();
-        if (text.Length == 0) return "";
-
-        if (text.StartsWith("```", StringComparison.Ordinal))
-        {
-            int firstBreak = text.IndexOf('\n');
-            int lastFence = text.LastIndexOf("```", StringComparison.Ordinal);
-            if (firstBreak > 0 && lastFence > firstBreak)
-                text = text[(firstBreak + 1)..lastFence].Trim();
-        }
-
-        return text.Trim();
-    }
-
-    // ── Argument parsing ───────────────────────────────────────────────
-
-    /// <summary>
-    /// Splits a stored argument string into arguments, honouring double quotes so a preset can
-    /// hold a flag value with a space in it.
-    /// </summary>
-    internal static string[] SplitArgs(string text)
-    {
-        var args = new List<string>();
-        if (string.IsNullOrWhiteSpace(text)) return args.ToArray();
-
-        var current = new StringBuilder();
-        bool quoted = false;
-        bool any = false;
-
-        foreach (var c in text)
-        {
-            if (c == '"')
-            {
-                quoted = !quoted;
-                any = true;
-                continue;
-            }
-            if (!quoted && char.IsWhiteSpace(c))
-            {
-                if (any) { args.Add(current.ToString()); current.Clear(); any = false; }
-                continue;
-            }
-            current.Append(c);
-            any = true;
-        }
-
-        if (any) args.Add(current.ToString());
-        return args.ToArray();
-    }
 }

@@ -350,6 +350,22 @@ public static class Loc
         ["CommitLanguageTooltip"] = new() { ["English"] = "Language the AI writes the commit message in", ["日本語"] = "AI が書くコミットメッセージの言語" },
         ["CommitAndPush"] = new() { ["English"] = "Commit & push", ["日本語"] = "コミットして送信" },
 
+        // Secret scan: the AI's second look at what just got staged.
+        ["SecretScanTitle"] = new() { ["English"] = "Possibly sensitive content", ["日本語"] = "機密情報の可能性" },
+        ["SecretScanIntro"] = new() { ["English"] = "The AI flagged this staged change:", ["日本語"] = "AI がステージされた変更にこの内容を検出しました:" },
+        ["SecretScanContinue"] = new() { ["English"] = "Keep staged", ["日本語"] = "続行（ステージのまま）" },
+        ["SecretScanUnstage"] = new() { ["English"] = "Unstage", ["日本語"] = "アンステージ" },
+
+        // Files whose name alone says they do not belong in a commit.
+        ["RiskyFilesTitle"] = new() { ["English"] = "Files that are usually not committed", ["日本語"] = "通常コミットしないファイル" },
+        ["RiskyFilesStageIntro"] = new() { ["English"] = "These files are normally kept out of a repository. Stage them anyway?", ["日本語"] = "次のファイルは通常リポジトリに入れません。それでもステージしますか?" },
+        ["RiskyFilesCommitIntro"] = new() { ["English"] = "These files are staged and would go into this commit. Commit anyway?", ["日本語"] = "次のファイルがステージされており、このコミットに含まれます。それでもコミットしますか?" },
+        ["RiskyFilesMoreFmt"] = new() { ["English"] = "...and {0} more", ["日本語"] = "...ほか {0} 件" },
+        ["RiskyKindCredential"] = new() { ["English"] = "key or credential file", ["日本語"] = "鍵・資格情報ファイル" },
+        ["RiskyKindLocalSetting"] = new() { ["English"] = "settings for one machine or editor", ["日本語"] = "PC・エディタ固有の設定" },
+        ["RiskyKindBuildOutput"] = new() { ["English"] = "build output or dependency", ["日本語"] = "ビルド生成物・依存ファイル" },
+        ["RiskyKindLargeFileFmt"] = new() { ["English"] = "large file ({0})", ["日本語"] = "巨大なファイル ({0})" },
+
         // Pull requests.
         ["PullRequests"] = new() { ["English"] = "Pull requests", ["日本語"] = "プルリクエスト" },
         ["PullRequestsFmt"] = new() { ["English"] = "Pull requests ({0})", ["日本語"] = "プルリクエスト ({0})" },

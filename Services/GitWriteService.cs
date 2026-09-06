@@ -348,6 +348,41 @@ public static class GitWriteService
         });
     }
 
+    /// <summary>
+    /// The path of each staged file, one per entry. Lets the secret scan check every file's own
+    /// diff separately, so one large file elsewhere in the stage can never crowd a small one out
+    /// of another file's truncation window.
+    /// </summary>
+    public static Task<string[]> GetStagedFilePathsAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return Array.Empty<string>();
+
+            var names = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--cached", "--name-only");
+            if (string.IsNullOrWhiteSpace(names))
+                names = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--name-only");
+
+            return (names ?? "").Replace("\r\n", "\n")
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        });
+    }
+
+    /// <summary>The staged diff for one file only, truncated the same way the whole-repo diff is.</summary>
+    public static Task<string> GetStagedFileDiffAsync(string repoRoot, string path)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return "";
+
+            var diff = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--cached", "--", path);
+            if (string.IsNullOrWhiteSpace(diff))
+                diff = GitCli.Run(repoRoot, "-c", "core.quotepath=false", "diff", "--", path);
+
+            return GitCli.TruncateDiff(diff ?? "");
+        });
+    }
+
     /// <summary>The subject line of the newest commit, used as the default pull-request title.</summary>
     public static Task<string> GetLastSubjectAsync(string repoRoot)
     {
