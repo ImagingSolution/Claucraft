@@ -32,6 +32,12 @@ public record Checkpoint(
 /// </summary>
 public class CheckpointService
 {
+    /// <summary>
+    /// The one checkpoint store in the process. Every shell records into it, and only the
+    /// application's own loads and saves it.
+    /// </summary>
+    public static CheckpointService Shared { get; } = new();
+
     public int MaxPerProject { get; set; } = 20;
 
     private readonly List<Checkpoint> _checkpoints = new();

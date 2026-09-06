@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 
 namespace Claucraft.Controls;
@@ -306,24 +307,43 @@ internal static class TabDrag
     /// <summary>Gives a window dropped clear of everything a window of its own.</summary>
     private static void Detach(IMdiLayoutItem item, IDockOwner from, PixelPoint screen)
     {
-        // A terminal needs the toolbar, the IME box and the status bar around it, and those live
-        // only in the main window - so for now a terminal dropped outside stays where it is.
-        if (item.Kind == MdiItemKind.Terminal) return;
-
-        // The only window in a detached window is already as detached as it gets; pulling it out
-        // would close one window and open an identical one in its place.
+        // A window already alone in a window of its own is as detached as it gets; pulling it
+        // out would close one window and open an identical one in its place.
         if (from is DetachedWindow lone && lone.Count <= 1) return;
+        if (from is AppShell shell && shell.IsLoneSecondary) return;
 
-        var window = new DetachedWindow();
-        from.Release(item);
-        window.Adopt(item, default);
+        // A terminal is worked through the toolbar, the IME box and the status bar around it, so
+        // it takes a whole shell with it. Everything else only needs somewhere to be drawn.
+        if (item.Kind == MdiItemKind.Terminal) Into(new ShellWindow(), item, from, screen);
+        else Into(new DetachedWindow(), item, from, screen);
+    }
 
+    /// <summary>Opens <paramref name="window"/> under the cursor and moves the window into it.</summary>
+    private static void Into(Window window, IMdiLayoutItem item, IDockOwner from, PixelPoint screen)
+    {
         // Under the cursor rather than at it: dropping the window exactly on the pointer puts
         // its title bar where the tab was being held, which reads as the tab having vanished.
         window.Position = new PixelPoint(screen.X - 80, screen.Y - 16);
+
+        // Out of the old window before the new one opens, and into it only on a later pass. A
+        // control that changes window inside one layout pass leaves the window it left holding
+        // an invalidation for a control it no longer owns, which that window throws on.
+        from.Release(item);
+
+        // Shown before anything moves into it: a shell finds the window it is in, and registers
+        // itself as a drop target, only once it is actually in one.
         window.Show();
-        from.CloseIfEmpty();
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            Owner(window).Adopt(item, default);
+            from.CloseIfEmpty();
+        }, DispatcherPriority.Background);
     }
+
+    /// <summary>What in <paramref name="window"/> takes windows in - the window, or its shell.</summary>
+    private static IDockOwner Owner(Window window) =>
+        window is ShellWindow shell ? shell.Shell : (IDockOwner)window;
 
     /// <summary>Puts a drag back the way it was found. Safe to call when no drag is running.</summary>
     private static void Cancel()

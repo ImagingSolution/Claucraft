@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Threading;
 
 namespace Claucraft.Controls;
 
@@ -25,6 +26,9 @@ internal partial class DetachedWindow : Window, IDockOwner
     /// <summary>Set while this window is closing its own contents, which empties it on the way.</summary>
     private bool _closing;
 
+    /// <summary>Set once a terminal has landed here, so the swap is arranged only once.</summary>
+    private bool _promoting;
+
     public DetachedWindow()
     {
         InitializeComponent();
@@ -43,10 +47,11 @@ internal partial class DetachedWindow : Window, IDockOwner
     Canvas IDockOwner.Overlay => DragOverlay;
 
     /// <summary>
-    /// A terminal is typed into through the main window's IME box and reports itself through its
-    /// status bar, neither of which exist here, so this window does not take one.
+    /// Everything. A terminal is typed into through an IME box and reports itself through a
+    /// status bar, and this window has neither - so a terminal dropped here is answered by the
+    /// window becoming one that has them, rather than by the drop being refused.
     /// </summary>
-    public bool Accepts(IMdiLayoutItem item) => item.Kind != MdiItemKind.Terminal;
+    public bool Accepts(IMdiLayoutItem item) => true;
 
     public void Release(IMdiLayoutItem item)
     {
@@ -76,6 +81,42 @@ internal partial class DetachedWindow : Window, IDockOwner
 
         _active = item;
         Relayout();
+
+        // Not here: what just arrived is still being laid out, and it is about to move again.
+        if (item.Kind == MdiItemKind.Terminal && !_promoting)
+        {
+            _promoting = true;
+            Dispatcher.UIThread.Post(Promote, DispatcherPriority.Background);
+        }
+    }
+
+    /// <summary>
+    /// Swaps this window for one with a whole shell in it, carrying everything across. That is
+    /// what a terminal landing here means: it is worked through a toolbar, an IME box and a
+    /// status bar, so the window grows them rather than the terminal going without.
+    /// </summary>
+    private void Promote()
+    {
+        var window = new ShellWindow
+        {
+            Position = Position,
+            Width = Width,
+            Height = Height
+        };
+        var items = _items.ToList();
+
+        // Out of here before the new window opens, and into it only on a later pass. A control
+        // that changes window inside one layout pass leaves the window it left holding an
+        // invalidation for a control it no longer owns, which that window throws on. Releasing
+        // the last of them is also what closes this window.
+        foreach (var item in items) Release(item);
+
+        window.Show();
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            foreach (var item in items) ((IDockOwner)window.Shell).Adopt(item, default);
+        }, DispatcherPriority.Background);
     }
 
     public void DockInside(IMdiLayoutItem item, DockDropTarget target)
@@ -125,6 +166,15 @@ internal partial class DetachedWindow : Window, IDockOwner
     public void CloseIfEmpty()
     {
         if (_items.Count > 0) return;
+        Discard();
+    }
+
+    /// <summary>
+    /// Closes this window without asking what is in it first. That is the application ending:
+    /// the main window has already gone, and the shells have already been wound down.
+    /// </summary>
+    internal void Discard()
+    {
         _emptied = true;
         Close();
     }
@@ -152,7 +202,7 @@ internal partial class DetachedWindow : Window, IDockOwner
     private void Paint()
     {
         foreach (var item in _items)
-            MainWindow.PaintStripSelection(
+            AppShell.PaintStripSelection(
                 item.StripButton, item.Container, ReferenceEquals(item, _active));
     }
 
@@ -174,24 +224,16 @@ internal partial class DetachedWindow : Window, IDockOwner
 
     private async Task CloseContentsAsync()
     {
-        if (Shell() is not { } main) return;
-
+        // Per item rather than through one shell: what is in here can have come from any of
+        // them, and closing a window is the shell that opened it doing its own teardown.
         foreach (var item in _items.ToList())
-            await main.CloseLayoutItemAsync(item);
+            if (AppShell.OwnerOf(item) is { } shell)
+                await shell.CloseLayoutItemAsync(item);
 
         // A window the user backed out of closing is still here, and so is this one.
         _closing = false;
         if (_items.Count > 0) return;
 
-        _emptied = true;
-        Close();
+        Discard();
     }
-
-    /// <summary>
-    /// The window that owns the sessions and files shown here. Looked up rather than held: this
-    /// window can outlive nothing, and the main window is the application's own.
-    /// </summary>
-    private static MainWindow? Shell() =>
-        (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)
-        ?.MainWindow as MainWindow;
 }

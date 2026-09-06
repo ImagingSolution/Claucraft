@@ -25,6 +25,9 @@ public class SnippetStore
 
     private static readonly string StoreFile = Path.Combine(StoreDir, "snippets.json");
 
+    /// <summary>The one snippet store in the process, shared for the same reason as settings.</summary>
+    public static SnippetStore Shared { get; } = Load();
+
     public static SnippetStore Load()
     {
         try

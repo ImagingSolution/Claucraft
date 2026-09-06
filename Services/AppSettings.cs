@@ -79,6 +79,12 @@ public class AppSettings
 
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "appsettings.json");
 
+    /// <summary>
+    /// The one settings object in the process. Every shell reads and writes this one: a second
+    /// shell loading its own copy would mean the last window to close decides what was saved.
+    /// </summary>
+    public static AppSettings Shared { get; } = Load();
+
     public static AppSettings Load()
     {
         try
