@@ -54,10 +54,6 @@ public partial class MainWindow : Window
             // cache belongs to the folder we just left.
             _extensions = null;
             if (_activeSidePanel == SidebarPanel.Extensions) RefreshExtensionsPanel();
-
-            // A file open from the project being left is no longer what the tree is showing.
-            // Unsaved edits keep it open - the path is absolute and still saves.
-            if (!_editorDirty) CloseEditor();
         }
     }
     private string? _gitRepoUrl;
@@ -114,6 +110,12 @@ public partial class MainWindow : Window
     private bool _isDark = true;
     private MdiLayout _layout = MdiLayout.Maximize;
     private int _activeChildIndex = -1;
+
+    // Which window ArrangeChildren treats as "on top" for Maximize/Cascade. Separate from
+    // _activeChildIndex, which drives terminal-only concerns (command routing, project context
+    // switching) and only ever indexes _children - an editor window can be the active layout
+    // item without being a valid terminal index.
+    private IMdiLayoutItem? _activeLayoutItem;
     private readonly List<MdiChildInfo> _children = new();
     private readonly AppSettings _settings;
     private readonly CliProviderService _cli;
@@ -180,6 +182,17 @@ public partial class MainWindow : Window
 
     private static readonly List<string> LanguageList = new() { "English", "日本語" };
 
+    /// <summary>
+    /// Common surface for anything ArrangeChildren/BringToFront place on the MDI canvas -
+    /// terminal windows and floating editor windows alike - so layout code can treat both
+    /// uniformly without knowing about TerminalControl or TextFileDocument.
+    /// </summary>
+    private interface IMdiLayoutItem
+    {
+        Border Container { get; }
+        Border TitleBar { get; }
+    }
+
     private record MdiChildInfo(
         Border Container,
         Border TitleBar,
@@ -189,7 +202,7 @@ public partial class MainWindow : Window
         TerminalControl Terminal,
         Button StripButton,
         TextBlock StripText
-    )
+    ) : IMdiLayoutItem
     {
         public string? ProjectFolder { get; set; }
         public string? FirstInput { get; set; }
@@ -334,7 +347,6 @@ public partial class MainWindow : Window
         RefreshGitInfo();
         RefreshSessionList();
         RefreshFileTree();
-        FileTree.SelectionChanged += OnFileTreeSelectionChanged;
         HookFileTreeDrag();
 
         // Probe `--version` off the UI thread; labels fill in as results arrive
@@ -393,6 +405,7 @@ public partial class MainWindow : Window
         // Explorer context menu
         MenuTreeOpen.Header = Loc.Get("Open");
         MenuTreeOpenWith.Header = Loc.Get("OpenWith");
+        MenuTreeOpenInEditor.Header = Loc.Get("OpenInEditor");
         MenuTreeShowInExplorer.Header = Loc.Get("ShowInExplorer");
         MenuTreeCopyPath.Header = Loc.Get("CopyPath");
         MenuTreeCopyFilename.Header = Loc.Get("CopyFilename");
@@ -433,8 +446,6 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnRefreshExtensions, Loc.Get("Refresh"));
         TxtExtensionSearch.PlaceholderText = Loc.Get("ExtensionsSearch");
         ToolTip.SetTip(BtnManageSessions, Loc.Get("ManageSessionsTooltip"));
-        ToolTip.SetTip(BtnEditorSave, Loc.Get("EditorSaveTooltip"));
-        ToolTip.SetTip(BtnEditorClose, Loc.Get("EditorCloseTooltip"));
         // The cached rows carry summaries built in the language we just left.
         _extensions = null;
         if (_activeSidePanel == SidebarPanel.Extensions) RefreshExtensionsPanel();
@@ -1031,7 +1042,9 @@ public partial class MainWindow : Window
         {
             var child = _children[i];
             int idx = i;
-            bool isActive = i == _activeChildIndex;
+            bool isActive = _activeLayoutItem == null
+                ? i == _activeChildIndex
+                : ReferenceEquals(child, _activeLayoutItem);
             bool isRunning = child.Terminal.IsProcessRunning;
 
             var dot = new Ellipse
@@ -1132,6 +1145,83 @@ public partial class MainWindow : Window
             foreach (var run in SubagentMonitor.ReadRunning(ResolveSessionPath(child)))
                 WindowsList.Children.Add(BuildSubagentRow(run));
         }
+
+        foreach (var editor in _editorChildren)
+            WindowsList.Children.Add(BuildEditorWindowRow(editor));
+    }
+
+    /// <summary>
+    /// An open file window, listed alongside the sessions: same click-to-activate and close as a
+    /// session row, with the path on the tooltip since the row only has room for a file name.
+    /// </summary>
+    private Control BuildEditorWindowRow(EditorChildInfo editor)
+    {
+        bool isActive = ReferenceEquals(editor, _activeLayoutItem);
+
+        var dot = new Ellipse
+        {
+            Width = 8, Height = 8,
+            Fill = new SolidColorBrush(Color.FromRgb(0, 122, 255)),
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 5, 0, 0),
+        };
+
+        var title = new TextBlock
+        {
+            Text = editor.StripText.Text,
+            FontSize = 13,
+            FontWeight = FontWeight.Normal,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+
+        var closeBtn = new Button
+        {
+            Content = "×",
+            FontSize = 12,
+            Padding = new Thickness(4, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Top,
+            CornerRadius = new CornerRadius(4),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Margin = new Thickness(4, 2, 0, 0),
+        };
+        closeBtn.Click += (_, ev) => { _ = CloseEditorWindowAsync(editor); ev.Handled = true; };
+
+        var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
+        Grid.SetColumn(dot, 0);
+        Grid.SetColumn(title, 1);
+        Grid.SetColumn(closeBtn, 2);
+        grid.Children.Add(dot);
+        grid.Children.Add(title);
+        grid.Children.Add(closeBtn);
+        grid.Margin = new Thickness(4, 0);
+
+        var item = new Border
+        {
+            Child = grid,
+            Padding = new Thickness(6, 5),
+            CornerRadius = new CornerRadius(6),
+            Background = isActive
+                ? new SolidColorBrush(Color.FromArgb(30, 0, 122, 255))
+                : Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+        ToolTip.SetTip(item, editor.Doc.Path);
+        ToolTip.SetShowDelay(item, 300);
+
+        item.PointerPressed += (_, _) => ActivateLayoutItem(editor);
+        item.PointerEntered += (s, _) =>
+        {
+            if (!isActive) ((Border)s!).Background = new SolidColorBrush(_isDark ? Color.FromArgb(20, 255, 255, 255) : Color.FromArgb(20, 0, 0, 0));
+        };
+        item.PointerExited += (s, _) =>
+        {
+            if (!isActive) ((Border)s!).Background = Brushes.Transparent;
+        };
+
+        return item;
     }
 
     /// <summary>
@@ -1338,53 +1428,218 @@ public partial class MainWindow : Window
         });
     }
 
-    // ── Explorer editor ──
-
-    private static readonly HashSet<string> EditableExtensions = new()
-    {
-        ".cs", ".txt", ".md", ".json", ".xml", ".axaml", ".xaml",
-        ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".py", ".go", ".rs", ".java", ".yml", ".yaml",
-        ".toml", ".sh", ".bash", ".ps1", ".sql", ".gitignore", ".csproj", ".sln", ".config", ".log",
-    };
-
-    private TextFileDocument? _editorDoc;
-    private bool _editorDirty;
+    // ── Explorer editor (floating MDI windows) ──
 
     /// <summary>
-    /// Opens the selected file in the editor below the tree.
-    ///
-    /// Only a different file replaces what is open. The watcher rebuilds the tree whenever
-    /// anything in the project changes - which the CLI does constantly - and that arrives here
-    /// as a null selection; closing on it would throw away edits mid-keystroke.
+    /// One floating text-editor window living on the same MDI canvas as terminal windows.
+    /// Kept entirely separate from <see cref="MdiChildInfo"/>/_children: that record is woven
+    /// through terminal-session concerns (cost polling, effort/model commands, exit-and-wait
+    /// disposal) that make no sense for a text file, so an editor window gets its own minimal
+    /// lifecycle instead of forcing every one of those call sites to special-case it.
     /// </summary>
-    private async void OnFileTreeSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private sealed class EditorChildInfo : IMdiLayoutItem
     {
-        if (FileTree.SelectedItem is not FileTreeNode node || node.IsDirectory) return;
-        if (_editorDoc != null &&
-            string.Equals(_editorDoc.Path, node.FullPath, StringComparison.OrdinalIgnoreCase)) return;
-
-        if (!EditableExtensions.Contains(System.IO.Path.GetExtension(node.FullPath).ToLowerInvariant()))
-            return;
-
-        if (!await ReleaseEditorAsync()) return;
-        OpenInEditor(node.FullPath);
+        public required Border Container { get; init; }
+        public required Border TitleBar { get; init; }
+        public required TextBox EditorBox { get; init; }
+        public required TextBlock TitleText { get; init; }
+        public required Button SaveButton { get; init; }
+        public required TextBlock NoticeText { get; init; }
+        public required Button StripButton { get; init; }
+        public required TextBlock StripText { get; init; }
+        public required TextFileDocument Doc { get; set; }
+        public bool Dirty { get; set; }
     }
 
-    private void OpenInEditor(string path)
+    private readonly List<EditorChildInfo> _editorChildren = new();
+
+    /// <summary>
+    /// Opens <paramref name="path"/> in its own floating editor window on the MDI canvas, or
+    /// brings the existing one to front if that file is already open.
+    /// </summary>
+    private void OpenFileEditorWindow(string path)
     {
+        var existing = _editorChildren.FirstOrDefault(c =>
+            string.Equals(c.Doc.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (existing != null) { BringEditorToFront(existing); return; }
+
         TextFileDocument doc;
         try { doc = TextFileEditor.Read(path); }
-        catch { CloseEditor(); return; }
+        catch { return; }
 
-        _editorDoc = doc;
-        _editorDirty = false;
+        var titleText = new TextBlock
+        {
+            Text = System.IO.Path.GetFileName(doc.Path),
+            FontSize = 13,
+            Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 215)),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        ToolTip.SetTip(titleText, doc.Path);
 
-        FilePreviewText.Text = doc.Text;
-        FilePreviewText.IsReadOnly = !doc.Editable;
-        FilePreviewText.CaretIndex = 0;
-        BtnEditorSave.IsVisible = doc.Editable;
-        BtnEditorSave.IsEnabled = false;
-        ToolTip.SetTip(BtnEditorSave, Loc.Get("EditorSaveTooltip"));
+        var saveButton = new Button
+        {
+            Content = new PathIcon
+            {
+                Data = StreamGeometry.Parse("M17 3H5C3.89 3 3 3.9 3 5V19C3 20.1 3.89 21 5 21H19C20.1 21 21 20.1 21 19V7L17 3ZM12 19C10.34 19 9 17.66 9 16C9 14.34 10.34 13 12 13C13.66 13 15 14.34 15 16C15 17.66 13.66 19 12 19ZM15 9H5V5H15V9Z"),
+                Width = 13, Height = 13
+            },
+            Padding = new Thickness(6, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)),
+            BorderThickness = new Thickness(0),
+            IsVisible = doc.Editable,
+            IsEnabled = false,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        ToolTip.SetTip(saveButton, Loc.Get("EditorSaveTooltip"));
+
+        var closeButton = new Button
+        {
+            Content = "×",
+            FontSize = 14,
+            Padding = new Thickness(6, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        var titleLeft = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Margin = new Thickness(8, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        titleLeft.Children.Add(titleText);
+
+        var titleRight = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        titleRight.Children.Add(saveButton);
+        titleRight.Children.Add(closeButton);
+
+        var titleGrid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("*,Auto") };
+        Grid.SetColumn(titleLeft, 0);
+        Grid.SetColumn(titleRight, 1);
+        titleGrid.Children.Add(titleLeft);
+        titleGrid.Children.Add(titleRight);
+
+        var titleBar = new Border
+        {
+            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),  // Apple elevated surface
+            Padding = new Thickness(0, 6),
+            Child = titleGrid,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        var noticeText = new TextBlock
+        {
+            FontSize = 10,
+            TextWrapping = TextWrapping.Wrap,
+            IsVisible = false,
+            Margin = new Thickness(9, 4, 8, 0),
+            Foreground = new SolidColorBrush(Color.FromRgb(152, 152, 157))
+        };
+
+        var editorBox = new TextBox
+        {
+            Text = doc.Text,
+            FontSize = ClampEditorFontSize(_settings.EditorFontSize),
+            FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New"),
+            AcceptsReturn = true,
+            AcceptsTab = true,
+            TextWrapping = TextWrapping.NoWrap,
+            IsReadOnly = !doc.Editable,
+            BorderThickness = new Thickness(0),
+            Background = new SolidColorBrush(Color.FromRgb(28, 28, 30)),  // Apple systemBackground
+            Foreground = new SolidColorBrush(Color.FromRgb(224, 224, 228)),
+            CaretBrush = new SolidColorBrush(Color.FromRgb(224, 224, 228)),
+            Padding = new Thickness(8, 4),
+            CaretIndex = 0
+        };
+        ScrollViewer.SetHorizontalScrollBarVisibility(editorBox, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
+        ScrollViewer.SetVerticalScrollBarVisibility(editorBox, Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
+
+        var body = new DockPanel();
+        DockPanel.SetDock(noticeText, Dock.Bottom);
+        body.Children.Add(noticeText);
+        body.Children.Add(editorBox);
+
+        var dockPanel = new DockPanel();
+        DockPanel.SetDock(titleBar, Dock.Top);
+        dockPanel.Children.Add(titleBar);
+        dockPanel.Children.Add(body);
+
+        var container = new Border
+        {
+            Child = dockPanel,
+            BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+            BorderThickness = new Thickness(0.5),
+            ClipToBounds = true,
+            Background = new SolidColorBrush(Color.FromRgb(28, 28, 30))
+        };
+
+        // --- Window strip button, built like a terminal window's so the two read as one set ---
+        var stripDot = new Ellipse
+        {
+            Width = 7, Height = 7,
+            Fill = new SolidColorBrush(Color.FromRgb(0, 122, 255)),  // Apple Blue: a file, not a session
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var stripText = new TextBlock
+        {
+            Text = System.IO.Path.GetFileName(doc.Path),
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 120
+        };
+        var stripCloseBtn = new Button
+        {
+            Content = "×",
+            FontSize = 12,
+            Padding = new Thickness(3, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            CornerRadius = new CornerRadius(3),
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        var stripContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+        stripContent.Children.Add(stripDot);
+        stripContent.Children.Add(stripText);
+        stripContent.Children.Add(stripCloseBtn);
+
+        var stripButton = new Button
+        {
+            Content = stripContent,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brushes.Transparent,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 4),
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+        ToolTip.SetTip(stripButton, doc.Path);
+
+        var entry = new EditorChildInfo
+        {
+            Container = container,
+            TitleBar = titleBar,
+            EditorBox = editorBox,
+            TitleText = titleText,
+            SaveButton = saveButton,
+            NoticeText = noticeText,
+            StripButton = stripButton,
+            StripText = stripText,
+            Doc = doc
+        };
+
+        stripButton.Click += (_, _) => ActivateLayoutItem(entry);
+        stripCloseBtn.Click += (_, e) => { _ = CloseEditorWindowAsync(entry); e.Handled = true; };
 
         var notice = doc.Block switch
         {
@@ -1393,27 +1648,136 @@ public partial class MainWindow : Window
             EditBlock.NotUtf8 => Loc.Get("EditorNotUtf8"),
             _ => null,
         };
-        EditorNotice.Text = notice ?? "";
-        EditorNotice.IsVisible = notice != null;
+        noticeText.Text = notice ?? "";
+        noticeText.IsVisible = notice != null;
 
-        UpdateEditorTitle();
-        FilePreviewBorder.IsVisible = true;
+        closeButton.Click += (_, _) => _ = CloseEditorWindowAsync(entry);
+        editorBox.TextChanged += (_, _) => OnEditorTextChanged(entry);
+        editorBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.S && e.KeyModifiers.HasFlag(KeyModifiers.Control))
+            {
+                _ = SaveEditorAsync(entry);
+                e.Handled = true;
+            }
+        };
+        saveButton.Click += (_, _) => _ = SaveEditorAsync(entry);
+
+        bool dragging = false;
+        Point dragStart = default;
+        double dragLeft = 0, dragTop = 0;
+        // The editor TextBox and the title-bar buttons mark PointerPressed handled, so a plain
+        // bubbling handler here would only ever see clicks on the window's padding. Tunnel runs
+        // before them, which is what makes clicking anywhere in the window select it.
+        container.AddHandler(InputElement.PointerPressedEvent,
+            (_, _) => BringEditorToFront(entry), RoutingStrategies.Tunnel);
+        // Ctrl+wheel zooms the text like any editor. Tunnel for the same reason: the TextBox's
+        // ScrollViewer would otherwise scroll the file and swallow the wheel.
+        container.AddHandler(InputElement.PointerWheelChangedEvent, (_, e) =>
+        {
+            if (!e.KeyModifiers.HasFlag(KeyModifiers.Control)) return;
+            AdjustEditorFontSize(e.Delta.Y > 0 ? 1 : -1);
+            e.Handled = true;
+        }, RoutingStrategies.Tunnel);
+        titleBar.PointerPressed += (_, e) =>
+        {
+            dragging = true;
+            dragStart = e.GetPosition(MdiContainer);
+            double left = Canvas.GetLeft(container);
+            double top = Canvas.GetTop(container);
+            dragLeft = double.IsNaN(left) ? 0 : left;
+            dragTop = double.IsNaN(top) ? 0 : top;
+            e.Pointer.Capture(titleBar);
+            e.Handled = true;
+        };
+        titleBar.PointerMoved += (_, e) =>
+        {
+            if (!dragging) return;
+            var pos = e.GetPosition(MdiContainer);
+            Canvas.SetLeft(container, dragLeft + pos.X - dragStart.X);
+            Canvas.SetTop(container, dragTop + pos.Y - dragStart.Y);
+            e.Handled = true;
+        };
+        titleBar.PointerReleased += (_, e) =>
+        {
+            dragging = false;
+            e.Pointer.Capture(null);
+            e.Handled = true;
+        };
+
+        _editorChildren.Add(entry);
+        MdiContainer.Children.Add(container);
+        WindowStrip.Children.Add(stripButton);
+        _activeLayoutItem = entry;
+        ArrangeChildren();
+        Dispatcher.UIThread.Post(() => editorBox.Focus());
     }
 
-    private void UpdateEditorTitle()
+    private void BringEditorToFront(EditorChildInfo entry) => SetActiveLayoutItem(entry);
+
+    private const double EditorFontMin = 8;
+    private const double EditorFontMax = 32;
+
+    private static double ClampEditorFontSize(double size) =>
+        double.IsNaN(size) || size <= 0 ? 12 : Math.Clamp(size, EditorFontMin, EditorFontMax);
+
+    /// <summary>
+    /// Ctrl+wheel zoom. One size is shared by every editor window and saved with the settings,
+    /// so a file opened later comes up at the size the user last picked.
+    /// </summary>
+    private void AdjustEditorFontSize(int step)
     {
-        if (_editorDoc == null) return;
-        var name = System.IO.Path.GetFileName(_editorDoc.Path);
-        EditorFileName.Text = _editorDirty ? name + " ●" : name;
-        ToolTip.SetTip(EditorFileName, _editorDoc.Path);
+        double size = ClampEditorFontSize(ClampEditorFontSize(_settings.EditorFontSize) + step);
+        if (Math.Abs(size - _settings.EditorFontSize) < 0.01) return;
+
+        _settings.EditorFontSize = size;
+        foreach (var editor in _editorChildren) editor.EditorBox.FontSize = size;
+        _settings.Save();
     }
 
-    private void CloseEditor()
+    /// <summary>
+    /// Marks which window ArrangeChildren treats as "on top". Tile layouts don't overlap so
+    /// there's nothing to reorder there; Maximize/Cascade need a re-layout to show the change.
+    /// </summary>
+    private void SetActiveLayoutItem(IMdiLayoutItem item)
     {
-        _editorDoc = null;
-        _editorDirty = false;
-        FilePreviewText.Text = "";
-        FilePreviewBorder.IsVisible = false;
+        // Every click inside a window now reaches here. Re-running the layout for a window that
+        // already holds the front would snap a Cascade window back from wherever it was dragged.
+        if (ReferenceEquals(_activeLayoutItem, item)) return;
+
+        _activeLayoutItem = item;
+        if (_layout == MdiLayout.Cascade || _layout == MdiLayout.Maximize)
+        {
+            ArrangeChildren();   // repaints the strip on its way out
+            return;
+        }
+        UpdateStripSelection();
+        RefreshWindowsPanel();
+    }
+
+    /// <summary>Brings any MDI window - terminal or editor - to the front and focuses it.</summary>
+    private void ActivateLayoutItem(IMdiLayoutItem item)
+    {
+        switch (item)
+        {
+            case MdiChildInfo child:
+                int idx = _children.IndexOf(child);
+                if (idx < 0) return;
+                BringToFront(idx);
+                child.Terminal.FocusTerminal();
+                break;
+
+            case EditorChildInfo editor:
+                SetActiveLayoutItem(editor);
+                editor.EditorBox.Focus();
+                break;
+        }
+    }
+
+    private void CloseLayoutItem(IMdiLayoutItem item)
+    {
+        if (item is MdiChildInfo child) CloseChild(child);
+        else if (item is EditorChildInfo editor) _ = CloseEditorWindowAsync(editor);
     }
 
     /// <summary>
@@ -1421,75 +1785,77 @@ public partial class MainWindow : Window
     /// for the load itself, and this way typing something back the way it was clears the mark
     /// rather than leaving a file marked unsaved with nothing to save.
     /// </summary>
-    private void OnEditorTextChanged(object? sender, TextChangedEventArgs e)
+    private void OnEditorTextChanged(EditorChildInfo entry)
     {
-        if (_editorDoc is not { Editable: true } doc) return;
+        if (!entry.Doc.Editable) return;
 
-        bool dirty = (FilePreviewText.Text ?? "") != doc.Text;
-        if (dirty == _editorDirty) return;
+        bool dirty = (entry.EditorBox.Text ?? "") != entry.Doc.Text;
+        if (dirty == entry.Dirty) return;
 
-        _editorDirty = dirty;
-        BtnEditorSave.IsEnabled = dirty;
-        UpdateEditorTitle();
-    }
-
-    private void OnEditorKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.S && e.KeyModifiers.HasFlag(KeyModifiers.Control))
-        {
-            _ = SaveEditorAsync();
-            e.Handled = true;
-        }
-    }
-
-    private void OnEditorSave(object? sender, RoutedEventArgs e) => _ = SaveEditorAsync();
-
-    private async void OnEditorClose(object? sender, RoutedEventArgs e)
-    {
-        if (await ReleaseEditorAsync()) CloseEditor();
+        entry.Dirty = dirty;
+        entry.SaveButton.IsEnabled = dirty;
+        entry.TitleText.Text = dirty
+            ? System.IO.Path.GetFileName(entry.Doc.Path) + " ●"
+            : System.IO.Path.GetFileName(entry.Doc.Path);
+        entry.StripText.Text = entry.TitleText.Text;
     }
 
     /// <summary>
-    /// Offers to save before the open file goes away. False means the user backed out and
-    /// whatever was about to replace the editor should not happen.
+    /// Offers to save before the window closes. False means the user backed out and the window
+    /// should stay open.
     /// </summary>
-    private async Task<bool> ReleaseEditorAsync()
+    private async Task<bool> ReleaseEditorAsync(EditorChildInfo entry)
     {
-        if (!_editorDirty || _editorDoc == null) return true;
+        if (!entry.Dirty) return true;
 
         var save = await ShowConfirmDialog(
             Loc.Get("EditorUnsavedTitle"),
-            string.Format(Loc.Get("EditorUnsavedFmt"), System.IO.Path.GetFileName(_editorDoc.Path)));
+            string.Format(Loc.Get("EditorUnsavedFmt"), System.IO.Path.GetFileName(entry.Doc.Path)));
 
         // Cancel discards: the alternative is a third button, and the edits are still on screen
         // until something replaces them.
-        return !save || await SaveEditorAsync();
+        return !save || await SaveEditorAsync(entry);
     }
 
-    private async Task<bool> SaveEditorAsync()
+    private async Task<bool> SaveEditorAsync(EditorChildInfo entry)
     {
-        if (_editorDoc is not { Editable: true } doc || !_editorDirty) return true;
+        if (!entry.Doc.Editable || !entry.Dirty) return true;
 
-        if (TextFileEditor.ChangedOnDisk(doc) &&
+        if (TextFileEditor.ChangedOnDisk(entry.Doc) &&
             !await ShowConfirmDialog(
                 Loc.Get("EditorConflictTitle"),
-                string.Format(Loc.Get("EditorConflictFmt"), System.IO.Path.GetFileName(doc.Path))))
+                string.Format(Loc.Get("EditorConflictFmt"), System.IO.Path.GetFileName(entry.Doc.Path))))
             return false;
 
-        var saved = TextFileEditor.Write(doc, FilePreviewText.Text ?? "", out var error);
+        var saved = TextFileEditor.Write(entry.Doc, entry.EditorBox.Text ?? "", out var error);
         if (saved == null)
         {
-            EditorNotice.Text = string.Format(Loc.Get("EditorSaveFailedFmt"), error);
-            EditorNotice.IsVisible = true;
+            entry.NoticeText.Text = string.Format(Loc.Get("EditorSaveFailedFmt"), error);
+            entry.NoticeText.IsVisible = true;
             return false;
         }
 
-        _editorDoc = saved;
-        _editorDirty = false;
-        BtnEditorSave.IsEnabled = false;
-        EditorNotice.IsVisible = false;
-        UpdateEditorTitle();
+        entry.Doc = saved;
+        entry.Dirty = false;
+        entry.SaveButton.IsEnabled = false;
+        entry.NoticeText.IsVisible = false;
+        entry.TitleText.Text = System.IO.Path.GetFileName(entry.Doc.Path);
+        entry.StripText.Text = entry.TitleText.Text;
         return true;
+    }
+
+    private async Task CloseEditorWindowAsync(EditorChildInfo entry)
+    {
+        if (!await ReleaseEditorAsync(entry)) return;
+        _editorChildren.Remove(entry);
+        MdiContainer.Children.Remove(entry.Container);
+        WindowStrip.Children.Remove(entry.StripButton);
+        if (ReferenceEquals(_activeLayoutItem, entry)) _activeLayoutItem = null;
+        ArrangeChildren();
+        // ArrangeChildren bails out when nothing is left on the canvas, so the strip and the
+        // windows panel would keep showing a closed file's row without this.
+        UpdateStripSelection();
+        RefreshWindowsPanel();
     }
 
 
@@ -1625,6 +1991,13 @@ public partial class MainWindow : Window
         var node = GetSelectedTreeNode();
         if (node == null || node.IsDirectory) return;
         OpenFileWith(node.FullPath);
+    }
+
+    private void OnTreeOpenInEditor(object? sender, RoutedEventArgs e)
+    {
+        var node = GetSelectedTreeNode();
+        if (node == null || node.IsDirectory) return;
+        OpenFileEditorWindow(node.FullPath);
     }
 
     private void OnTreeShowInExplorer(object? sender, RoutedEventArgs e)
@@ -2732,12 +3105,30 @@ public partial class MainWindow : Window
         LaunchClaudeWithInitialPrompt();
     }
 
-    private void OnCloseTab(object? sender, RoutedEventArgs e)
+    private void OnCloseTab(object? sender, RoutedEventArgs e) => CloseActiveWindow();
+
+    /// <summary>Closes whichever window holds the front - a session or an open file.</summary>
+    private void CloseActiveWindow()
     {
-        if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
+        if (_activeLayoutItem != null)
         {
-            CloseChild(_children[_activeChildIndex]);
+            CloseLayoutItem(_activeLayoutItem);
+            return;
         }
+        if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
+            CloseChild(_children[_activeChildIndex]);
+    }
+
+    /// <summary>Ctrl+Tab order runs across every MDI window, sessions and files alike.</summary>
+    private void CycleWindows(int dir)
+    {
+        var items = AllLayoutItems();
+        if (items.Count < 2) return;
+
+        int current = _activeLayoutItem == null ? _activeChildIndex : items.IndexOf(_activeLayoutItem);
+        if (current < 0) current = 0;
+
+        ActivateLayoutItem(items[(current + dir + items.Count) % items.Count]);
     }
 
     // ── Global Keyboard Shortcuts ──
@@ -2754,21 +3145,14 @@ public partial class MainWindow : Window
         // Ctrl+W: Close active tab
         if (e.Key == Key.W && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
-                CloseChild(_children[_activeChildIndex]);
+            CloseActiveWindow();
             e.Handled = true;
             return;
         }
         // Ctrl+Tab / Ctrl+Shift+Tab: Switch tabs
         if (e.Key == Key.Tab && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            if (_children.Count > 1)
-            {
-                int dir = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : 1;
-                int next = (_activeChildIndex + dir + _children.Count) % _children.Count;
-                BringToFront(next);
-                _children[next].Terminal.FocusTerminal();
-            }
+            CycleWindows(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : 1);
             e.Handled = true;
             return;
         }
@@ -2894,6 +3278,7 @@ public partial class MainWindow : Window
                     ? _insight.IsWorking
                     : TerminalInsight.IsWorking(terminal.GetScreenText(0));
                 terminal.IsGenerating = working;
+                PaintChildDots(child);
                 NoteChildTurnEnd(child, working);
             }
             catch
@@ -2902,6 +3287,31 @@ public partial class MainWindow : Window
                 // child's read already lives with. Skip this child until the next poll.
             }
         }
+    }
+
+    /// <summary>Apple Green: the CLI is up and waiting at the prompt.</summary>
+    private static readonly SolidColorBrush DotIdleBrush = new(Color.FromRgb(48, 209, 88));
+
+    /// <summary>Apple Orange: the CLI is mid-turn.</summary>
+    private static readonly SolidColorBrush DotBusyBrush = new(Color.FromRgb(255, 159, 10));
+
+    /// <summary>Apple systemGray: the process has exited.</summary>
+    private static readonly SolidColorBrush DotExitedBrush = new(Color.FromRgb(142, 142, 147));
+
+    /// <summary>
+    /// Colours a window's title-bar and strip dots from its run state. The strip dot is the
+    /// only thing a background window shows of itself, so it has to separate "mid-turn" from
+    /// "waiting at the prompt" - green alone could not say which. Called from the 700 ms poll,
+    /// hence the shared brushes and the reference check: repainting is the rare case.
+    /// </summary>
+    private static void PaintChildDots(MdiChildInfo child)
+    {
+        var brush = !child.Terminal.IsProcessRunning ? DotExitedBrush
+            : child.Terminal.IsGenerating ? DotBusyBrush
+            : DotIdleBrush;
+
+        if (!ReferenceEquals(child.StatusDot.Fill, brush)) child.StatusDot.Fill = brush;
+        if (!ReferenceEquals(child.StripDot.Fill, brush)) child.StripDot.Fill = brush;
     }
 
     /// <summary>How many polls the idle state must hold before the turn counts as over.</summary>
@@ -3991,9 +4401,9 @@ public partial class MainWindow : Window
             ("NewSession", "New Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
             ("PaletteSourceControl", "Source Control", "Ctrl+Shift+G", () => ToggleSidePanel(SidebarPanel.SourceControl)),
             ("CostDashboard", "Tokens & Cost", "", () => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(this)),
-            ("PaletteCloseTab", "Close Tab", "Ctrl+W", () => { if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count) CloseChild(_children[_activeChildIndex]); }),
-            ("PaletteNextTab", "Next Tab", "Ctrl+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex + 1) % _children.Count); }),
-            ("PalettePrevTab", "Previous Tab", "Ctrl+Shift+Tab", () => { if (_children.Count > 1) BringToFront((_activeChildIndex - 1 + _children.Count) % _children.Count); }),
+            ("PaletteCloseTab", "Close Tab", "Ctrl+W", CloseActiveWindow),
+            ("PaletteNextTab", "Next Tab", "Ctrl+Tab", () => CycleWindows(1)),
+            ("PalettePrevTab", "Previous Tab", "Ctrl+Shift+Tab", () => CycleWindows(-1)),
             ("PaletteToggleExplorer", "Toggle Explorer", "Ctrl+Shift+E", () => ToggleSidePanel(SidebarPanel.Explorer)),
             ("PaletteToggleSnippets", "Toggle Snippets", "", () => ToggleSidePanel(SidebarPanel.Snippets)),
             ("PaletteToggleWindows", "Toggle Windows Panel", "", () => ToggleSidePanel(SidebarPanel.Windows)),
@@ -5643,23 +6053,44 @@ public partial class MainWindow : Window
         ArrangeChildren();
     }
 
+    /// <summary>
+    /// Terminal windows and floating editor windows are tracked in two independent lists
+    /// (_children keeps its TerminalControl-specific indexing for command routing), but they
+    /// share one MDI canvas and one set of layout modes - so layout math runs over both
+    /// combined, in creation order across the two lists.
+    /// </summary>
+    private List<IMdiLayoutItem> AllLayoutItems()
+    {
+        var list = new List<IMdiLayoutItem>(_children.Count + _editorChildren.Count);
+        list.AddRange(_children);
+        list.AddRange(_editorChildren);
+        return list;
+    }
+
     private void ArrangeChildren()
     {
         double w = MdiContainer.Bounds.Width;
         double h = MdiContainer.Bounds.Height;
         if (w <= 0 || h <= 0) return;
-        if (_children.Count == 0) return;
 
-        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count)
-            _activeChildIndex = _children.Count - 1;
+        var items = AllLayoutItems();
+        if (items.Count == 0) return;
+
+        // A closed window leaves a stale front. Prefer the terminal CloseChild already picked as
+        // the next active session, so closing a session still lands on its neighbour rather than
+        // jumping to whichever file happens to be open.
+        if (_activeLayoutItem == null || !items.Contains(_activeLayoutItem))
+            _activeLayoutItem = _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+                ? _children[_activeChildIndex]
+                : items[^1];
 
         switch (_layout)
         {
             case MdiLayout.Maximize:
-                for (int i = 0; i < _children.Count; i++)
+                for (int i = 0; i < items.Count; i++)
                 {
-                    var c = _children[i];
-                    bool active = i == _activeChildIndex;
+                    var c = items[i];
+                    bool active = ReferenceEquals(c, _activeLayoutItem);
                     c.Container.IsVisible = active;
                     c.TitleBar.IsVisible = false;
                     if (active)
@@ -5674,7 +6105,7 @@ public partial class MainWindow : Window
 
             case MdiLayout.Tile:
             {
-                int count = _children.Count;
+                int count = items.Count;
                 int cols = (int)Math.Ceiling(Math.Sqrt(count));
                 int rows = (int)Math.Ceiling((double)count / cols);
                 double cw = w / cols;
@@ -5682,7 +6113,7 @@ public partial class MainWindow : Window
 
                 for (int i = 0; i < count; i++)
                 {
-                    var c = _children[i];
+                    var c = items[i];
                     c.Container.IsVisible = true;
                     c.TitleBar.IsVisible = false;
                     Canvas.SetLeft(c.Container, (i % cols) * cw);
@@ -5696,11 +6127,11 @@ public partial class MainWindow : Window
 
             case MdiLayout.TileHorizontal:
             {
-                int count = _children.Count;
+                int count = items.Count;
                 double ch = h / count;
                 for (int i = 0; i < count; i++)
                 {
-                    var c = _children[i];
+                    var c = items[i];
                     c.Container.IsVisible = true;
                     c.TitleBar.IsVisible = false;
                     Canvas.SetLeft(c.Container, 0);
@@ -5714,11 +6145,11 @@ public partial class MainWindow : Window
 
             case MdiLayout.TileVertical:
             {
-                int count = _children.Count;
+                int count = items.Count;
                 double cw = w / count;
                 for (int i = 0; i < count; i++)
                 {
-                    var c = _children[i];
+                    var c = items[i];
                     c.Container.IsVisible = true;
                     c.TitleBar.IsVisible = false;
                     Canvas.SetLeft(c.Container, i * cw);
@@ -5736,9 +6167,9 @@ public partial class MainWindow : Window
                 double cw = Math.Max(400, w * 0.75);
                 double ch = Math.Max(300, h * 0.75);
 
-                for (int i = 0; i < _children.Count; i++)
+                for (int i = 0; i < items.Count; i++)
                 {
-                    var c = _children[i];
+                    var c = items[i];
                     c.Container.IsVisible = true;
                     c.TitleBar.IsVisible = true;
                     Canvas.SetLeft(c.Container, i * offset);
@@ -5748,8 +6179,9 @@ public partial class MainWindow : Window
                     c.Container.ZIndex = i;
                 }
 
-                if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
-                    _children[_activeChildIndex].Container.ZIndex = _children.Count;
+                int activeIdx = items.FindIndex(x => ReferenceEquals(x, _activeLayoutItem));
+                if (activeIdx >= 0)
+                    items[activeIdx].Container.ZIndex = items.Count;
                 break;
             }
         }
@@ -5762,16 +6194,7 @@ public partial class MainWindow : Window
     {
         if (index < 0 || index >= _children.Count) return;
         _activeChildIndex = index;
-
-        if (_layout == MdiLayout.Cascade)
-        {
-            for (int i = 0; i < _children.Count; i++)
-                _children[i].Container.ZIndex = (i == index ? _children.Count : i);
-        }
-        else if (_layout == MdiLayout.Maximize)
-        {
-            ArrangeChildren();
-        }
+        SetActiveLayoutItem(_children[index]);
 
         UpdateStripSelection();
 
@@ -5827,18 +6250,30 @@ public partial class MainWindow : Window
         for (int i = 0; i < _children.Count; i++)
         {
             var child = _children[i];
-            bool active = i == _activeChildIndex;
-
-            child.StripButton.Background = active
-                ? new SolidColorBrush(Color.FromArgb(30, 0, 122, 255))
-                : Brushes.Transparent;
-            child.StripButton.BorderBrush = active
-                ? new SolidColorBrush(Color.FromArgb(60, 0, 122, 255))
-                : Brushes.Transparent;
-
-            child.Container.BorderBrush = active ? ActiveBorder : InactiveBorder;
-            child.Container.BorderThickness = active ? new Thickness(2) : new Thickness(1);
+            // An editor window can hold the front, in which case no session tab is the active
+            // one - _activeChildIndex still names the terminal commands are routed to.
+            bool active = _activeLayoutItem == null
+                ? i == _activeChildIndex
+                : ReferenceEquals(child, _activeLayoutItem);
+            PaintStripSelection(child.StripButton, child.Container, active);
         }
+
+        foreach (var editor in _editorChildren)
+            PaintStripSelection(editor.StripButton, editor.Container,
+                ReferenceEquals(editor, _activeLayoutItem));
+    }
+
+    private static void PaintStripSelection(Button stripButton, Border container, bool active)
+    {
+        stripButton.Background = active
+            ? new SolidColorBrush(Color.FromArgb(30, 0, 122, 255))
+            : Brushes.Transparent;
+        stripButton.BorderBrush = active
+            ? new SolidColorBrush(Color.FromArgb(60, 0, 122, 255))
+            : Brushes.Transparent;
+
+        container.BorderBrush = active ? ActiveBorder : InactiveBorder;
+        container.BorderThickness = active ? new Thickness(2) : new Thickness(1);
     }
 
     // ── Turn-end blink ──
@@ -6113,8 +6548,11 @@ public partial class MainWindow : Window
 
         container.PointerPressed += (_, _) =>
         {
+            // Not "is this already the active session": an editor window can hold the front
+            // while _activeChildIndex still names this terminal, and clicking it has to take
+            // the front back.
             int idx = _children.IndexOf(entry);
-            if (idx >= 0 && _activeChildIndex != idx)
+            if (idx >= 0 && !ReferenceEquals(_activeLayoutItem, entry))
                 BringToFront(idx);
         };
 
@@ -6163,8 +6601,11 @@ public partial class MainWindow : Window
 
         terminal.Clicked += () =>
         {
+            // Not "is this already the active session": an editor window can hold the front
+            // while _activeChildIndex still names this terminal, and clicking it has to take
+            // the front back.
             int idx = _children.IndexOf(entry);
-            if (idx >= 0 && _activeChildIndex != idx)
+            if (idx >= 0 && !ReferenceEquals(_activeLayoutItem, entry))
                 BringToFront(idx);
         };
 
@@ -6185,9 +6626,8 @@ public partial class MainWindow : Window
 
         terminal.Exited += () =>
         {
-            dot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));   // Apple systemGray
-            stripDot.Fill = new SolidColorBrush(Color.FromRgb(142, 142, 147));
             terminal.IsGenerating = false;
+            PaintChildDots(entry);   // grey: the pty handle is already signalled here
             RefreshSessionList();
             // Flash the taskbar and raise a toast when the window is not focused
             if (!IsActive)

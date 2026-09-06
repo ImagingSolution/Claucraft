@@ -9,6 +9,12 @@ public class AppSettings
     public string ProjectFolder { get; set; } = "";
     public string FontFamily { get; set; } = "Cascadia Mono";
     public double FontSize { get; set; } = 14;
+
+    /// <summary>
+    /// Text size in the file editor windows, set by Ctrl+wheel. Separate from the terminal's
+    /// FontSize: the terminal is sized to a readable session, an editor to a readable diff.
+    /// </summary>
+    public double EditorFontSize { get; set; } = 12;
     public bool IsDark { get; set; } = true;
     public string Language { get; set; } = "English";
     public string InitialPrompt { get; set; } = "";

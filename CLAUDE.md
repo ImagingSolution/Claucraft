@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Language
+
+Always respond to the user in Japanese, regardless of the language used elsewhere in this file or in the codebase.
+
 ## Build & Run
 
 ```bash

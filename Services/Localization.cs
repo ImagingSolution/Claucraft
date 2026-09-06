@@ -38,6 +38,7 @@ public static class Loc
         // ── Explorer Context Menu ──
         ["Open"] = new() { ["English"] = "Open", ["日本語"] = "開く" },
         ["OpenWith"] = new() { ["English"] = "Open with...", ["日本語"] = "プログラムから開く..." },
+        ["OpenInEditor"] = new() { ["English"] = "Open in Editor", ["日本語"] = "エディタで開く" },
         ["ShowInExplorer"] = new() { ["English"] = "Show in Explorer", ["日本語"] = "エクスプローラーで表示" },
         ["CopyPath"] = new() { ["English"] = "Copy Path", ["日本語"] = "パスをコピー" },
         ["CopyFilename"] = new() { ["English"] = "Copy Filename", ["日本語"] = "ファイル名をコピー" },

@@ -86,12 +86,27 @@ public static class TerminalInsight
 
     // ── Activity / working state ────────────────────────────────────────
 
-    /// <summary>Matches "✻ Cerebrating… (12s · ↓ 1.2k tokens · esc to interrupt)".</summary>
-    private static readonly Regex WorkingLineRegex = new(@"esc\s+to\s+interrupt", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    /// <summary>
+    /// Matches the interrupt hint where the CLI actually prints it - inside the spinner's
+    /// bracketed status group: "✻ Cerebrating… (12s · ↓ 1.2k tokens · esc to interrupt)" or
+    /// "(esc to interrupt · ctrl+t to show todos)".
+    /// The leading "(" or "·" is the whole point. Matching the bare phrase made every mention of
+    /// it in the transcript read as a live spinner, so a session that had merely talked about
+    /// interrupting showed a progress bar for as long as the words stayed on screen. Prose writes
+    /// the phrase bare; the CLI never does.
+    /// </summary>
+    private static readonly Regex WorkingLineRegex = new(@"[(·]\s*esc\s+to\s+interrupt", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    /// <summary>Matches the spinner's own progress readout, e.g. "✻ Deciphering… (23m 3s · ↓ 103.1k tokens)".</summary>
+    /// <summary>
+    /// Matches the spinner's own progress readout, e.g. "✻ Deciphering… (23m 3s · ↓ 103.1k tokens)"
+    /// or "✳ Concocting…(1m 58s · ↓7.5k tokens)". This is the detector that carries the load: the
+    /// CLI hides the interrupt hint behind ctrl+t, so the readout is often the only thing on the
+    /// line. The whole shape is required, not just the bracketed figures - spinner glyph, one
+    /// word, ellipsis, readout - because the figures on their own turn up in the transcript
+    /// whenever the session talks about them, and a line of prose is not a running spinner.
+    /// </summary>
     private static readonly Regex WorkingSpinnerRegex = new(
-        @"\(\s*(?:\d+m\s*)?\d+s\s*[·.].*tokens",
+        @"^\s{0,6}[^\s\p{L}\p{N}]\s*\p{L}[\p{L} ]*(?:…|\.\.\.)\s*\(\s*(?:\d+m\s*)?\d+s\s*[·.][^)]*tokens",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>Matches the elapsed-time part of a working line: "(12s" or "(1m 5s".</summary>
@@ -259,9 +274,23 @@ public static class TerminalInsight
         return ModePhraseTailRegex.Replace(phrase, "").ToLowerInvariant();
     }
 
+    /// <summary>
+    /// How far above the last written line the spinner can sit. The CLI redraws it directly above
+    /// the composer, so this has to clear the spinner's todo hint, the composer box and the status
+    /// rows beneath it - but no more. Everything further up is transcript: text the CLI printed
+    /// once and will not update, which says nothing about what it is doing now.
+    /// </summary>
+    private const int WorkingTailLines = 16;
+
     private static (bool IsWorking, int? ElapsedSeconds) DetectWorking(string[] lines)
     {
-        for (var i = lines.Length - 1; i >= 0; i--)
+        // A screen is padded with blank rows to its full height, so the tail has to be measured
+        // from the last row that has anything on it rather than from the end of the array.
+        var last = lines.Length - 1;
+        while (last >= 0 && string.IsNullOrWhiteSpace(lines[last])) last--;
+        var first = Math.Max(0, last - WorkingTailLines + 1);
+
+        for (var i = last; i >= first; i--)
         {
             if (!WorkingLineRegex.IsMatch(lines[i]) && !WorkingSpinnerRegex.IsMatch(lines[i])) continue;
 
