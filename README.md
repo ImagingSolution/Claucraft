@@ -19,8 +19,12 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Project Context Switching** - Automatically switch project folder, explorer, and sessions when switching between MDI windows
 - **Project Explorer** - Browse project file trees with syntax-aware icons and color-coded file types (40+ file extensions). Auto-refreshes on file system changes. File preview on selection
 - **Open With** - Right-click any file in the explorer to hand it to the Windows "Open with" picker, so a file the AI just touched opens in whatever app suits it
+- **In-App Text Editor** - Edit text files straight from the Project Explorer, preserving the original encoding, line endings, and BOM. Binary, oversized, or non-UTF8 files stay read-only instead of getting corrupted
+- **Safe Delete** - Deleting a file or folder from the explorer sends it to the Windows Recycle Bin instead of removing it permanently
 - **Snippets Panel** - Store and quickly send code snippets to the active console (`\r` in text sends Enter key). Drag-and-drop reordering supported. Sends to expanded input when active
 - **Windows Panel** - Side panel showing all open windows with status dots and conversation summary. Prioritizes session summary over terminal title. Terminal output preview on hover. Click to switch, × to close
+- **Subagent Monitor** - The Windows panel also shows a session's in-flight subagents (label, type, model, depth) while they're running
+- **Session Transcript Viewer** - A side panel renders a session's full JSONL transcript as auto-scrolling, formatted Markdown - a readable document view of the conversation instead of raw terminal scrollback
 - **Prompt Navigation (Ctrl+↑/↓)** - Navigate between user questions in the terminal conversation. Displays a navigation bar with position counter (Q 2/5). Tracks input positions during the session and scans buffer separators for past conversations
 - **Terminal Search (Ctrl+F)** - Full-text search across terminal output and scrollback history with match highlighting, navigation, regex mode, and case-sensitive toggle
 - **Font Zoom (Ctrl+Scroll)** - Adjust font size in real-time with Ctrl+mouse wheel. Ctrl+0 resets to default size
@@ -28,6 +32,8 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Command Palette (Ctrl+Shift+P)** - VS Code-style searchable action menu for quick access to all commands
 - **Setup Check** - One-click diagnosis of the CLI, Node.js, Git, the config folder and sign-in state, with a copyable fix command for anything missing. Runs itself on first launch and stays quiet when everything is fine
 - **Slash Commands Panel (Ctrl+/)** - Every slash command the CLI understands, listed with a description in the side panel next to the activity bar instead of memorised. Custom commands from `.claude/commands/*.md` are picked up automatically
+- **Extensions Panel** - Lists configured MCP servers, skills, and plugins with enable/disable toggles where the CLI supports it
+- **Diagram Viewer** - Renders Excalidraw diagrams drawn via MCP tool calls in a zoomable, pannable window, with PNG export/copy. Diagrams are cached per project so they survive a resume or restart
 - **Automatic Checkpoints** - Snapshots the project before each prompt so the work can be rolled back from the status bar. Git repos use `git stash create`, which builds a commit object without touching the working tree; other folders get a file snapshot
 - **Stop Button** - A stop control appears in the status bar while a session is running, for anyone who does not know Escape interrupts the AI
 - **Starter Prompt Templates** - The snippets panel starts pre-filled with common prompts in English or Japanese instead of empty
@@ -35,17 +41,24 @@ Manage multiple Claude Code sessions side-by-side with welcome page, project exp
 - **Turn-End Frame Blink** - The active window's blue frame blinks twice when the AI hands the turn back, so a finished session is visible at a glance across tiled windows
 - **Keyboard Shortcut Sheet (F1)** - Every shortcut on one screen, grouped by what it acts on
 - **Named Workspaces** - Save and restore any number of layouts. Restoring reopens the same transcripts with `-r`, so the conversations come back instead of blank sessions
-- **Changed Files + Built-in Diff** - A panel listing every file the AI touched, straight from `git status`. Click one for a colour-coded diff without leaving the app
+- **Source Control Panel** - A unified git + GitHub sidebar panel (replacing the old status-bar toolbar): Fetch / Pull (rebase) / Push with a quiet 5-minute background auto-fetch, branch switch/create/delete/merge, and banners for conflicts or an interrupted rebase/merge with an "Ask the AI" button that drafts a JA/EN prompt naming the affected files. Every operation stays non-destructive by design - no force-push, `reset --hard`, or `branch -D`
+- **AI Commit Messages** - Stage files (per-file or all) and draft a commit message in English or Japanese from the staged diff, generated locally by the active CLI's one-shot mode without joining the live session
+- **GitHub Pull Requests** - List open PRs, approve, create, and open in browser via `gh`, right inside the Source Control panel. Hides itself automatically if `gh` isn't installed/authenticated or the remote isn't GitHub
+- **Commit Graph & Diff Viewer** - Full commit history as a lane graph (embedded or its own window) and a virtualized diff viewer. Select a diff range or right-click a changed file to send `@path:12-20 <comment>` straight to the terminal
+- **Git Worktree Isolation** - Give a session its own `git worktree` checkout (under a Claucraft-managed folder with `claucraft/`-prefixed branches) so multiple MDI windows on the same repo can work in parallel without clobbering each other's files
 - **Mode Badge** - Shows which mode the session is in (auto-accept / plan / bypass) right in the status bar, so nobody discovers it by accident. Click it to cycle. If a CLI update renames the modes and the badge cannot read one, it falls back to "Switch Mode" and still sends Shift+Tab
 - **Activity Indicator** - Says what the AI is doing while it is quiet - reading a file, running a command, searching - with the elapsed time
 - **Context Meter** - Reads the context left from the CLI's own output and shows it as a meter, with a one-click `/compact` when it runs low
 - **Usage in Plain Words** - "about 840 left, resets in 5h" instead of a bare message count, measured against the plan (Pro / Max 5x / Max 20x) chosen in Settings
+- **Rate Limit Readout** - Shows utilization and reset countdown for both the 5-hour and 7-day plan windows
 - **Permission Prompts, Explained** - The approval overlay now says what the command actually does and rates it read-only / changes files / deletes or reaches the network
 - **Error Diagnosis Banner** - Known failures (signed out, rate limited, usage limit, network down, outdated CLI) surface as a banner with the fix one click away
-- **Launch Profiles** - Pick Light / Standard / Deep from the toolbar and new sessions start with matching flags (Light is `--model sonnet --effort low --autocompact 100k --strict-mcp-config --disable-slash-commands`). Bounding context length is what actually lowers the bill
+- **Launch Profiles** - Pick Light / Standard / Deep from the toolbar; the matching flags now apply on every launch path - new sessions, `-c` continue, and `-r` resume alike - so a resumed session can't silently balloon back to an unbounded context window. Light ships its own `--settings` file that trims MCP servers, tool descriptions, and auto-memory from the prompt prefix; Deep switches to `--model opus --effort high`
+- **CLI Provider Support** - Swap the underlying CLI per session (Claude Code and other compatible CLIs), each with its own command-line shape, one-shot invocation, and launch profiles
 - **Marginal Cost Readout** - The status bar shows what the last turn cost and what the next one costs just to re-read the conversation, so a session that has grown expensive says so instead of being discovered on the invoice
-- **Session Hand-off** - When context runs low, hand off to a fresh session with a brief extracted from the transcript locally. It costs no tokens, unlike `/compact`, and the brief lands in the new session's input box so it can be edited before anything is sent
-- **Tokens & Cost Dashboard** - Reads `message.usage` out of the session transcripts and totals tokens and estimated cost by day, model, project and session, with CSV export
+- **Session Hand-off** - When context runs low (now an absolute token threshold, not a percentage, so it still fires on 1M-context models), hand off to a fresh session with a brief extracted from the transcript locally. It costs no tokens, unlike `/compact`, and the brief lands in the new session's input box so it can be edited before anything is sent
+- **Resume Cost & Token Badge** - The session picker shows each session's last known context size as a badge plus a tooltip estimate of what resuming it will cost. Right-click a session for "Start fresh from brief" to hand off without reopening the old one first
+- **Tokens & Cost Dashboard** - A dedicated window reading `message.usage` out of session transcripts: 7/30/90-day range, a "this project only" scope toggle, a daily cost bar chart, and top-50 breakdowns by model, project, and session, with CSV export
 - **Tab Management** - Right-click context menu (Close / Close Others / Close to Right / Duplicate / Export Output). Double-click to rename. Auto-names from first user input or session summary
 - **Terminal Output Export** - Save terminal output as a text file via tab context menu
 - **Dark / Light Theme** - Toggle in Settings panel. Full theme support across all UI components
@@ -81,23 +94,60 @@ Claucraft/
 ├── MainWindow.axaml / .cs          # Main MDI window and UI logic
 ├── App.axaml / .cs                 # Application root and theme management
 ├── Program.cs                      # Application entry point
+├── FileTreeNode.cs                 # File explorer tree node model
+├── UsageChartWindow.axaml / .cs    # Usage chart dialog
 ├── Terminal/
 │   ├── TerminalControl.cs          # Custom terminal rendering control
 │   ├── TerminalBuffer.cs           # Cell grid and scrollback buffer
 │   ├── TerminalCell.cs             # Cell data model (character, colors, attributes)
 │   ├── VtParser.cs                 # ANSI/VT escape sequence parser
-│   └── PseudoConsole.cs            # Windows PTY interface
+│   ├── PseudoConsole.cs            # Windows PTY interface
+│   ├── CodeBlockDetector.cs        # Detects Excalidraw/MCP diagram blocks in output
+│   └── DiagramWindow.cs            # Excalidraw diagram viewer window + canvas
+├── Controls/
+│   ├── SourceControlPanel.cs       # Unified git + GitHub sidebar panel
+│   ├── CommitGraphView.cs          # Embedded commit graph drawing control
+│   ├── CommitGraphWindow.cs        # Standalone commit graph window
+│   ├── DiffWindow.cs               # Virtualized diff viewer with inline comments
+│   ├── CostDashboardWindow.cs      # Tokens & cost dashboard window
+│   ├── DocumentViewPanel.cs        # Session transcript rendered as Markdown
+│   └── MarqueeBar.cs               # Turn-in-progress activity sweep bar
 ├── Services/
 │   ├── Localization.cs             # EN/JP string localization
 │   ├── AppSettings.cs              # Configuration persistence
 │   ├── SessionService.cs           # Claude session and sessions-index management
+│   ├── SessionMessageReader.cs     # JSONL transcript parser
+│   ├── SessionCostMonitor.cs       # Live per-session cost/context tracking
 │   ├── SnippetStore.cs             # Snippet storage
 │   ├── UsageTracker.cs             # API usage monitoring
-│   └── WorkspaceService.cs         # Workspace save/restore
-├── UsageChartWindow.axaml / .cs    # Usage chart dialog
+│   ├── RateLimitService.cs         # 5h/7d plan rate-limit windows
+│   ├── CostAnalytics.cs            # Cost/token aggregation for the dashboard
+│   ├── WorkspaceService.cs         # Workspace save/restore
+│   ├── WorktreeService.cs          # Per-session git worktree isolation
+│   ├── CliProvider.cs              # CLI provider/launch-profile data model
+│   ├── CliProviderService.cs       # CLI provider registry + command building
+│   ├── CommitMessageService.cs     # AI-drafted commit messages (EN/JP)
+│   ├── GitCli.cs / GitWriteService.cs / GitChangeService.cs / GitLogService.cs / GitPath.cs / CommitGraphLayout.cs
+│   │                                # Git process wrapper, write ops, status/log readers, path decoding, graph layout
+│   ├── GitHubCli.cs                # `gh` wrapper for pull requests
+│   ├── HandoffBuilder.cs           # Session hand-off brief builder
+│   ├── CheckpointService.cs        # Pre-prompt snapshots (stash / file copy)
+│   ├── SetupDoctor.cs              # Environment diagnostics (Setup Check)
+│   ├── SlashCommandCatalog.cs      # Slash command listing
+│   ├── ExtensionCatalog.cs         # MCP server / skill / plugin listing
+│   ├── ProjectFileIndex.cs         # @-mention file path index
+│   ├── TextFileEditor.cs           # Explorer's in-app text file read/write
+│   ├── RecycleBin.cs               # Safe delete via Windows Recycle Bin
+│   ├── RunningSessionService.cs    # Detects a session already held by another process
+│   ├── SubagentMonitor.cs          # In-flight subagent tracking for the Windows panel
+│   ├── TerminalInsight.cs          # Mode/activity inference and error diagnosis
+│   ├── CommandExplainer.cs         # Plain-language permission-prompt explanations
+│   ├── MarkdownParser.cs           # Lightweight Markdown renderer
+│   ├── NotificationService.cs      # Tray notifications and sound
+│   ├── ProcessRunner.cs            # Shared process-launch plumbing
+│   └── DiagramCache.cs             # Persists Excalidraw diagrams per project
 ├── SettingsWindow.axaml / .cs      # Settings dialog window
 ├── SessionListWindow.axaml / .cs   # Session list window
-├── FileTreeNode.cs                 # File explorer tree node model
 ├── icon.ico / icon.png             # Application icon
 ├── app.manifest                    # Application manifest
 └── build.number                    # Auto-incrementing build number
@@ -155,8 +205,12 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **プロジェクトコンテキスト切替** - MDI ウィンドウの切り替え時に、プロジェクトフォルダ・エクスプローラー・セッション一覧を自動切替
 - **プロジェクトエクスプローラー** - ファイルツリーを構文対応のアイコンと色分けで表示（40種類以上のファイル拡張子対応）。ファイルシステム変更時に自動リフレッシュ。ファイル選択時にプレビュー表示
 - **プログラムから開く** - エクスプローラーでファイルを右クリックすると Windows の「プログラムから開く」ダイアログを表示。AI が触ったファイルを好きなアプリで開ける
+- **アプリ内テキストエディタ** - プロジェクトエクスプローラーからテキストファイルを直接編集。元のエンコーディング・改行コード・BOM を保持。バイナリ・大きすぎる・非 UTF-8 のファイルは読み取り専用のまま
+- **安全な削除** - エクスプローラーからの削除は完全削除ではなく Windows のごみ箱に送る
 - **スニペットパネル** - コードスニペットを保存し、アクティブなコンソールにワンクリックで送信（テキスト中の `\r` で Enter キーを送信）。ドラッグ＆ドロップによる並べ替えに対応。拡張入力有効時はそちらに送信
 - **ウィンドウパネル** - サイドパネルに開いているウィンドウの一覧を表示。状態ドットと会話要約を表示。セッション要約をターミナルタイトルより優先表示。ホバーでターミナル出力プレビュー。クリックで切替、×で閉じる
+- **サブエージェントモニター** - ウィンドウパネルに実行中のサブエージェント（ラベル・種類・モデル・深さ）を表示
+- **セッション記録ビューア** - セッションの JSONL 記録全体を、自動スクロールする整形済み Markdown としてサイドパネルに表示。生のターミナルスクロールバックの代わりに読みやすい会話ビューを提供
 - **プロンプトナビゲーション (Ctrl+↑/↓)** - ターミナル内の会話を質問単位で移動。ナビゲーションバーに現在位置を表示（Q 2/5）。セッション中の入力位置をトラッキングし、過去の会話はバッファ内のセパレータパターンを検出して移動
 - **ターミナル検索 (Ctrl+F)** - ターミナル出力とスクロールバック履歴の全文検索。マッチハイライト、ナビゲーション、正規表現モード、大文字小文字区別トグル
 - **フォントズーム (Ctrl+スクロール)** - Ctrl+マウスホイールでリアルタイムにフォントサイズを変更。Ctrl+0 でデフォルトサイズにリセット
@@ -164,6 +218,8 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **コマンドパレット (Ctrl+Shift+P)** - VS Code 風の検索可能なアクションメニュー。全コマンドに素早くアクセス
 - **セットアップ診断** - CLI・Node.js・Git・設定フォルダ・サインイン状態をワンクリックで診断し、足りないものにはコピーできる対処コマンドを表示。初回起動時に自動実行され、問題がなければ何も出さない
 - **スラッシュコマンドパネル（Ctrl+/）** - CLI が解釈するスラッシュコマンドを、アクティビティバー右側のサイドパネルに説明付きで一覧表示。`.claude/commands/*.md` のカスタムコマンドも自動で取り込む
+- **拡張機能パネル** - 設定済みの MCP サーバー・スキル・プラグインを一覧表示。CLI が対応していれば有効/無効を切替可能
+- **ダイアグラムビューア** - MCP ツール呼び出しで描画された Excalidraw ダイアグラムを、ズーム・パン可能なウィンドウで表示。PNG エクスポート/コピーに対応。プロジェクトごとにキャッシュされ、再開・再起動後も残る
 - **自動チェックポイント** - プロンプト送信前にプロジェクトのスナップショットを取り、ステータスバーから巻き戻し可能。Git リポジトリでは作業ツリーに触れない `git stash create` を使い、Git 管理外のフォルダはファイルコピーで保存
 - **停止ボタン** - セッション実行中はステータスバーに停止ボタンを表示。Escape で中断できることを知らなくても止められる
 - **プロンプトテンプレート同梱** - スニペットパネルが空ではなく、よく使うプロンプト（日本語／英語）が入った状態から始まる
@@ -171,17 +227,24 @@ Avalonia UI で構築された、[Claude Code](https://docs.anthropic.com/en/doc
 - **ターン終了時の枠点滅** - AI が応答を終えて入力待ちに戻ると、アクティブウィンドウの青い枠が2回点滅。タイル表示でもどのセッションが終わったか一目で分かる
 - **ショートカット一覧（F1）** - 全ショートカットを対象ごとにグループ分けして1画面で表示
 - **名前付きワークスペース** - レイアウトを任意の数だけ保存・復元。復元時は `-r` で同じセッションを再開するため、新規セッションではなく会話が戻ってくる
-- **変更ファイルパネル＋内蔵 diff** - AI が触ったファイルを `git status` から一覧表示。クリックすると色分けされた差分をアプリ内で確認できる
+- **ソースコントロールパネル** - 旧ステータスバー式ツールバーに代わる、git + GitHub 統合サイドパネル。取得（Fetch）/ 取込（Pull, rebase）/ 送信（Push）と5分間隔の静かなバックグラウンド自動取得、ブランチの切替・作成・削除・マージ、コンフリクトや中断したリベース/マージのバナー表示（対象ファイル名入りの日英プロンプトを自動作成する「AIに聞く」ボタン付き）。強制プッシュ・`reset --hard`・`branch -D` は設計上存在せず、常に非破壊的
+- **AIコミットメッセージ** - ファイルをステージ（個別/一括）し、ステージ済み差分から日本語または英語のコミットメッセージを生成。現在のセッションに参加せず、アクティブな CLI のワンショットモードでローカルに生成
+- **GitHub プルリクエスト** - `gh` を介して、ソースコントロールパネル内でオープンな PR の一覧表示・承認・作成・ブラウザで開くが可能。`gh` が未インストール/未認証、またはリモートが GitHub でない場合は自動的に非表示
+- **コミットグラフ＆差分ビューア** - コミット履歴をレーングラフで表示（パネル埋め込み or 専用ウィンドウ）し、仮想化された差分ビューアを提供。差分範囲を選択、または変更ファイルを右クリックして `@path:12-20 <コメント>` をターミナルへ直接送信
+- **Git Worktree 分離** - セッションごとに専用の `git worktree` チェックアウト（Claucraft 管理フォルダ配下、`claucraft/` 接頭辞のブランチ）を持たせ、同一リポジトリの複数 MDI ウィンドウが互いのファイルを壊さず並行作業可能に
 - **モードバッジ** - セッションのモード（自動承認 / プラン / 権限スキップ）をステータスバーに常時表示。クリックで切り替え。CLI の仕様変更でモード名を読み取れなくなった場合は「Switch Mode」表示に戻り、Shift+Tab の送信は継続
 - **実行中インジケータ** - AI が黙っている間に何をしているか（ファイル読み込み・コマンド実行・検索）を経過時間付きで表示
 - **コンテキスト残量メーター** - CLI の出力から残量を読み取ってメーター表示。少なくなったらワンクリックで `/compact` を実行
 - **使用量の人間語表示** - 単なるメッセージ数ではなく「残り約 840 回・リセットまで 5 時間」と表示。設定で選んだプラン（Pro / Max 5x / Max 20x）が基準
+- **レート制限表示** - プランの5時間枠・7日枠それぞれの使用率とリセットまでの時間を表示
 - **権限プロンプトの解説** - 承認オーバーレイに、そのコマンドが何をするかの平易な説明と危険度（読み取りのみ / ファイルを変更 / 削除・ネットワーク）を表示
 - **エラー診断バナー** - 既知の失敗（サインアウト・レート制限・使用量上限・ネットワーク断・CLI が古い）を検出し、対処をワンクリックで実行できるバナーを表示
-- **起動プロファイル** - ツールバーで Light / Standard / Deep を選ぶと、新規セッションが対応するフラグ付きで起動する（Light は `--model sonnet --effort low --autocompact 100k --strict-mcp-config --disable-slash-commands`）。コンテキスト長を抑えることがコスト削減に直結する
+- **起動プロファイル** - ツールバーで Light / Standard / Deep を選ぶと、対応するフラグが新規セッションだけでなく `-c` 継続・`-r` 再開のすべての起動経路に適用される。再開時にコンテキスト上限が外れて無制限に膨らむことがなくなった。Light は独自の `--settings` ファイルで MCP サーバー・ツール説明・自動メモリをプロンプト冒頭から削減。Deep は `--model opus --effort high` に切替
+- **CLIプロバイダー対応** - セッションごとに使用する CLI（Claude Code や他の互換 CLI）を切替可能。それぞれ独自のコマンドライン形式・ワンショット実行・起動プロファイルを持つ
 - **限界コスト表示** - 直前のターンにかかった額と、次のターンが会話を読み直すだけでかかる額をステータスバーに表示。高くなったセッションが自分から知らせる
-- **セッション引き継ぎ** - コンテキストが少なくなったら、記録からローカルで抽出したブリーフを持って新規セッションへ引き継ぐ。`/compact` と違いトークン費用はかからず、ブリーフは新規セッションの入力欄に置かれるので送信前に編集できる
-- **トークン／コストダッシュボード** - セッション記録の `message.usage` を集計し、日別・モデル別・プロジェクト別・セッション別にトークンと概算コストを表示。CSV エクスポート対応
+- **セッション引き継ぎ** - コンテキストが少なくなったら（割合ではなく絶対トークン数を閾値にしたため、1Mコンテキストのモデルでも正しく発火する）、記録からローカルで抽出したブリーフを持って新規セッションへ引き継ぐ。`/compact` と違いトークン費用はかからず、ブリーフは新規セッションの入力欄に置かれるので送信前に編集できる
+- **再開コスト＆トークンバッジ** - セッション選択画面に各セッションの直近コンテキストサイズをバッジ表示し、ツールチップで再開コストの見積もりを表示。セッションを右クリックして「ブリーフから新規開始」を選べば、元のセッションを開かずに引き継げる
+- **トークン／コストダッシュボード** - 専用ウィンドウでセッション記録の `message.usage` を集計。7/30/90日の期間切替、「このプロジェクトのみ」表示、日別コストの棒グラフ、モデル別・プロジェクト別・セッション別の上位50件内訳を表示。CSV エクスポート対応
 - **タブ管理** - 右クリックコンテキストメニュー（閉じる / 他を閉じる / 右側を閉じる / 複製 / エクスポート）。ダブルクリックでタブ名変更。最初のユーザー入力またはセッション要約から自動命名
 - **ターミナル出力のエクスポート** - タブコンテキストメニューからターミナル出力をテキストファイルに保存
 - **ダーク/ライトテーマ** - 設定パネルから切替。全UIコンポーネントのテーマに完全対応
