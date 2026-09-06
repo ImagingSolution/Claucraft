@@ -22,14 +22,19 @@ using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Claucraft.Controls;
 using Claucraft.Services;
 using Claucraft.Terminal;
 
 namespace Claucraft;
 
-public partial class MainWindow : Window
+internal partial class MainWindow : Window, IDockOwner
 {
-    private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical, Cascade }
+    /// <summary>
+    /// A whole-tree arrangement of the open windows. Presets, not positions: the dock tree is
+    /// what actually places the windows, and pressing one of these rebuilds it.
+    /// </summary>
+    private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical }
     private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, SourceControl, Slash, Extensions }
 
     private string? _projectFolderBacking;
@@ -109,12 +114,25 @@ public partial class MainWindow : Window
     private const int CliContextLowPercent = 20;
     private bool _isDark = true;
     private MdiLayout _layout = MdiLayout.Maximize;
-    private int _activeChildIndex = -1;
 
-    // Which window ArrangeChildren treats as "on top" for Maximize/Cascade. Separate from
-    // _activeChildIndex, which drives terminal-only concerns (command routing, project context
-    // switching) and only ever indexes _children - an editor window can be the active layout
-    // item without being a valid terminal index.
+    /// <summary>
+    /// The terminal window that command routing and project-context switching act on. Held as a
+    /// reference rather than a position in <see cref="_children"/>: docking lets tabs be
+    /// reordered and moved between panes, and a stored index does not survive that.
+    /// </summary>
+    private MdiChildInfo? _activeChild;
+
+    /// <summary>
+    /// Where <see cref="_activeChild"/> sits in <see cref="_children"/>, or -1 when no terminal
+    /// is active. Derived, so it stays correct through any reordering.
+    /// </summary>
+    private int _activeChildIndex => _activeChild is null ? -1 : _children.IndexOf(_activeChild);
+
+    // The window the full-view preset shows, and the one the strip paints as selected.
+    // Separate from
+    // _activeChild, which drives terminal-only concerns (command routing, project context
+    // switching) and only ever names a terminal - an editor window can be the active layout
+    // item without there being a different active terminal.
     private IMdiLayoutItem? _activeLayoutItem;
     private readonly List<MdiChildInfo> _children = new();
     private readonly AppSettings _settings;
@@ -162,13 +180,6 @@ public partial class MainWindow : Window
     private int _snippetDragIndex;
     private Point _snippetDragStartPos;
 
-    // Drag state
-    private bool _isDragging;
-    private Point _dragStart;
-    private double _dragChildLeft;
-    private double _dragChildTop;
-    private MdiChildInfo? _dragChild;
-
     // Font list for settings panel
     private static readonly List<string> FontList = new()
     {
@@ -182,17 +193,6 @@ public partial class MainWindow : Window
 
     private static readonly List<string> LanguageList = new() { "English", "日本語" };
 
-    /// <summary>
-    /// Common surface for anything ArrangeChildren/BringToFront place on the MDI canvas -
-    /// terminal windows and floating editor windows alike - so layout code can treat both
-    /// uniformly without knowing about TerminalControl or TextFileDocument.
-    /// </summary>
-    private interface IMdiLayoutItem
-    {
-        Border Container { get; }
-        Border TitleBar { get; }
-    }
-
     private record MdiChildInfo(
         Border Container,
         Border TitleBar,
@@ -204,6 +204,10 @@ public partial class MainWindow : Window
         TextBlock StripText
     ) : IMdiLayoutItem
     {
+        public MdiItemKind Kind => MdiItemKind.Terminal;
+        public string Title => StripText.Text ?? string.Empty;
+        public IDockOwner? Owner { get; set; }
+
         public string? ProjectFolder { get; set; }
         public string? FirstInput { get; set; }
 
@@ -272,6 +276,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        DockOwners.Register(this);
 
         _settings = AppSettings.Load();
         _snippetStore = SnippetStore.Load();
@@ -314,11 +319,6 @@ public partial class MainWindow : Window
             ? _settings.ProjectFolder
             : Environment.CurrentDirectory;
         LoadRecentProjectFolders();
-
-        MdiContainer.SizeChanged += (_, _) =>
-        {
-            Dispatcher.UIThread.Post(ArrangeChildren, DispatcherPriority.Render);
-        };
 
         // Global keyboard shortcuts
         KeyDown += OnGlobalKeyDown;
@@ -437,7 +437,6 @@ public partial class MainWindow : Window
         ToolTip.SetTip(BtnLayoutTile, Loc.Get("TileWindows"));
         ToolTip.SetTip(BtnLayoutTileH, Loc.Get("TileHorizontally"));
         ToolTip.SetTip(BtnLayoutTileV, Loc.Get("TileVertically"));
-        ToolTip.SetTip(BtnLayoutCascade, Loc.Get("CascadeWindows"));
         ToolTip.SetTip(BtnLayoutMaximize, Loc.Get("FullView"));
 
         // Slash command panel
@@ -904,7 +903,7 @@ public partial class MainWindow : Window
         if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
         {
             _children[_activeChildIndex].Terminal.SendText("/compact\r");
-            BringToFront(_activeChildIndex);
+            if (_activeChild != null) ActivateTerminal(_activeChild);
             _children[_activeChildIndex].Terminal.FocusTerminal();
         }
     }
@@ -1038,119 +1037,137 @@ public partial class MainWindow : Window
         if (!WindowsPanel.IsVisible) return;
         WindowsList.Children.Clear();
 
-        for (int i = 0; i < _children.Count; i++)
+        // One row per window, in strip order, so the panel and the tab strip agree on both
+        // which windows exist and what order they are in.
+        foreach (var item in AllLayoutItems())
         {
-            var child = _children[i];
-            int idx = i;
-            bool isActive = _activeLayoutItem == null
-                ? i == _activeChildIndex
-                : ReferenceEquals(child, _activeLayoutItem);
-            bool isRunning = child.Terminal.IsProcessRunning;
-
-            var dot = new Ellipse
+            switch (item)
             {
-                Width = 8, Height = 8,
-                Fill = isRunning
-                    ? new SolidColorBrush(Color.FromRgb(48, 209, 88))
-                    : new SolidColorBrush(Color.FromRgb(142, 142, 147)),
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 5, 0, 0),
-            };
+                case MdiChildInfo child:
+                    WindowsList.Children.Add(BuildTerminalWindowRow(child));
+                    foreach (var run in SubagentMonitor.ReadRunning(ResolveSessionPath(child)))
+                        WindowsList.Children.Add(BuildSubagentRow(run));
+                    break;
 
-            // The tab is the one name a window has, so this row reads it rather than keeping a
-            // second opinion: a rename, or a session renamed with /rename, reaches both at once.
-            var displayText = !string.IsNullOrWhiteSpace(child.StripText.Text)
-                ? child.StripText.Text
-                : child.Terminal.FirstUserInput ?? _cli.Active.Name;
+                case EditorChildInfo editor:
+                    WindowsList.Children.Add(BuildEditorWindowRow(editor));
+                    break;
 
-            var title = new TextBlock
-            {
-                Text = displayText,
-                FontSize = 13,
-                FontWeight = FontWeight.Normal,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
-
-            var textStack = new StackPanel { Spacing = 1 };
-            textStack.Children.Add(title);
-
-            var closeBtn = new Button
-            {
-                Content = "\u00D7",
-                FontSize = 12,
-                Padding = new Thickness(4, 0),
-                Background = Brushes.Transparent,
-                Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
-                BorderThickness = new Thickness(0),
-                VerticalAlignment = VerticalAlignment.Top,
-                CornerRadius = new CornerRadius(4),
-                Cursor = new Cursor(StandardCursorType.Hand),
-                Margin = new Thickness(4, 2, 0, 0),
-            };
-            closeBtn.Click += (_, ev) => { CloseChild(child); ev.Handled = true; };
-
-            var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
-            Grid.SetColumn(dot, 0);
-            Grid.SetColumn(textStack, 1);
-            Grid.SetColumn(closeBtn, 2);
-            grid.Children.Add(dot);
-            grid.Children.Add(textStack);
-            grid.Children.Add(closeBtn);
-            grid.Margin = new Thickness(4, 0);
-
-            var item = new Border
-            {
-                Child = grid,
-                Padding = new Thickness(6, 5),
-                CornerRadius = new CornerRadius(6),
-                Background = isActive
-                    ? new SolidColorBrush(Color.FromArgb(30, 0, 122, 255))
-                    : Brushes.Transparent,
-                Cursor = new Cursor(StandardCursorType.Hand),
-            };
-
-            // Preview tooltip (first 10 lines of terminal output)
-            var preview = child.Terminal.GetPreviewText(10);
-            if (!string.IsNullOrWhiteSpace(preview))
-            {
-                var previewBlock = new TextBlock
-                {
-                    Text = preview,
-                    FontSize = 11,
-                    FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New"),
-                    MaxWidth = 500,
-                    TextWrapping = TextWrapping.NoWrap,
-                };
-                ToolTip.SetTip(item, previewBlock);
-                ToolTip.SetShowDelay(item, 300);
+                case GraphChildInfo graph:
+                    WindowsList.Children.Add(BuildGraphWindowRow(graph));
+                    break;
             }
+        }
+    }
 
-            item.PointerPressed += (_, _) =>
-            {
-                BringToFront(idx);
-                _children[idx].Terminal.FocusTerminal();
-            };
-            // Hover
-            item.PointerEntered += (s, _) =>
-            {
-                if (!isActive) ((Border)s!).Background = new SolidColorBrush(_isDark ? Color.FromArgb(20, 255, 255, 255) : Color.FromArgb(20, 0, 0, 0));
-            };
-            item.PointerExited += (s, _) =>
-            {
-                if (!isActive) ((Border)s!).Background = Brushes.Transparent;
-            };
+    /// <summary>
+    /// One session as a row in the windows panel: a dot saying whether its CLI is still
+    /// running, the title its tab carries, a close button, and the opening lines of output on
+    /// the tooltip.
+    /// </summary>
+    private Control BuildTerminalWindowRow(MdiChildInfo child)
+    {
+        // An editor window can hold the front while _activeChild still names the terminal
+        // commands are routed to, so before anything takes the front the active session leads.
+        bool isActive = _activeLayoutItem == null
+            ? ReferenceEquals(child, _activeChild)
+            : ReferenceEquals(child, _activeLayoutItem);
+        bool isRunning = child.Terminal.IsProcessRunning;
 
-            WindowsList.Children.Add(item);
+        var dot = new Ellipse
+        {
+            Width = 8, Height = 8,
+            Fill = isRunning
+                ? new SolidColorBrush(Color.FromRgb(48, 209, 88))
+                : new SolidColorBrush(Color.FromRgb(142, 142, 147)),
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 5, 0, 0),
+        };
 
-            foreach (var run in SubagentMonitor.ReadRunning(ResolveSessionPath(child)))
-                WindowsList.Children.Add(BuildSubagentRow(run));
+        // The tab is the one name a window has, so this row reads it rather than keeping a
+        // second opinion: a rename, or a session renamed with /rename, reaches both at once.
+        var displayText = !string.IsNullOrWhiteSpace(child.Title)
+            ? child.Title
+            : child.Terminal.FirstUserInput ?? _cli.Active.Name;
+
+        var title = new TextBlock
+        {
+            Text = displayText,
+            FontSize = 13,
+            FontWeight = FontWeight.Normal,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+
+        var textStack = new StackPanel { Spacing = 1 };
+        textStack.Children.Add(title);
+
+        var closeBtn = new Button
+        {
+            Content = "\u00D7",
+            FontSize = 12,
+            Padding = new Thickness(4, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Top,
+            CornerRadius = new CornerRadius(4),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Margin = new Thickness(4, 2, 0, 0),
+        };
+        closeBtn.Click += (_, ev) => { CloseChild(child); ev.Handled = true; };
+
+        var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
+        Grid.SetColumn(dot, 0);
+        Grid.SetColumn(textStack, 1);
+        Grid.SetColumn(closeBtn, 2);
+        grid.Children.Add(dot);
+        grid.Children.Add(textStack);
+        grid.Children.Add(closeBtn);
+        grid.Margin = new Thickness(4, 0);
+
+        var item = new Border
+        {
+            Child = grid,
+            Padding = new Thickness(6, 5),
+            CornerRadius = new CornerRadius(6),
+            Background = isActive
+                ? new SolidColorBrush(Color.FromArgb(30, 0, 122, 255))
+                : Brushes.Transparent,
+            Cursor = new Cursor(StandardCursorType.Hand),
+        };
+
+        // Preview tooltip (first 10 lines of terminal output)
+        var preview = child.Terminal.GetPreviewText(10);
+        if (!string.IsNullOrWhiteSpace(preview))
+        {
+            var previewBlock = new TextBlock
+            {
+                Text = preview,
+                FontSize = 11,
+                FontFamily = new FontFamily("Cascadia Mono, Consolas, Courier New"),
+                MaxWidth = 500,
+                TextWrapping = TextWrapping.NoWrap,
+            };
+            ToolTip.SetTip(item, previewBlock);
+            ToolTip.SetShowDelay(item, 300);
         }
 
-        foreach (var editor in _editorChildren)
-            WindowsList.Children.Add(BuildEditorWindowRow(editor));
+        item.PointerPressed += (_, _) =>
+        {
+            ActivateTerminal(child);
+            child.Terminal.FocusTerminal();
+        };
+        // Hover
+        item.PointerEntered += (s, _) =>
+        {
+            if (!isActive) ((Border)s!).Background = new SolidColorBrush(_isDark ? Color.FromArgb(20, 255, 255, 255) : Color.FromArgb(20, 0, 0, 0));
+        };
+        item.PointerExited += (s, _) =>
+        {
+            if (!isActive) ((Border)s!).Background = Brushes.Transparent;
+        };
 
-        foreach (var graph in _graphChildren)
-            WindowsList.Children.Add(BuildGraphWindowRow(graph));
+        return item;
     }
 
     /// <summary>
@@ -1158,17 +1175,17 @@ public partial class MainWindow : Window
     /// session row, with the path on the tooltip since the row only has room for a file name.
     /// </summary>
     private Control BuildEditorWindowRow(EditorChildInfo editor) =>
-        BuildLayoutWindowRow(editor, editor.StripText.Text ?? "", editor.Doc.Path, EditorDotColor);
+        BuildLayoutWindowRow(editor, editor.Doc.Path, EditorDotColor);
 
     /// <summary>The commit history, listed the same way an open file is.</summary>
     private Control BuildGraphWindowRow(GraphChildInfo graph) =>
-        BuildLayoutWindowRow(graph, graph.StripText.Text ?? "", graph.RepoRoot, GraphDotColor);
+        BuildLayoutWindowRow(graph, graph.RepoRoot, GraphDotColor);
 
     /// <summary>
     /// One non-terminal MDI window as a row in the windows panel: a coloured dot naming what
     /// kind of window it is, its title, and a close button.
     /// </summary>
-    private Control BuildLayoutWindowRow(IMdiLayoutItem item, string text, string tooltip, Color dotColor)
+    private Control BuildLayoutWindowRow(IMdiLayoutItem item, string tooltip, Color dotColor)
     {
         bool isActive = ReferenceEquals(item, _activeLayoutItem);
 
@@ -1182,7 +1199,7 @@ public partial class MainWindow : Window
 
         var title = new TextBlock
         {
-            Text = text,
+            Text = item.Title,
             FontSize = 13,
             FontWeight = FontWeight.Normal,
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -1463,6 +1480,10 @@ public partial class MainWindow : Window
         public required TextBlock StripText { get; init; }
         public required TextFileDocument Doc { get; set; }
         public bool Dirty { get; set; }
+
+        public MdiItemKind Kind => MdiItemKind.Editor;
+        public string Title => StripText.Text ?? string.Empty;
+        public IDockOwner? Owner { get; set; }
     }
 
     private readonly List<EditorChildInfo> _editorChildren = new();
@@ -1596,47 +1617,8 @@ public partial class MainWindow : Window
         };
 
         // --- Window strip button, built like a terminal window's so the two read as one set ---
-        var stripDot = new Ellipse
-        {
-            Width = 7, Height = 7,
-            Fill = new SolidColorBrush(Color.FromRgb(0, 122, 255)),  // Apple Blue: a file, not a session
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var stripText = new TextBlock
-        {
-            Text = System.IO.Path.GetFileName(doc.Path),
-            FontSize = 11,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 120
-        };
-        var stripCloseBtn = new Button
-        {
-            Content = "×",
-            FontSize = 12,
-            Padding = new Thickness(3, 0),
-            Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
-            BorderThickness = new Thickness(0),
-            VerticalAlignment = VerticalAlignment.Center,
-            CornerRadius = new CornerRadius(3),
-            Cursor = new Cursor(StandardCursorType.Hand)
-        };
-        var stripContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        stripContent.Children.Add(stripDot);
-        stripContent.Children.Add(stripText);
-        stripContent.Children.Add(stripCloseBtn);
-
-        var stripButton = new Button
-        {
-            Content = stripContent,
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(1),
-            BorderBrush = Brushes.Transparent,
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 4),
-            Cursor = new Cursor(StandardCursorType.Hand)
-        };
+        var (stripButton, _, stripText, _, stripCloseBtn) =
+            BuildStripButton(System.IO.Path.GetFileName(doc.Path), EditorDotColor);
         ToolTip.SetTip(stripButton, doc.Path);
 
         var entry = new EditorChildInfo
@@ -1677,9 +1659,6 @@ public partial class MainWindow : Window
         };
         saveButton.Click += (_, _) => _ = SaveEditorAsync(entry);
 
-        bool dragging = false;
-        Point dragStart = default;
-        double dragLeft = 0, dragTop = 0;
         // The editor TextBox and the title-bar buttons mark PointerPressed handled, so a plain
         // bubbling handler here would only ever see clicks on the window's padding. Tunnel runs
         // before them, which is what makes clicking anywhere in the window select it.
@@ -1693,34 +1672,9 @@ public partial class MainWindow : Window
             AdjustEditorFontSize(e.Delta.Y > 0 ? 1 : -1);
             e.Handled = true;
         }, RoutingStrategies.Tunnel);
-        titleBar.PointerPressed += (_, e) =>
-        {
-            dragging = true;
-            dragStart = e.GetPosition(MdiContainer);
-            double left = Canvas.GetLeft(container);
-            double top = Canvas.GetTop(container);
-            dragLeft = double.IsNaN(left) ? 0 : left;
-            dragTop = double.IsNaN(top) ? 0 : top;
-            e.Pointer.Capture(titleBar);
-            e.Handled = true;
-        };
-        titleBar.PointerMoved += (_, e) =>
-        {
-            if (!dragging) return;
-            var pos = e.GetPosition(MdiContainer);
-            Canvas.SetLeft(container, dragLeft + pos.X - dragStart.X);
-            Canvas.SetTop(container, dragTop + pos.Y - dragStart.Y);
-            e.Handled = true;
-        };
-        titleBar.PointerReleased += (_, e) =>
-        {
-            dragging = false;
-            e.Pointer.Capture(null);
-            e.Handled = true;
-        };
-
         _editorChildren.Add(entry);
-        MdiContainer.Children.Add(container);
+        entry.Owner = this;
+        TabDrag.Hook(entry);
         WindowStrip.Children.Add(stripButton);
         _activeLayoutItem = entry;
         ArrangeChildren();
@@ -1750,21 +1704,30 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Marks which window ArrangeChildren treats as "on top". Tile layouts don't overlap so
-    /// there's nothing to reorder there; Maximize/Cascade need a re-layout to show the change.
+    /// Marks which window the strip paints as selected, and shows it in whichever pane it sits in.
+    /// A pane holding a single window has nothing to switch; the full-view preset puts every
+    /// window in one pane, and there this is what brings the chosen one up.
     /// </summary>
     private void SetActiveLayoutItem(IMdiLayoutItem item)
     {
-        // Every click inside a window now reaches here. Re-running the layout for a window that
-        // already holds the front would snap a Cascade window back from wherever it was dragged.
+        // A window dragged out is shown by the window it went to, and that window decides what
+        // is up in it. This window's strip selection has nothing to say about it.
+        if (item.Owner is { } owner && !ReferenceEquals(owner, this)) { owner.SetActive(item); return; }
+
         if (ReferenceEquals(_activeLayoutItem, item)) return;
 
         _activeLayoutItem = item;
-        if (_layout == MdiLayout.Cascade || _layout == MdiLayout.Maximize)
+
+        // Retargeting the pane rather than rebuilding the tree: a rebuild re-parents every
+        // window, and a live terminal should not be pulled out of the visual tree just because
+        // a tab was clicked.
+        var leaf = MdiHost.FindLeaf(item);
+        if (leaf != null && !ReferenceEquals(leaf.Active, item))
         {
-            ArrangeChildren();   // repaints the strip on its way out
-            return;
+            leaf.Active = item;
+            MdiHost.SyncVisibility();
         }
+
         UpdateStripSelection();
         RefreshWindowsPanel();
     }
@@ -1775,9 +1738,8 @@ public partial class MainWindow : Window
         switch (item)
         {
             case MdiChildInfo child:
-                int idx = _children.IndexOf(child);
-                if (idx < 0) return;
-                BringToFront(idx);
+                if (!_children.Contains(child)) return;
+                ActivateTerminal(child);
                 child.Terminal.FocusTerminal();
                 break;
 
@@ -1798,6 +1760,18 @@ public partial class MainWindow : Window
         if (item is MdiChildInfo child) CloseChild(child);
         else if (item is EditorChildInfo editor) _ = CloseEditorWindowAsync(editor);
         else if (item is GraphChildInfo graph) CloseGraphWindow(graph);
+    }
+
+    /// <summary>
+    /// The same, waited on. A detached window closing has to know when the windows in it are
+    /// actually gone: an unsaved editor can still call the whole thing off.
+    /// </summary>
+    internal Task CloseLayoutItemAsync(IMdiLayoutItem item)
+    {
+        if (item is MdiChildInfo child) return CloseChildAsync(child);
+        if (item is EditorChildInfo editor) return CloseEditorWindowAsync(editor);
+        if (item is GraphChildInfo graph) CloseGraphWindow(graph);
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -1868,14 +1842,7 @@ public partial class MainWindow : Window
     {
         if (!await ReleaseEditorAsync(entry)) return;
         _editorChildren.Remove(entry);
-        MdiContainer.Children.Remove(entry.Container);
-        WindowStrip.Children.Remove(entry.StripButton);
-        if (ReferenceEquals(_activeLayoutItem, entry)) _activeLayoutItem = null;
-        ArrangeChildren();
-        // ArrangeChildren bails out when nothing is left on the canvas, so the strip and the
-        // windows panel would keep showing a closed file's row without this.
-        UpdateStripSelection();
-        RefreshWindowsPanel();
+        entry.Owner?.Release(entry);
     }
 
 
@@ -1886,6 +1853,173 @@ public partial class MainWindow : Window
 
     /// <summary>Apple Purple: a repository's history, so it reads apart from files at a glance.</summary>
     private static readonly Color GraphDotColor = Color.FromRgb(191, 90, 242);
+
+    /// <summary>
+    /// Apple Green: a live session. Only the starting colour - PaintChildDots moves a terminal's
+    /// dot between green, orange and grey as the session works, waits and exits.
+    /// </summary>
+    private static readonly Color TerminalDotColor = Color.FromRgb(48, 209, 88);
+
+    /// <summary>The parts of one window-strip tab, handed back so the caller can wire them up.</summary>
+    private readonly record struct StripTab(Button Button, StackPanel Content, TextBlock Text, Ellipse Dot, Button CloseButton);
+
+    /// <summary>
+    /// Builds one tab for the window strip: a kind-coloured dot, an ellipsised title and a close
+    /// cross. All three window kinds show the same tab, so they share one builder; the caller
+    /// wires the Click handlers afterwards, once it has an entry to give them.
+    /// </summary>
+    private static StripTab BuildStripButton(string title, Color dotColor)
+    {
+        var dot = new Ellipse
+        {
+            Width = 7, Height = 7,
+            Fill = new SolidColorBrush(dotColor),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var text = new TextBlock
+        {
+            Text = title,
+            FontSize = 11,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxWidth = 120
+        };
+        var closeButton = new Button
+        {
+            Content = "×",
+            FontSize = 12,
+            Padding = new Thickness(3, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            CornerRadius = new CornerRadius(3),
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+        content.Children.Add(dot);
+        content.Children.Add(text);
+        content.Children.Add(closeButton);
+
+        var button = new Button
+        {
+            Content = content,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            BorderBrush = Brushes.Transparent,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 4),
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        return new StripTab(button, content, text, dot, closeButton);
+    }
+
+    // -- Docking: this window as a host for MDI windows --
+
+    /// <summary>
+    /// Set once a drop has arranged the panes by hand. From then on opening or closing a window
+    /// fits into that arrangement instead of re-tiling it; pressing a preset button clears it.
+    /// </summary>
+    private bool _customLayout;
+
+    Window IDockOwner.Window => this;
+    DockHost IDockOwner.Host => MdiHost;
+    Panel IDockOwner.Strip => WindowStrip;
+    Control IDockOwner.StripScroll => WindowStripScroll;
+    Canvas IDockOwner.Overlay => DragOverlay;
+
+    /// <summary>The terminal UI is in this window, so this is the one window that takes anything.</summary>
+    bool IDockOwner.Accepts(IMdiLayoutItem item) => true;
+
+    /// <summary>
+    /// Hands a window over to another one. The entry stays in this window's lists - it still owns
+    /// the session, the file or the repository - so only where it is shown changes.
+    /// </summary>
+    void IDockOwner.Release(IMdiLayoutItem item)
+    {
+        MdiHost.Detach(item);
+        MdiHost.Remove(item);
+        WindowStrip.Children.Remove(item.StripButton);
+        if (ReferenceEquals(_activeLayoutItem, item)) _activeLayoutItem = null;
+        item.Owner = null;
+        ArrangeChildren();
+    }
+
+    /// <summary>Takes a window in: back from a detached window, or across from another one.</summary>
+    void IDockOwner.Adopt(IMdiLayoutItem item, DockDropTarget target)
+    {
+        item.Owner = this;
+        WindowStrip.Children.Add(item.StripButton);
+
+        if (MdiHost.Root == null) MdiHost.Root = DockLeafNode.Of(item);
+        else if (target.Kind == DockDropKind.None)
+        {
+            var leaf = MdiHost.Leaves().First();
+            leaf.Tabs.Add(item);
+            leaf.Active = item;
+        }
+        else MdiHost.DropInto(item, target);
+
+        // A drop with no pane under it only said "show this here", which the presets can still
+        // arrange; a drop on a pane placed it, and that placement is the user's to keep.
+        Docked(item, target.Kind != DockDropKind.None);
+    }
+
+    void IDockOwner.DockInside(IMdiLayoutItem item, DockDropTarget target)
+    {
+        MdiHost.DropInto(item, target);
+        Docked(item, true);
+    }
+
+    /// <summary>Finishes a drop into this window and brings what was dropped up.</summary>
+    private void Docked(IMdiLayoutItem item, bool custom)
+    {
+        if (custom) _customLayout = true;
+        _activeLayoutItem = item;
+
+        // Through ArrangeChildren rather than straight to Rebuild: the welcome page covers the
+        // dock area while nothing is in it, and a window arriving is when it has to stand aside.
+        ArrangeChildren();
+        ActivateLayoutItem(item);
+    }
+
+    void IDockOwner.SetActive(IMdiLayoutItem item) => SetActiveLayoutItem(item);
+
+    /// <summary>This window stays open with nothing in it - that is what the welcome page is for.</summary>
+    void IDockOwner.CloseIfEmpty() { }
+
+    /// <summary>
+    /// Moves a tab to <paramref name="index"/> in the strip and re-applies the layout, so a
+    /// preset lays the windows out in the order the tabs now read.
+    /// </summary>
+    void IDockOwner.ReorderStrip(IMdiLayoutItem item, int index)
+    {
+        int current = WindowStrip.Children.IndexOf(item.StripButton);
+        if (current < 0) return;
+
+        // The slot the tab itself occupies closes up behind it once it is lifted out.
+        if (index > current) index--;
+        index = Math.Clamp(index, 0, WindowStrip.Children.Count - 1);
+        if (index == current) return;
+
+        WindowStrip.Children.RemoveAt(current);
+        WindowStrip.Children.Insert(index, item.StripButton);
+
+        // Each list holds one kind of window and the presets read them in turn, so a tab dragged
+        // past a tab of another kind moves in the strip without changing where the panes sit.
+        int Rank(IMdiLayoutItem x)
+        {
+            int at = WindowStrip.Children.IndexOf(x.StripButton);
+            return at < 0 ? int.MaxValue : at;
+        }
+        _children.Sort((a, b) => Rank(a).CompareTo(Rank(b)));
+        _editorChildren.Sort((a, b) => Rank(a).CompareTo(Rank(b)));
+        _graphChildren.Sort((a, b) => Rank(a).CompareTo(Rank(b)));
+
+        ArrangeChildren();
+    }
 
     /// <summary>
     /// One commit-history window on the MDI canvas. Built like <see cref="EditorChildInfo"/> and
@@ -1902,6 +2036,10 @@ public partial class MainWindow : Window
 
         /// <summary>The repository being shown. One window per repository.</summary>
         public required string RepoRoot { get; init; }
+
+        public MdiItemKind Kind => MdiItemKind.Graph;
+        public string Title => StripText.Text ?? string.Empty;
+        public IDockOwner? Owner { get; set; }
     }
 
     private readonly List<GraphChildInfo> _graphChildren = new();
@@ -1986,47 +2124,7 @@ public partial class MainWindow : Window
         };
 
         // --- Window strip button, built like an editor window's so the two read as one set ---
-        var stripDot = new Ellipse
-        {
-            Width = 7, Height = 7,
-            Fill = new SolidColorBrush(GraphDotColor),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var stripText = new TextBlock
-        {
-            Text = panel.GraphTitle,
-            FontSize = 11,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 120
-        };
-        var stripCloseBtn = new Button
-        {
-            Content = "×",
-            FontSize = 12,
-            Padding = new Thickness(3, 0),
-            Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
-            BorderThickness = new Thickness(0),
-            VerticalAlignment = VerticalAlignment.Center,
-            CornerRadius = new CornerRadius(3),
-            Cursor = new Cursor(StandardCursorType.Hand)
-        };
-        var stripContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        stripContent.Children.Add(stripDot);
-        stripContent.Children.Add(stripText);
-        stripContent.Children.Add(stripCloseBtn);
-
-        var stripButton = new Button
-        {
-            Content = stripContent,
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(1),
-            BorderBrush = Brushes.Transparent,
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 4),
-            Cursor = new Cursor(StandardCursorType.Hand)
-        };
+        var (stripButton, _, stripText, _, stripCloseBtn) = BuildStripButton(panel.GraphTitle, GraphDotColor);
         ToolTip.SetTip(stripButton, repoRoot);
 
         var entry = new GraphChildInfo
@@ -2044,42 +2142,14 @@ public partial class MainWindow : Window
         closeButton.Click += (_, _) => CloseGraphWindow(entry);
         panel.CloseRequested += (_, _) => CloseGraphWindow(entry);
 
-        bool dragging = false;
-        Point dragStart = default;
-        double dragLeft = 0, dragTop = 0;
         // The graph list and the detail pane mark PointerPressed handled, so a plain bubbling
         // handler here would only ever see clicks on the window's padding. Tunnel runs before
         // them, which is what makes clicking anywhere in the window select it.
         container.AddHandler(InputElement.PointerPressedEvent,
             (_, _) => SetActiveLayoutItem(entry), RoutingStrategies.Tunnel);
-        titleBar.PointerPressed += (_, e) =>
-        {
-            dragging = true;
-            dragStart = e.GetPosition(MdiContainer);
-            double left = Canvas.GetLeft(container);
-            double top = Canvas.GetTop(container);
-            dragLeft = double.IsNaN(left) ? 0 : left;
-            dragTop = double.IsNaN(top) ? 0 : top;
-            e.Pointer.Capture(titleBar);
-            e.Handled = true;
-        };
-        titleBar.PointerMoved += (_, e) =>
-        {
-            if (!dragging) return;
-            var pos = e.GetPosition(MdiContainer);
-            Canvas.SetLeft(container, dragLeft + pos.X - dragStart.X);
-            Canvas.SetTop(container, dragTop + pos.Y - dragStart.Y);
-            e.Handled = true;
-        };
-        titleBar.PointerReleased += (_, e) =>
-        {
-            dragging = false;
-            e.Pointer.Capture(null);
-            e.Handled = true;
-        };
-
         _graphChildren.Add(entry);
-        MdiContainer.Children.Add(container);
+        entry.Owner = this;
+        TabDrag.Hook(entry);
         WindowStrip.Children.Add(stripButton);
         _activeLayoutItem = entry;
         ArrangeChildren();
@@ -2089,14 +2159,7 @@ public partial class MainWindow : Window
     private void CloseGraphWindow(GraphChildInfo entry)
     {
         _graphChildren.Remove(entry);
-        MdiContainer.Children.Remove(entry.Container);
-        WindowStrip.Children.Remove(entry.StripButton);
-        if (ReferenceEquals(_activeLayoutItem, entry)) _activeLayoutItem = null;
-        ArrangeChildren();
-        // ArrangeChildren bails out when nothing is left on the canvas, so the strip and the
-        // windows panel would keep showing a closed window's row without this.
-        UpdateStripSelection();
-        RefreshWindowsPanel();
+        entry.Owner?.Release(entry);
     }
 
 
@@ -2652,7 +2715,7 @@ public partial class MainWindow : Window
                     terminal.AppendToExpandedInput(snippetText);
                 else
                     terminal.SendText(snippetText);
-                BringToFront(_activeChildIndex);
+                if (_activeChild != null) ActivateTerminal(_activeChild);
                 terminal.FocusTerminal();
             }
         };
@@ -4651,7 +4714,6 @@ public partial class MainWindow : Window
             ("PaletteToggleWindows", "Toggle Windows Panel", "", () => ToggleSidePanel(SidebarPanel.Windows)),
             ("PaletteToggleSettings", "Toggle Settings", "", () => ToggleSidePanel(SidebarPanel.Settings)),
             ("TileWindows", "Tile Windows", "", () => { _layout = MdiLayout.Tile; ArrangeChildren(); }),
-            ("CascadeWindows", "Cascade Windows", "", () => { _layout = MdiLayout.Cascade; ArrangeChildren(); }),
             ("TileHorizontally", "Tile Horizontally", "", () => { _layout = MdiLayout.TileHorizontal; ArrangeChildren(); }),
             ("TileVertically", "Tile Vertically", "", () => { _layout = MdiLayout.TileVertical; ArrangeChildren(); }),
             ("FullView", "Full View", "", () => { _layout = MdiLayout.Maximize; ArrangeChildren(); }),
@@ -4800,7 +4862,7 @@ public partial class MainWindow : Window
         else
             terminal.SendText(text);
 
-        BringToFront(_activeChildIndex);
+        if (_activeChild != null) ActivateTerminal(_activeChild);
         terminal.FocusTerminal();
     }
 
@@ -6024,9 +6086,6 @@ public partial class MainWindow : Window
 
         foreach (var child in _children)
         {
-            double left = Canvas.GetLeft(child.Container);
-            double top = Canvas.GetTop(child.Container);
-
             ws.Tabs.Add(new WorkspaceTab
             {
                 ProjectFolder = child.ProjectFolder ?? "",
@@ -6037,10 +6096,6 @@ public partial class MainWindow : Window
                 WorktreePath = child.WorktreePath ?? "",
                 WorktreeBranch = child.WorktreeBranch ?? "",
                 WorktreeOrigin = child.WorktreeOrigin ?? "",
-                Left = double.IsNaN(left) ? 0 : left,
-                Top = double.IsNaN(top) ? 0 : top,
-                Width = child.Container.Bounds.Width,
-                Height = child.Container.Bounds.Height,
             });
         }
 
@@ -6091,26 +6146,7 @@ public partial class MainWindow : Window
             }
         }
 
-        // Saved geometry only means anything while windows float freely.
-        if (_layout == MdiLayout.Cascade)
-        {
-            for (int i = 0; i < _children.Count && i < ws.Tabs.Count; i++)
-            {
-                var tab = ws.Tabs[i];
-                if (tab.Width <= 0 || tab.Height <= 0) continue;
-
-                var container = _children[i].Container;
-                Canvas.SetLeft(container, tab.Left);
-                Canvas.SetTop(container, tab.Top);
-                container.Width = tab.Width;
-                container.Height = tab.Height;
-            }
-        }
-        else
-        {
-            ArrangeChildren();
-        }
-
+        ArrangeChildren();
         RefreshWindowsPanel();
     }
 
@@ -6267,30 +6303,28 @@ public partial class MainWindow : Window
 
     private void OnLayoutTile(object? sender, RoutedEventArgs e)
     {
+        _customLayout = false;
         _layout = MdiLayout.Tile;
-        ArrangeChildren();
-    }
-
-    private void OnLayoutCascade(object? sender, RoutedEventArgs e)
-    {
-        _layout = MdiLayout.Cascade;
         ArrangeChildren();
     }
 
     private void OnLayoutMaximize(object? sender, RoutedEventArgs e)
     {
+        _customLayout = false;
         _layout = MdiLayout.Maximize;
         ArrangeChildren();
     }
 
     private void OnLayoutTileH(object? sender, RoutedEventArgs e)
     {
+        _customLayout = false;
         _layout = MdiLayout.TileHorizontal;
         ArrangeChildren();
     }
 
     private void OnLayoutTileV(object? sender, RoutedEventArgs e)
     {
+        _customLayout = false;
         _layout = MdiLayout.TileVertical;
         ArrangeChildren();
     }
@@ -6311,6 +6345,13 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// The windows this one is showing. A window dragged out is still in the lists above - this
+    /// window still owns its session or its file - but it is laid out by the window it went to.
+    /// </summary>
+    private List<IMdiLayoutItem> DockedItems() =>
+        AllLayoutItems().Where(x => ReferenceEquals(x.Owner, this)).ToList();
+
+    /// <summary>
     /// Tile modes fill their slots in list order, so that order decides which side each window
     /// lands on. The rule the arrange buttons follow: side by side, terminals go on the right;
     /// stacked, terminals go on top. Creation order already puts terminals first, which is the
@@ -6324,14 +6365,19 @@ public partial class MainWindow : Window
         return reordered;
     }
 
+    /// <summary>
+    /// Rebuilds the dock tree from the preset last chosen and hands it to the host.
+    ///
+    /// Presets are whole-tree arrangements, so opening or closing a window re-applies the current
+    /// one - the same way the canvas layout this replaced re-tiled on every change.
+    /// </summary>
     private void ArrangeChildren()
     {
-        double w = MdiContainer.Bounds.Width;
-        double h = MdiContainer.Bounds.Height;
-        if (w <= 0 || h <= 0) return;
+        var items = DockedItems();
 
-        var items = AllLayoutItems();
-        if (items.Count == 0) return;
+        // The welcome page covers the dock area rather than sitting in it, so it has to be told
+        // to stand aside. On the canvas this replaced, an open window simply drew over it.
+        if (_welcomeContainer != null) _welcomeContainer.IsVisible = items.Count == 0;
 
         // A closed window leaves a stale front. Prefer the terminal CloseChild already picked as
         // the next active session, so closing a session still lands on its neighbour rather than
@@ -6339,126 +6385,92 @@ public partial class MainWindow : Window
         if (_activeLayoutItem == null || !items.Contains(_activeLayoutItem))
             _activeLayoutItem = _activeChildIndex >= 0 && _activeChildIndex < _children.Count
                 ? _children[_activeChildIndex]
-                : items[^1];
+                : (items.Count > 0 ? items[^1] : null);
 
-        switch (_layout)
-        {
-            case MdiLayout.Maximize:
-                for (int i = 0; i < items.Count; i++)
-                {
-                    var c = items[i];
-                    bool active = ReferenceEquals(c, _activeLayoutItem);
-                    c.Container.IsVisible = active;
-                    c.TitleBar.IsVisible = false;
-                    if (active)
-                    {
-                        Canvas.SetLeft(c.Container, 0);
-                        Canvas.SetTop(c.Container, 0);
-                        c.Container.Width = w;
-                        c.Container.Height = h;
-                    }
-                }
-                break;
-
-            case MdiLayout.Tile:
-            {
-                int count = items.Count;
-                int cols = (int)Math.Ceiling(Math.Sqrt(count));
-                int rows = (int)Math.Ceiling((double)count / cols);
-                double cw = w / cols;
-                double ch = h / rows;
-
-                // A single-row grid is just a left-right split, so terminals belong on the right.
-                // Taller grids keep them in the top row, where creation order already puts them.
-                var tiled = rows == 1 ? TerminalsLast(items) : items;
-
-                for (int i = 0; i < count; i++)
-                {
-                    var c = tiled[i];
-                    c.Container.IsVisible = true;
-                    c.TitleBar.IsVisible = false;
-                    Canvas.SetLeft(c.Container, (i % cols) * cw);
-                    Canvas.SetTop(c.Container, (i / cols) * ch);
-                    c.Container.Width = cw;
-                    c.Container.Height = ch;
-                    c.Container.ZIndex = 0;
-                }
-                break;
-            }
-
-            case MdiLayout.TileHorizontal:
-            {
-                int count = items.Count;
-                double ch = h / count;
-                // Top-bottom split: terminals on top, which creation order already gives.
-                for (int i = 0; i < count; i++)
-                {
-                    var c = items[i];
-                    c.Container.IsVisible = true;
-                    c.TitleBar.IsVisible = false;
-                    Canvas.SetLeft(c.Container, 0);
-                    Canvas.SetTop(c.Container, i * ch);
-                    c.Container.Width = w;
-                    c.Container.Height = ch;
-                    c.Container.ZIndex = 0;
-                }
-                break;
-            }
-
-            case MdiLayout.TileVertical:
-            {
-                int count = items.Count;
-                double cw = w / count;
-                // Left-right split: editors on the left, terminals on the right.
-                var tiled = TerminalsLast(items);
-                for (int i = 0; i < count; i++)
-                {
-                    var c = tiled[i];
-                    c.Container.IsVisible = true;
-                    c.TitleBar.IsVisible = false;
-                    Canvas.SetLeft(c.Container, i * cw);
-                    Canvas.SetTop(c.Container, 0);
-                    c.Container.Width = cw;
-                    c.Container.Height = h;
-                    c.Container.ZIndex = 0;
-                }
-                break;
-            }
-
-            case MdiLayout.Cascade:
-            {
-                double offset = 32;
-                double cw = Math.Max(400, w * 0.75);
-                double ch = Math.Max(300, h * 0.75);
-
-                for (int i = 0; i < items.Count; i++)
-                {
-                    var c = items[i];
-                    c.Container.IsVisible = true;
-                    c.TitleBar.IsVisible = true;
-                    Canvas.SetLeft(c.Container, i * offset);
-                    Canvas.SetTop(c.Container, i * offset);
-                    c.Container.Width = cw;
-                    c.Container.Height = ch;
-                    c.Container.ZIndex = i;
-                }
-
-                int activeIdx = items.FindIndex(x => ReferenceEquals(x, _activeLayoutItem));
-                if (activeIdx >= 0)
-                    items[activeIdx].Container.ZIndex = items.Count;
-                break;
-            }
-        }
+        if (_customLayout && MdiHost.Root != null) MdiHost.Reconcile(items, _activeLayoutItem);
+        else MdiHost.Root = items.Count == 0 ? null : BuildPresetTree(items);
+        MdiHost.Rebuild();
 
         UpdateStripSelection();
         RefreshWindowsPanel();
     }
 
-    private void BringToFront(int index)
+    /// <summary>Builds the dock tree the current preset asks for.</summary>
+    private DockNode BuildPresetTree(List<IMdiLayoutItem> items)
     {
-        if (index < 0 || index >= _children.Count) return;
-        _activeChildIndex = index;
-        SetActiveLayoutItem(_children[index]);
+        switch (_layout)
+        {
+            case MdiLayout.Tile:
+            {
+                int count = items.Count;
+                int cols = (int)Math.Ceiling(Math.Sqrt(count));
+                int rows = (int)Math.Ceiling((double)count / cols);
+
+                // A single-row grid is just a left-right split, so terminals belong on the right.
+                // Taller grids keep them in the top row, where creation order already puts them.
+                var tiled = rows == 1 ? TerminalsLast(items) : items;
+
+                var stack = new DockSplitNode { Orientation = Orientation.Vertical };
+                for (int r = 0; r < rows; r++)
+                {
+                    var row = new DockSplitNode { Orientation = Orientation.Horizontal };
+                    for (int c = 0; c < cols; c++)
+                    {
+                        int i = r * cols + c;
+                        if (i >= count) break;
+                        row.Add(DockLeafNode.Of(tiled[i]));
+                    }
+                    if (row.Children.Count > 0) stack.Add(Simplify(row));
+                }
+                return Simplify(stack);
+            }
+
+            case MdiLayout.TileHorizontal:
+            {
+                // Top-bottom split: terminals on top, which creation order already gives.
+                var split = new DockSplitNode { Orientation = Orientation.Vertical };
+                foreach (var item in items) split.Add(DockLeafNode.Of(item));
+                return Simplify(split);
+            }
+
+            case MdiLayout.TileVertical:
+            {
+                // Left-right split: editors on the left, terminals on the right.
+                var split = new DockSplitNode { Orientation = Orientation.Horizontal };
+                foreach (var item in TerminalsLast(items)) split.Add(DockLeafNode.Of(item));
+                return Simplify(split);
+            }
+
+            default:
+            {
+                // Full view: one pane holding every window, showing the active one.
+                var leaf = new DockLeafNode();
+                leaf.Tabs.AddRange(items);
+                leaf.Active = _activeLayoutItem ?? items[^1];
+                return leaf;
+            }
+        }
+    }
+
+    /// <summary>A split of one is just its child, and rendering it as a split would put a
+    /// draggable boundary against the edge of the host with nothing on the other side.</summary>
+    private static DockNode Simplify(DockSplitNode split)
+    {
+        if (split.Children.Count != 1) return split;
+        var only = split.Children[0];
+        only.Parent = null;
+        return only;
+    }
+
+    /// <summary>
+    /// Makes <paramref name="child"/> the terminal the toolbar, status bar and command routing
+    /// act on, brings its window to the front and moves the project context to match.
+    /// </summary>
+    private void ActivateTerminal(MdiChildInfo child)
+    {
+        if (!_children.Contains(child)) return;
+        _activeChild = child;
+        SetActiveLayoutItem(child);
 
         UpdateStripSelection();
 
@@ -6470,7 +6482,7 @@ public partial class MainWindow : Window
         ApplySessionReadout();
 
         // Switch project context to match the active child
-        var childFolder = _children[index].ProjectFolder;
+        var childFolder = child.ProjectFolder;
         if (!string.Equals(childFolder, _projectFolder, StringComparison.OrdinalIgnoreCase))
         {
             _projectFolder = childFolder;
@@ -6511,27 +6523,22 @@ public partial class MainWindow : Window
 
     private void UpdateStripSelection()
     {
-        for (int i = 0; i < _children.Count; i++)
+        foreach (var item in AllLayoutItems())
         {
-            var child = _children[i];
-            // An editor window can hold the front, in which case no session tab is the active
-            // one - _activeChildIndex still names the terminal commands are routed to.
+            // A window that was dragged out is selected, or not, in the window it went to.
+            if (!ReferenceEquals(item.Owner, this)) continue;
+
+            // Before anything has taken the front, the active session's tab is the selected one:
+            // an editor window can hold the front while _activeChild still names the terminal
+            // commands are routed to.
             bool active = _activeLayoutItem == null
-                ? i == _activeChildIndex
-                : ReferenceEquals(child, _activeLayoutItem);
-            PaintStripSelection(child.StripButton, child.Container, active);
+                ? ReferenceEquals(item, _activeChild)
+                : ReferenceEquals(item, _activeLayoutItem);
+            PaintStripSelection(item.StripButton, item.Container, active);
         }
-
-        foreach (var editor in _editorChildren)
-            PaintStripSelection(editor.StripButton, editor.Container,
-                ReferenceEquals(editor, _activeLayoutItem));
-
-        foreach (var graph in _graphChildren)
-            PaintStripSelection(graph.StripButton, graph.Container,
-                ReferenceEquals(graph, _activeLayoutItem));
     }
 
-    private static void PaintStripSelection(Button stripButton, Border container, bool active)
+    internal static void PaintStripSelection(Button stripButton, Border container, bool active)
     {
         stripButton.Background = active
             ? new SolidColorBrush(Color.FromArgb(30, 0, 122, 255))
@@ -6682,51 +6689,8 @@ public partial class MainWindow : Window
         };
 
         // --- Window strip button ---
-        var stripDot = new Ellipse
-        {
-            Width = 7, Height = 7,
-            Fill = new SolidColorBrush(Color.FromRgb(48, 209, 88)),  // Apple Green
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var stripText = new TextBlock
-        {
-            Text = initialTitle,
-            FontSize = 11,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 120
-        };
-        var stripContent = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 5
-        };
-        var stripCloseBtn = new Button
-        {
-            Content = "\u00D7",
-            FontSize = 12,
-            Padding = new Thickness(3, 0),
-            Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
-            BorderThickness = new Thickness(0),
-            VerticalAlignment = VerticalAlignment.Center,
-            CornerRadius = new CornerRadius(3),
-            Cursor = new Cursor(StandardCursorType.Hand)
-        };
-        stripContent.Children.Add(stripDot);
-        stripContent.Children.Add(stripText);
-        stripContent.Children.Add(stripCloseBtn);
-
-        var stripButton = new Button
-        {
-            Content = stripContent,
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(1),
-            BorderBrush = Brushes.Transparent,
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 4),
-            Cursor = new Cursor(StandardCursorType.Hand)
-        };
+        var (stripButton, stripContent, stripText, stripDot, stripCloseBtn) =
+            BuildStripButton(initialTitle, TerminalDotColor);
 
         var entry = new MdiChildInfo(
             container, titleBar, titleText, dot, stripDot, terminal, stripButton, stripText
@@ -6755,8 +6719,7 @@ public partial class MainWindow : Window
 
         stripButton.Click += (_, _) =>
         {
-            int idx = _children.IndexOf(entry);
-            if (idx >= 0) BringToFront(idx);
+            ActivateTerminal(entry);
         };
 
         // Double-click to rename tab
@@ -6817,52 +6780,15 @@ public partial class MainWindow : Window
         container.PointerPressed += (_, _) =>
         {
             // Not "is this already the active session": an editor window can hold the front
-            // while _activeChildIndex still names this terminal, and clicking it has to take
-            // the front back.
-            int idx = _children.IndexOf(entry);
-            if (idx >= 0 && !ReferenceEquals(_activeLayoutItem, entry))
-                BringToFront(idx);
+            // while _activeChild still names this terminal, and clicking it has to take the
+            // front back.
+            if (!ReferenceEquals(_activeLayoutItem, entry))
+                ActivateTerminal(entry);
         };
 
-        // Drag on title bar (cascade mode)
-        titleBar.PointerPressed += (_, e) =>
-        {
-            int idx = _children.IndexOf(entry);
-            if (idx >= 0) BringToFront(idx);
-
-            if (_layout == MdiLayout.Cascade)
-            {
-                _isDragging = true;
-                _dragStart = e.GetPosition(MdiContainer);
-                double left = Canvas.GetLeft(container);
-                double top = Canvas.GetTop(container);
-                _dragChildLeft = double.IsNaN(left) ? 0 : left;
-                _dragChildTop = double.IsNaN(top) ? 0 : top;
-                _dragChild = entry;
-                e.Pointer.Capture(titleBar);
-                e.Handled = true;
-            }
-        };
-        titleBar.PointerMoved += (_, e) =>
-        {
-            if (_isDragging && _dragChild == entry)
-            {
-                var pos = e.GetPosition(MdiContainer);
-                Canvas.SetLeft(container, _dragChildLeft + pos.X - _dragStart.X);
-                Canvas.SetTop(container, _dragChildTop + pos.Y - _dragStart.Y);
-                e.Handled = true;
-            }
-        };
-        titleBar.PointerReleased += (_, e) =>
-        {
-            if (_isDragging && _dragChild == entry)
-            {
-                _isDragging = false;
-                _dragChild = null;
-                e.Pointer.Capture(null);
-                e.Handled = true;
-            }
-        };
+        // The pane header is not a handle any more - the dock tree places the window - but
+        // clicking it still means "work on this one".
+        titleBar.PointerPressed += (_, _) => ActivateTerminal(entry);
 
         // Snapshot the project just before each prompt, so it can be rolled back.
         terminal.PromptSubmitted += prompt => CaptureCheckpoint(entry, prompt);
@@ -6870,11 +6796,10 @@ public partial class MainWindow : Window
         terminal.Clicked += () =>
         {
             // Not "is this already the active session": an editor window can hold the front
-            // while _activeChildIndex still names this terminal, and clicking it has to take
-            // the front back.
-            int idx = _children.IndexOf(entry);
-            if (idx >= 0 && !ReferenceEquals(_activeLayoutItem, entry))
-                BringToFront(idx);
+            // while _activeChild still names this terminal, and clicking it has to take the
+            // front back.
+            if (!ReferenceEquals(_activeLayoutItem, entry))
+                ActivateTerminal(entry);
         };
 
         terminal.TitleChanged += title =>
@@ -6920,15 +6845,16 @@ public partial class MainWindow : Window
 
 
         _children.Add(entry);
-        _activeChildIndex = _children.Count - 1;
-        MdiContainer.Children.Add(container);
+        _activeChild = entry;
+        entry.Owner = this;
+        TabDrag.Hook(entry);
         WindowStrip.Children.Add(stripButton);
         ArrangeChildren();
         SyncSessionSelection();
 
         // The explorer, changed files, session list and branch readout all follow the active
         // window. An isolated one works in a different tree, so they have to move with it.
-        if (worktree != null) BringToFront(_children.Count - 1);
+        if (worktree != null) ActivateTerminal(entry);
 
         Dispatcher.UIThread.Post(() =>
         {
@@ -6977,7 +6903,9 @@ public partial class MainWindow : Window
         return taken;
     }
 
-    private async void CloseChild(MdiChildInfo entry)
+    private void CloseChild(MdiChildInfo entry) => _ = CloseChildAsync(entry);
+
+    private async Task CloseChildAsync(MdiChildInfo entry)
     {
         // The wait below runs for up to three seconds, and the × stays clickable the whole time.
         // Without this guard a second click re-enters and tears the same window down twice.
@@ -6997,15 +6925,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Disposing the pty from under the wait surfaces here as ObjectDisposedException. This
-        // method is async void, so letting it escape ends the process — the whole app disappears
-        // while other windows are still open.
+        // Disposing the pty from under the wait surfaces here as ObjectDisposedException. The
+        // × handler does not wait on this, so letting it escape loses it in an unobserved
+        // task instead of reporting it.
         try { await entry.Terminal.SendExitAndWaitAsync(); }
         catch (ObjectDisposedException) { }
 
         entry.Terminal.Dispose();
-        MdiContainer.Children.Remove(entry.Container);
-        WindowStrip.Children.Remove(entry.StripButton);
+        entry.Owner?.Release(entry);
 
         // Resolve the position now rather than before the wait: windows open and close while a
         // slow /exit is in flight, so an index taken up front either drops the wrong window or
@@ -7014,16 +6941,13 @@ public partial class MainWindow : Window
         if (idx < 0) return;
         _children.RemoveAt(idx);
 
-        if (_children.Count == 0)
-            _activeChildIndex = -1;
-        else if (_activeChildIndex >= _children.Count)
-            _activeChildIndex = _children.Count - 1;
-        else if (idx <= _activeChildIndex && _activeChildIndex > 0)
-            _activeChildIndex--;
+        // A reference needs no fixing up when an earlier window closes - it still names the same
+        // one - so only the window that was closed has to be replaced, by whichever tab has
+        // taken its place in the strip.
+        if (ReferenceEquals(_activeChild, entry))
+            _activeChild = _children.Count == 0 ? null : _children[Math.Max(0, idx - 1)];
 
         ArrangeChildren();
-        // ArrangeChildren bails out when the last child is gone, so refresh separately or the
-        // closed session's Stop / Undo linger in the status bar.
 
         // The checkout is only free once the terminal above has been disposed.
         await ReleaseWorktreeAsync(entry);
@@ -7220,23 +7144,9 @@ public partial class MainWindow : Window
             ClipToBounds = true
         };
 
-        MdiContainer.Children.Add(_welcomeContainer);
-
-        // Fill the entire MDI area
-        _welcomeContainer.SetValue(Canvas.LeftProperty, 0.0);
-        _welcomeContainer.SetValue(Canvas.TopProperty, 0.0);
-        _welcomeContainer.Width = MdiContainer.Bounds.Width;
-        _welcomeContainer.Height = MdiContainer.Bounds.Height;
-        MdiContainer.SizeChanged += WelcomePageResize;
-    }
-
-    private void WelcomePageResize(object? sender, SizeChangedEventArgs e)
-    {
-        if (_welcomeContainer != null)
-        {
-            _welcomeContainer.Width = MdiContainer.Bounds.Width;
-            _welcomeContainer.Height = MdiContainer.Bounds.Height;
-        }
+        // Covers the dock area rather than sitting in it: a Grid child stretches on its own,
+        // so nothing has to follow the host's size by hand.
+        MdiArea.Children.Add(_welcomeContainer);
     }
 
     private Border CreateWelcomeLink(string iconData, string text, Color iconColor)
@@ -7365,8 +7275,7 @@ public partial class MainWindow : Window
     {
         if (_welcomeContainer != null)
         {
-            MdiContainer.Children.Remove(_welcomeContainer);
-            MdiContainer.SizeChanged -= WelcomePageResize;
+            MdiArea.Children.Remove(_welcomeContainer);
             _welcomeContainer = null;
         }
     }

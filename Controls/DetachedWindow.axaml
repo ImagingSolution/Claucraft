@@ -1,0 +1,34 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ctl="clr-namespace:Claucraft.Controls"
+        mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="600"
+        x:Class="Claucraft.Controls.DetachedWindow"
+        Title="Claucraft"
+        Width="900" Height="600"
+        MinWidth="320" MinHeight="240"
+        Icon="avares://Claucraft/icon.ico"
+        Background="{DynamicResource SurfaceBg}">
+
+    <Grid>
+        <DockPanel>
+            <!-- Hidden while one window is in here: with nothing to switch between, the strip
+                 is a bar of wasted height. The pane header is the drag handle in that case. -->
+            <Border x:Name="WindowStripBar" DockPanel.Dock="Top" IsVisible="False"
+                    Background="{DynamicResource ToolBarBg}" Padding="6,4"
+                    BorderBrush="{DynamicResource DividerColor}" BorderThickness="0,0,0,0.5">
+                <ScrollViewer x:Name="WindowStripScroll"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="WindowStrip" Orientation="Horizontal" Spacing="4" />
+                </ScrollViewer>
+            </Border>
+
+            <ctl:DockHost x:Name="MdiHost" Background="Transparent" ClipToBounds="True" />
+        </DockPanel>
+
+        <!-- Above everything, for the ghost of a tab being dragged and the strip caret. -->
+        <Canvas x:Name="DragOverlay" IsHitTestVisible="False" />
+    </Grid>
+</Window>

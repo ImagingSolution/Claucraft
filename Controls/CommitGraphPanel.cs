@@ -17,8 +17,12 @@ namespace Claucraft.Controls;
 /// spirit of VS Code's Git Graph. Read-only throughout: it reads the log, lists what a commit
 /// changed, and hands a single file's diff to <see cref="DiffWindow"/>. Nothing here writes to
 /// the repository.
+///
+/// A panel rather than a window: the history opens as an MDI child on the main canvas, sized
+/// and arranged by the same layout code as terminal and editor windows, so it has no chrome,
+/// no preferred size, and no screen of its own to fit into.
 /// </summary>
-public class CommitGraphWindow : Window
+public class CommitGraphPanel : UserControl
 {
     private const int PageSize = 500;
 
@@ -73,11 +77,20 @@ public class CommitGraphWindow : Window
     /// </summary>
     private bool _openFileWhenListed;
 
+    /// <summary>Title for the MDI window this panel is put in, and for its strip button.</summary>
+    public string GraphTitle { get; }
+
+    /// <summary>Escape asks to be closed; the host window owns the actual closing.</summary>
+    public event EventHandler? CloseRequested;
+
+    /// <summary>Guards the first load: Loaded fires again if the panel is ever re-attached.</summary>
+    private bool _loadStarted;
+
     /// <param name="sendComment">
     /// Where a comment written against a diff goes. Passed straight through to
     /// <see cref="DiffWindow"/>; null leaves those windows read-only.
     /// </param>
-    public CommitGraphWindow(string repoRoot, string repoLabel, bool isDark, Typeface mono,
+    public CommitGraphPanel(string repoRoot, string repoLabel, bool isDark, Typeface mono,
         Action<string>? sendComment = null)
     {
         _repoRoot = repoRoot;
@@ -85,15 +98,17 @@ public class CommitGraphWindow : Window
         _mono = mono;
         _sendComment = sendComment;
 
-        Title = string.IsNullOrEmpty(repoLabel)
+        GraphTitle = string.IsNullOrEmpty(repoLabel)
             ? Loc.Get("CommitGraphTitle", "Commit Graph")
             : Loc.Get("CommitGraphTitle", "Commit Graph") + " - " + repoLabel;
-        Width = 1100;
-        Height = 780;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Bg());
 
-        KeyDown += (_, e) => { if (e.Key == Key.Escape) Close(); };
+        KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Escape) return;
+            CloseRequested?.Invoke(this, EventArgs.Empty);
+            e.Handled = true;
+        };
 
         // -- Toolbar --
         _refreshButton = ToolButton(Loc.Get("GraphRefresh", "Refresh"));
@@ -227,9 +242,12 @@ public class CommitGraphWindow : Window
         detailPane.Children.Add(detailBody);
 
         // -- Assembly --
+        // Proportional rather than a fixed detail height: as an MDI child this is laid out into
+        // whatever slot the canvas hands it, and a fixed 260 left a cascaded window showing its
+        // detail pane and a single commit row.
         var split = new Grid
         {
-            RowDefinitions = new RowDefinitions("*,Auto,260"),
+            RowDefinitions = new RowDefinitions("2*,Auto,*"),
         };
 
         var listArea = new DockPanel();
@@ -264,32 +282,14 @@ public class CommitGraphWindow : Window
         root.Children.Add(split);
         Content = root;
 
-        Opened += (_, _) => { FitToScreen(); _ = ReloadAsync(); };
-    }
-
-    /// <summary>
-    /// Pulls the window back inside the screen. The preferred size is roomy, and on a display
-    /// with little logical space -- a high-DPI laptop panel, say -- it would otherwise open with
-    /// the detail pane hanging off the bottom edge.
-    /// </summary>
-    private void FitToScreen()
-    {
-        try
+        // The log is read once the panel is on screen rather than in the constructor, so the
+        // window it lives in is laid out and showing before git is asked anything.
+        Loaded += (_, _) =>
         {
-            var area = Screens.ScreenFromWindow(this)?.WorkingArea ?? Screens.Primary?.WorkingArea;
-            if (area is not { } bounds) return;
-
-            double scale = RenderScaling > 0 ? RenderScaling : 1;
-            double maxWidth = bounds.Width / scale * 0.94;
-            double maxHeight = bounds.Height / scale * 0.94;
-
-            Width = Math.Min(Width, maxWidth);
-            Height = Math.Min(Height, maxHeight);
-        }
-        catch
-        {
-            // A window that cannot ask about screens keeps the size it was given.
-        }
+            if (_loadStarted) return;
+            _loadStarted = true;
+            _ = ReloadAsync();
+        };
     }
 
     // -- Loading --------------------------------------------------------
@@ -475,7 +475,12 @@ public class CommitGraphWindow : Window
         if (string.IsNullOrWhiteSpace(diff))
             diff = Loc.Get("GraphNoTextualDiff", "No textual changes (binary, mode, or rename only)");
 
-        new DiffWindow(title, diff, _isDark, _mono, filePath, _sendComment).Show(this);
+        var window = new DiffWindow(title, diff, _isDark, _mono, filePath, _sendComment);
+
+        // The panel has no window of its own any more, so the diff is owned by whatever window
+        // the MDI canvas is in - the main window, in practice.
+        if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner);
+        else window.Show();
     }
 
     /// <summary>

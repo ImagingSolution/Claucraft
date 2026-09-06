@@ -38,12 +38,6 @@ public class WorkspaceTab
 
     /// <summary>Repository the checkout was cut from.</summary>
     public string WorktreeOrigin { get; set; } = "";
-
-    // Child window geometry, only meaningful in the Cascade layout.
-    public double Left { get; set; }
-    public double Top { get; set; }
-    public double Width { get; set; }
-    public double Height { get; set; }
 }
 
 /// <summary>Root object persisted to workspace.json.</summary>

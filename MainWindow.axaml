@@ -4,6 +4,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:svc="clr-namespace:Claucraft.Services"
         xmlns:local="clr-namespace:Claucraft"
+        xmlns:ctl="clr-namespace:Claucraft.Controls"
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
         x:Class="Claucraft.MainWindow"
         Title="Claucraft"
@@ -25,6 +26,7 @@
         </Style>
     </Window.Styles>
 
+    <Grid>
     <DockPanel>
         <!-- Apple-style Toolbar -->
         <Border DockPanel.Dock="Top" Background="{DynamicResource ToolBarBg}"
@@ -778,7 +780,7 @@
                 <Border DockPanel.Dock="Top" Background="{DynamicResource ToolBarBg}" Padding="6,4"
                         BorderBrush="{DynamicResource DividerColor}" BorderThickness="0,0,0,0.5">
                     <Grid ColumnDefinitions="*,Auto">
-                        <ScrollViewer Grid.Column="0"
+                        <ScrollViewer x:Name="WindowStripScroll" Grid.Column="0"
                                       HorizontalScrollBarVisibility="Auto"
                                       VerticalScrollBarVisibility="Disabled">
                             <StackPanel x:Name="WindowStrip" Orientation="Horizontal" Spacing="4" />
@@ -804,12 +806,6 @@
                                 <PathIcon Data="M3 3H10V21H3ZM14 3H21V21H14Z"
                                           Width="14" Height="14" />
                             </Button>
-                            <Button x:Name="BtnLayoutCascade" Classes="icon-btn"
-                                    ToolTip.Tip="Cascade windows"
-                                    Click="OnLayoutCascade">
-                                <PathIcon Data="M2 2H14V14H2ZM6 6H18V18H6ZM10 10H22V22H10Z"
-                                          Width="14" Height="14" />
-                            </Button>
                             <Button x:Name="BtnLayoutMaximize" Classes="icon-btn"
                                     ToolTip.Tip="Full view"
                                     Click="OnLayoutMaximize">
@@ -833,9 +829,9 @@
                      Docking the banner would resize the terminals underneath, so every
                      error would shove the console text around; overlaying leaves the
                      grid untouched. -->
-                <Grid>
-                    <Canvas x:Name="MdiContainer"
-                            Background="Transparent" ClipToBounds="True" />
+                <Grid x:Name="MdiArea">
+                    <ctl:DockHost x:Name="MdiHost"
+                                  Background="Transparent" ClipToBounds="True" />
 
                     <!-- Advice banner: known CLI errors and the auto-compact hint -->
                     <Border x:Name="InfoBanner" IsVisible="False" ZIndex="10"
@@ -872,4 +868,8 @@
             </DockPanel>
         </Grid>
     </DockPanel>
+
+    <!-- Above everything, for the ghost of a tab being dragged and the strip caret. -->
+    <Canvas x:Name="DragOverlay" IsHitTestVisible="False" />
+    </Grid>
 </Window>
