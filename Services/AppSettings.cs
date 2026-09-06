@@ -59,10 +59,13 @@ public class AppSettings
     public bool GitAutoFetch { get; set; } = true;
 
     /// <summary>
-    /// Context-remaining percentage at or below which the hand-off banner appears.
-    /// Continuing past this point costs more per turn than starting fresh with a brief.
+    /// Conversation prefix size, in tokens, at or above which the hand-off banner appears.
+    /// An absolute count rather than a share of the window: on a 1M-token model "20% left"
+    /// is 800k tokens, long after every turn has become several times dearer than a fresh
+    /// start from a brief. (Replaces the percentage-based HandoffBannerThreshold; an old
+    /// value in appsettings.json is ignored and this default applies.)
     /// </summary>
-    public int HandoffBannerThreshold { get; set; } = 20;
+    public long HandoffBannerTokens { get; set; } = 150_000;
 
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

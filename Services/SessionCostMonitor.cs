@@ -199,6 +199,19 @@ public sealed class SessionCostMonitor
     /// </summary>
     private bool ReadCompactBoundary(JsonElement root)
     {
+        if (!TryReadCompactBoundaryTokens(root, out long post)) return false;
+
+        _state.ContextTokens = post;
+        _state.NextTurnUsd = CostAnalytics.EstimateNextTurnCostUsd(_state.Model, post);
+        return true;
+    }
+
+    /// <summary>
+    /// The prefix size a "compact_boundary" system record reports, or false for any other record.
+    /// </summary>
+    public static bool TryReadCompactBoundaryTokens(JsonElement root, out long tokens)
+    {
+        tokens = 0;
         if (!root.TryGetProperty("subtype", out var subProp)
             || subProp.ValueKind != JsonValueKind.String
             || subProp.GetString() != "compact_boundary") return false;
@@ -206,11 +219,31 @@ public sealed class SessionCostMonitor
         if (!root.TryGetProperty("compactMetadata", out var meta)
             || meta.ValueKind != JsonValueKind.Object) return false;
 
-        long post = ReadLong(meta, "postTokens");
-        if (post <= 0) return false;
+        tokens = ReadLong(meta, "postTokens");
+        return tokens > 0;
+    }
 
-        _state.ContextTokens = post;
-        _state.NextTurnUsd = CostAnalytics.EstimateNextTurnCostUsd(_state.Model, post);
+    /// <summary>
+    /// The conversation prefix a main-thread assistant record was answered against - the same
+    /// input + cache-read + cache-creation sum the live meter uses - so a session list can quote
+    /// the figure a resume would start from without re-implementing the transcript format.
+    /// Returns false for sidechain turns and for records without usage.
+    /// </summary>
+    public static bool TryReadPrefixTokens(JsonElement root, out long tokens, out string? model)
+    {
+        tokens = 0;
+        model = null;
+        if (!root.TryGetProperty("message", out var msgProp) || msgProp.ValueKind != JsonValueKind.Object) return false;
+        if (!msgProp.TryGetProperty("usage", out var usageProp) || usageProp.ValueKind != JsonValueKind.Object) return false;
+        if (root.TryGetProperty("isSidechain", out var sideProp) && sideProp.ValueKind == JsonValueKind.True) return false;
+
+        tokens = ReadLong(usageProp, "input_tokens")
+                 + ReadLong(usageProp, "cache_read_input_tokens")
+                 + ReadLong(usageProp, "cache_creation_input_tokens");
+        if (tokens <= 0) return false;
+
+        if (msgProp.TryGetProperty("model", out var modelProp) && modelProp.ValueKind == JsonValueKind.String)
+            model = modelProp.GetString();
         return true;
     }
 

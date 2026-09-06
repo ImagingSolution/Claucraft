@@ -46,7 +46,7 @@ public class LaunchProfile
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
 
-    /// <summary>Flags inserted ahead of the prompt by <c>CliProviderService.BuildNewCommand</c>.</summary>
+    /// <summary>Flags <c>CliProviderService</c> inserts ahead of the provider arguments on every launch path - new, continue and resume alike.</summary>
     public string ExtraArgs { get; set; } = "";
 
     /// <summary>Localization key describing when to pick this profile, or literal text.</summary>

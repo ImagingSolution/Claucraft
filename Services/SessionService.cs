@@ -15,6 +15,16 @@ public record SessionInfo(string Id, string? Cwd, string? Summary, DateTime? Tim
     /// <summary>Session title: a name set with /rename, otherwise the generated one.</summary>
     public string? Title { get; init; }
 
+    /// <summary>
+    /// Conversation prefix the session would resume with, in tokens: the last main-thread turn's
+    /// input, or the post-compaction size when a compaction came after it. Null when the tail
+    /// held no usage record.
+    /// </summary>
+    public long? LastContextTokens { get; init; }
+
+    /// <summary>Model of the last main-thread turn, used to price a resume.</summary>
+    public string? LastModel { get; init; }
+
     /// <summary>What the /resume picker shows for the session, down to its "No prompt" fallback.</summary>
     public string? DisplayTitle =>
         !string.IsNullOrWhiteSpace(Title) ? Title
@@ -148,6 +158,8 @@ public static class SessionService
         public bool SessionKindResolved;    // taken from the first entry carrying a parentUuid
         public bool IsLoopSession;
         public bool LoopChecked;
+        public long? LastContextTokens;   // tail only: last main-thread turn or compact boundary
+        public string? LastModel;
     }
 
     /// <summary>Entrypoints of transcripts a program drove, not someone typing into the CLI.</summary>
@@ -207,7 +219,9 @@ public static class SessionService
         return new SessionInfo(sessionId, scan.Cwd, CleanupPromptText(scan.FirstPrompt),
                                File.GetLastWriteTime(filePath))
         {
-            Title = CleanupPromptText(title)
+            Title = CleanupPromptText(title),
+            LastContextTokens = scan.LastContextTokens,
+            LastModel = scan.LastModel,
         };
     }
 
@@ -292,6 +306,18 @@ public static class SessionService
             else
             {
                 scan.TailEntrypoint = ReadString(root, "entrypoint") ?? scan.TailEntrypoint;
+
+                // Records arrive in file order, so the last one to match is the one a resume
+                // would pick up from. A compact boundary after the final reply wins over it.
+                if (SessionCostMonitor.TryReadPrefixTokens(root, out long prefix, out string? model))
+                {
+                    scan.LastContextTokens = prefix;
+                    scan.LastModel = model ?? scan.LastModel;
+                }
+                else if (SessionCostMonitor.TryReadCompactBoundaryTokens(root, out long post))
+                {
+                    scan.LastContextTokens = post;
+                }
             }
 
             string? type = root.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;

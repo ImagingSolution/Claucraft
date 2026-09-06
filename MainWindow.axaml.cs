@@ -104,6 +104,13 @@ public partial class MainWindow : Window
 
     /// <summary>Banner action that opens the hand-off flow rather than typing a slash command.</summary>
     private const string HandoffActionCommand = "claucraft:handoff";
+
+    /// <summary>
+    /// The CLI's own context-remaining percentage below which the low-context banner shows
+    /// when no transcript has been attached yet. Once the transcript is read, the token-based
+    /// <see cref="AppSettings.HandoffBannerTokens"/> takes over.
+    /// </summary>
+    private const int CliContextLowPercent = 20;
     private bool _isDark = true;
     private MdiLayout _layout = MdiLayout.Maximize;
     private int _activeChildIndex = -1;
@@ -2572,13 +2579,44 @@ public partial class MainWindow : Window
             await DeleteSessionAsync(session, all, render);
         };
 
-        var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
+        var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto,Auto") };
         Grid.SetColumn(stamp, 0);
         Grid.SetColumn(title, 1);
-        Grid.SetColumn(remove, 2);
+        Grid.SetColumn(remove, 3);
         grid.Children.Add(stamp);
         grid.Children.Add(title);
         grid.Children.Add(remove);
+
+        // What a resume would start from. The number that decides whether to pick the session up
+        // again or hand it off, shown before the choice is made rather than after.
+        if (session.LastContextTokens is long context && context > 0)
+        {
+            bool heavy = context >= _settings.HandoffBannerTokens;
+            var badgeText = new TextBlock
+            {
+                Text = FormatTokens(context),
+                FontSize = 10,
+                Opacity = heavy ? 1.0 : 0.7,
+            };
+            // Only the warning badge sets a colour: a null Foreground would replace the inherited
+            // theme brush rather than fall back to it, leaving the plain badge blank.
+            if (heavy) badgeText.Foreground = Brushes.Black;
+            var badge = new Border
+            {
+                Child = badgeText,
+                Padding = new Thickness(5, 1),
+                Margin = new Thickness(6, 0, 4, 0),
+                CornerRadius = new CornerRadius(3),
+                VerticalAlignment = VerticalAlignment.Center,
+                Background = heavy
+                    ? new SolidColorBrush(Color.FromRgb(255, 214, 10))
+                    : new SolidColorBrush(_isDark ? Color.FromArgb(40, 255, 255, 255) : Color.FromArgb(25, 0, 0, 0)),
+            };
+            double perTurn = CostAnalytics.EstimateNextTurnCostUsd(session.LastModel ?? "", context);
+            ToolTip.SetTip(badge, string.Format(Loc.Get("SessionContextTipFmt"), FormatTokens(context), FormatUsd(perTurn)));
+            Grid.SetColumn(badge, 2);
+            grid.Children.Add(badge);
+        }
 
         var row = new Border
         {
@@ -2602,7 +2640,32 @@ public partial class MainWindow : Window
             flyout.Hide();
         };
 
+        var fresh = new MenuItem { Header = Loc.Get("StartFreshFromBrief") };
+        fresh.Click += (_, _) =>
+        {
+            flyout.Hide();
+            _ = StartHandoffFromSessionAsync(session);
+        };
+        row.ContextMenu = new ContextMenu { Items = { fresh } };
+
         return row;
+    }
+
+    /// <summary>
+    /// Hand-off from a listed session instead of the active window: the brief comes from that
+    /// session's transcript, the new window opens with it in the input box, and the old session
+    /// is left on disk untouched.
+    /// </summary>
+    private async Task StartHandoffFromSessionAsync(SessionInfo session)
+    {
+        var folder = _projectFolder ?? "";
+        string? path = string.IsNullOrEmpty(folder) ? null : SessionMessageReader.FindSessionFile(folder, session.Id);
+        if (path == null)
+        {
+            await ShowConfirmDialog(Loc.Get("HandoffDialogTitle"), Loc.Get("HandoffNoSession"));
+            return;
+        }
+        await StartHandoffFromTranscriptAsync(path);
     }
 
     private async Task DeleteSessionAsync(SessionInfo session, List<SessionInfo> all, Action render)
@@ -2634,7 +2697,7 @@ public partial class MainWindow : Window
         // CLIs without a readable session index fall back to "continue most recent"
         if (!_cli.Features.SessionList)
         {
-            CreateNewChild(_cli.BuildContinueCommand(), _cli.Active.Name);
+            CreateNewChild(_cli.BuildContinueCommand(ActiveLaunchProfile()), _cli.Active.Name);
             return;
         }
 
@@ -2651,7 +2714,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            string cmd = _cli.BuildResumeCommand(session.Id);
+            string cmd = _cli.BuildResumeCommand(session.Id, ActiveLaunchProfile());
             var displayTitle = session.DisplayTitle ?? session.Summary;
             string tabLabel = !string.IsNullOrEmpty(displayTitle)
                 ? (displayTitle.Length > 30 ? displayTitle[..30] + "..." : displayTitle)
@@ -3115,28 +3178,38 @@ public partial class MainWindow : Window
             actionLabel = snap.Error.ActionLabel;
             actionCommand = snap.Error.ActionCommand;
         }
-        else if (_settings.EnableLiveStatus && _cli.Features.CompactButton
-                 && snap.ContextRemainingPercent is int left
-                 && left <= _settings.HandoffBannerThreshold)
+        else if (_settings.EnableLiveStatus && _cli.Features.CompactButton)
         {
-            key = "compact";
             var cost = ActiveCost.Current;
 
-            // Handing off is the cheaper of the two ways out, so it gets the button. /compact
-            // stays one click away on the context meter itself.
-            if (cost.HasData)
+            // The prefix size comes from the transcript, in tokens, and is judged against an
+            // absolute threshold. The CLI's own "n% left" is only a fallback for when the
+            // transcript has not been found yet: on a 1M-token model that percentage does not
+            // turn red until the conversation is already several times past the point where a
+            // fresh start would have been cheaper.
+            if (cost.HasData && cost.ContextTokens >= _settings.HandoffBannerTokens)
             {
+                key = "compact";
                 title = Loc.Get("HandoffTitle");
-                detail = string.Format(Loc.Get("HandoffDetailFormat"), left, FormatUsd(cost.NextTurnUsd));
+                detail = string.Format(Loc.Get("HandoffDetailFormat"),
+                    FormatTokens(cost.ContextTokens), FormatUsd(cost.NextTurnUsd));
             }
-            else
+            else if (!cost.HasData && snap.ContextRemainingPercent is int left
+                     && left <= CliContextLowPercent)
             {
+                key = "compact";
                 title = Loc.Get("ContextLowTitle");
                 detail = string.Format(Loc.Get("ContextLowDetail"), left);
             }
-            actionLabel = Loc.Get("HandoffAction");
-            actionCommand = HandoffActionCommand;
-            accent = Color.FromRgb(255, 214, 10);
+
+            if (key != null)
+            {
+                // Handing off is the cheaper of the two ways out, so it gets the button. /compact
+                // stays one click away on the context meter itself.
+                actionLabel = Loc.Get("HandoffAction");
+                actionCommand = HandoffActionCommand;
+                accent = Color.FromRgb(255, 214, 10);
+            }
         }
 
         if (key == null)
@@ -5130,6 +5203,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        await StartHandoffFromTranscriptAsync(path);
+    }
+
+    /// <summary>
+    /// The hand-off proper, from any transcript on disk: the active window's, or one picked from
+    /// the session list that was never opened in this run. Same brief, same dialog, same launch.
+    /// </summary>
+    private async Task StartHandoffFromTranscriptAsync(string path)
+    {
         string brief;
         try { brief = await HandoffBuilder.BuildAsync(path); }
         catch { brief = ""; }
@@ -5344,7 +5426,7 @@ public partial class MainWindow : Window
                              && _cli.Features.SessionList;
 
             if (canResume)
-                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId), tab.TabTitle, tab.TabTitle, tab.SessionId, lease);
+                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId, ActiveLaunchProfile()), tab.TabTitle, tab.TabTitle, tab.SessionId, lease);
             else
                 CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle, worktree: lease);
 
@@ -6528,7 +6610,7 @@ public partial class MainWindow : Window
     {
         // Session summaries only exist for CLIs whose history Claucraft can read
         if (!_cli.Features.SessionList)
-            return (_cli.BuildContinueCommand(), null);
+            return (_cli.BuildContinueCommand(ActiveLaunchProfile()), null);
 
         // "continue" picks up the most recently modified session: the top of the list
         var sessions = await SessionService.GetSessionsForProjectAsync(folderPath);
@@ -6536,7 +6618,7 @@ public partial class MainWindow : Window
 
         // Nothing running, nothing to dodge: -c goes exactly where the CLI would take it.
         if (taken.Count == 0)
-            return (_cli.BuildContinueCommand(), sessions.FirstOrDefault());
+            return (_cli.BuildContinueCommand(ActiveLaunchProfile()), sessions.FirstOrDefault());
 
         // Otherwise the session is picked here rather than by -c, which walks past the ones
         // already running and can still land on one a background agent holds - a launch that dies
@@ -6561,7 +6643,7 @@ public partial class MainWindow : Window
                 Loc.Get("SessionBusyFallbackFmt"),
                 string.IsNullOrEmpty(free.DisplayTitle) ? free.Id : free.DisplayTitle));
         }
-        return (_cli.BuildResumeCommand(free.Id), free);
+        return (_cli.BuildResumeCommand(free.Id, ActiveLaunchProfile()), free);
     }
 
     private static void AttachHoverEffect(Border border, Color? hoverColor = null)

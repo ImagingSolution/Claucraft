@@ -31,6 +31,25 @@ public class CliProviderService
 
     private static readonly string ProvidersFile = Path.Combine(SettingsDir, "providers.json");
 
+    /// <summary>
+    /// Settings the Light profile hands the CLI with --settings. A file rather than inline JSON
+    /// because the launch line goes through cmd.exe, where quoted braces do not survive intact.
+    /// </summary>
+    private static readonly string LightSettingsFile = Path.Combine(SettingsDir, "light-settings.json");
+
+    /// <summary>
+    /// Trims the fixed prefix and per-turn tool output the Light profile carries: shorter tool
+    /// results, one-line skill descriptions in the system prompt, and no auto-memory block.
+    /// </summary>
+    private const string LightSettingsJson =
+        "{\n  \"bashOutputMaxChars\": 20000,\n  \"skillListingMaxDescChars\": 60,\n  \"autoMemoryEnabled\": false\n}\n";
+
+    /// <summary>The Light profile's flags before --settings was added, for the backfill.</summary>
+    private const string LightExtraArgsV1 =
+        "--model sonnet --effort low --autocompact 100k --strict-mcp-config --disable-slash-commands";
+
+    private static string LightExtraArgs() => $"{LightExtraArgsV1} --settings {QuoteArg(LightSettingsFile)}";
+
     private static readonly Regex VersionRegex = new(@"\d+\.\d+[\w.\-]*", RegexOptions.Compiled);
 
     /// <summary>
@@ -136,24 +155,40 @@ public class CliProviderService
         return $"{exe} {args}".Trim();
     }
 
-    /// <summary>Command that continues the most recent session.</summary>
-    public string BuildContinueCommand()
+    /// <summary>
+    /// Command that continues the most recent session. The profile flags ride along here too:
+    /// a resumed session is the one most likely to be sitting on a large prefix, so a cap such
+    /// as --autocompact matters more on this path than on a fresh launch.
+    /// </summary>
+    public string BuildContinueCommand(LaunchProfile? profile = null)
     {
         var p = Active;
         var exe = QuoteExe(p.Exe);
-        return string.IsNullOrWhiteSpace(p.ContinueArgs) ? exe : $"{exe} {p.ContinueArgs.Trim()}";
+        var extra = SanitizePrompt(profile?.ExtraArgs);
+        var args = string.IsNullOrWhiteSpace(p.ContinueArgs) ? "" : p.ContinueArgs.Trim();
+        return JoinCommand(exe, extra, args);
     }
 
     /// <summary>Command that resumes a specific session id. Falls back to continue when unsupported.</summary>
-    public string BuildResumeCommand(string sessionId)
+    public string BuildResumeCommand(string sessionId, LaunchProfile? profile = null)
     {
         var p = Active;
         if (string.IsNullOrWhiteSpace(p.ResumeArgs))
-            return BuildContinueCommand();
+            return BuildContinueCommand(profile);
 
         var exe = QuoteExe(p.Exe);
+        var extra = SanitizePrompt(profile?.ExtraArgs);
         var args = p.ResumeArgs.Replace("{sessionId}", sessionId).Trim();
-        return $"{exe} {args}".Trim();
+        return JoinCommand(exe, extra, args);
+    }
+
+    /// <summary>Profile flags lead, provider args follow - the same order BuildNewCommand uses.</summary>
+    private static string JoinCommand(string exe, string extra, string args)
+    {
+        var sb = new System.Text.StringBuilder(exe);
+        if (!string.IsNullOrEmpty(extra)) sb.Append(' ').Append(extra);
+        if (!string.IsNullOrEmpty(args)) sb.Append(' ').Append(args);
+        return sb.ToString();
     }
 
     private static string QuoteExe(string exe)
@@ -373,6 +408,7 @@ public class CliProviderService
 
     private static List<CliProvider> Load()
     {
+        EnsureLightSettingsFile();
         try
         {
             if (File.Exists(ProvidersFile))
@@ -393,6 +429,21 @@ public class CliProviderService
         var presets = BuildPresets();
         Write(presets);
         return presets;
+    }
+
+    /// <summary>
+    /// Writes the Light profile's settings file when it is missing. Never overwrites: the file
+    /// is the user's to tune once it exists.
+    /// </summary>
+    private static void EnsureLightSettingsFile()
+    {
+        try
+        {
+            if (File.Exists(LightSettingsFile)) return;
+            Directory.CreateDirectory(SettingsDir);
+            File.WriteAllText(LightSettingsFile, LightSettingsJson);
+        }
+        catch { }
     }
 
     private static void Write(List<CliProvider> providers)
@@ -444,6 +495,17 @@ public class CliProviderService
                 if (match != null && match.Profiles.Count > 0)
                 {
                     stale.Profiles = match.Profiles.Select(x => x.Clone()).ToList();
+                    changed = true;
+                }
+            }
+
+            // The Light profile gained a --settings file after it first shipped. A profile still on
+            // the original flag set moves to the new one; one the user has edited is left alone.
+            foreach (var profile in stale.Profiles ?? new List<LaunchProfile>())
+            {
+                if (profile.Id == LightProfileId && profile.ExtraArgs == LightExtraArgsV1)
+                {
+                    profile.ExtraArgs = LightExtraArgs();
                     changed = true;
                 }
             }
@@ -516,7 +578,7 @@ public class CliProviderService
                 {
                     Id = LightProfileId,
                     Name = "Light",
-                    ExtraArgs = "--model sonnet --effort low --autocompact 100k --strict-mcp-config --disable-slash-commands",
+                    ExtraArgs = LightExtraArgs(),
                     Description = "ProfileLightDesc",
                 },
                 new()
