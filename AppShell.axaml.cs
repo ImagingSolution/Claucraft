@@ -382,6 +382,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         RefreshGitInfo();
         RefreshSessionList();
+        FileTreeNode.UseShellIcons = _settings.UseShellIcons;
         RefreshFileTree();
         HookFileTreeDrag();
 
@@ -480,6 +481,7 @@ internal partial class AppShell : UserControl, IDockOwner
         LblApplySettings.Text = Loc.Get("Apply");
         ChkShowWelcomePage.Content = Loc.Get("ShowWelcomePage");
         ChkEnableCharts.Content = Loc.Get("EnableCharts");
+        ChkUseShellIcons.Content = Loc.Get("UseShellIcons");
 
         // AI provider panel (LblOpenClaudeFolder is provider-dependent — ApplyProviderUi)
         LblAiProvider.Text = Loc.Get("AiProvider");
@@ -2671,6 +2673,7 @@ internal partial class AppShell : UserControl, IDockOwner
         ChkEnableCharts.IsChecked = _settings.EnableChartRendering;
         ChkDarkMode.IsChecked = _settings.IsDark;
         _suppressSettingsChanged = true;
+        ChkUseShellIcons.IsChecked = _settings.UseShellIcons;
         ChkNotifyOnComplete.IsChecked = _settings.NotifyOnComplete;
         ChkNotifySound.IsChecked = _settings.NotifySound;
         ChkEnableCheckpoints.IsChecked = _settings.EnableCheckpoints;
@@ -2689,6 +2692,17 @@ internal partial class AppShell : UserControl, IDockOwner
         if (_suppressWelcomeCheckChanged) return;
         _settings.ShowWelcomePage = ChkShowWelcomePage.IsChecked == true;
         _settings.Save();
+    }
+
+    private void OnUseShellIconsChanged(object? sender, RoutedEventArgs e)
+    {
+        if (!_settingsInitialized || _suppressSettingsChanged) return;
+
+        _settings.UseShellIcons = ChkUseShellIcons.IsChecked == true;
+        _settings.Save();
+
+        FileTreeNode.UseShellIcons = _settings.UseShellIcons;
+        RefreshFileTree();
     }
 
     private void OnEnableChartsChanged(object? sender, RoutedEventArgs e)

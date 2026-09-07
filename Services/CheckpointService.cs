@@ -267,14 +267,16 @@ public class CheckpointService
         var (checkoutExit, _, checkoutErr) = RunGit(gitRoot, $"checkout {checkpoint.Payload} -- .");
         if (checkoutExit == 0) return null;
 
-        var detail = string.IsNullOrWhiteSpace(checkoutErr) ? applyErr : checkoutErr;
-        return $"Restore failed: {detail.Trim()}";
+        // The caller wraps this in CheckpointFailedFmt ("Could not restore: {0}"), so return the
+        // bare reason - a second "Restore failed:" prefix here would read twice in the dialog.
+        var detail = (string.IsNullOrWhiteSpace(checkoutErr) ? applyErr : checkoutErr).Trim();
+        return detail.Length > 0 ? detail : Loc.Get("CheckpointNoDetail");
     }
 
     private static string? RestoreFileCheckpoint(Checkpoint checkpoint)
     {
         if (!Directory.Exists(checkpoint.Payload))
-            return "Checkpoint snapshot folder no longer exists.";
+            return Loc.Get("CheckpointSnapshotMissing");
 
         try
         {
@@ -285,7 +287,7 @@ public class CheckpointService
         }
         catch (Exception ex)
         {
-            return $"Restore failed: {ex.Message}";
+            return ex.Message;
         }
     }
 

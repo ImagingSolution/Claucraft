@@ -486,8 +486,15 @@
                                                       ItemsSource="{Binding Children}">
                                         <StackPanel Orientation="Horizontal" Spacing="6"
                                                     Background="Transparent">
-                                            <PathIcon Data="{Binding IconData}" Width="14" Height="14"
-                                                      Foreground="{Binding IconColor}" />
+                                            <Panel Width="16" Height="16" VerticalAlignment="Center">
+                                                <Image Source="{Binding ShellIcon}"
+                                                       Width="16" Height="16"
+                                                       IsVisible="{Binding HasShellIcon}"
+                                                       RenderOptions.BitmapInterpolationMode="HighQuality" />
+                                                <PathIcon Data="{Binding IconData}" Width="14" Height="14"
+                                                          Foreground="{Binding IconColor}"
+                                                          IsVisible="{Binding HasGlyphIcon}" />
+                                            </Panel>
                                             <TextBlock Text="{Binding Name}" FontSize="13"
                                                        VerticalAlignment="Center" />
                                         </StackPanel>
@@ -501,50 +508,6 @@
                                       HorizontalScrollBarVisibility="Disabled"
                                       VerticalScrollBarVisibility="Auto">
                             <StackPanel Spacing="20" Margin="14,16">
-                                <!-- AI Provider -->
-                                <Border BorderBrush="{DynamicResource SubtleText}" BorderThickness="1"
-                                        CornerRadius="6" Padding="10,8">
-                                    <StackPanel Spacing="12">
-                                        <TextBlock x:Name="LblAiProvider" Text="AI Provider" FontSize="15" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource SubtleText}" />
-                                        <StackPanel x:Name="PnlProviderRadios" Spacing="2" />
-                                        <StackPanel Spacing="6">
-                                            <TextBlock x:Name="LblProviderExe" Text="Executable" FontSize="13"
-                                                       Foreground="{DynamicResource SubtleText}" />
-                                            <TextBox x:Name="TxtProviderExe" HorizontalAlignment="Stretch" />
-                                        </StackPanel>
-                                        <StackPanel Spacing="6">
-                                            <TextBlock x:Name="LblProviderNewArgs" Text="New Session Args" FontSize="13"
-                                                       Foreground="{DynamicResource SubtleText}" />
-                                            <TextBox x:Name="TxtProviderNewArgs" HorizontalAlignment="Stretch" />
-                                        </StackPanel>
-                                        <StackPanel Spacing="6">
-                                            <TextBlock x:Name="LblProviderContinueArgs" Text="Continue Args" FontSize="13"
-                                                       Foreground="{DynamicResource SubtleText}" />
-                                            <TextBox x:Name="TxtProviderContinueArgs" HorizontalAlignment="Stretch" />
-                                        </StackPanel>
-                                        <StackPanel Spacing="6">
-                                            <TextBlock x:Name="LblProviderResumeArgs" Text="Resume Args" FontSize="13"
-                                                       Foreground="{DynamicResource SubtleText}" />
-                                            <TextBox x:Name="TxtProviderResumeArgs" HorizontalAlignment="Stretch" />
-                                        </StackPanel>
-                                        <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0">
-                                            <Button x:Name="BtnRestoreProviderDefaults" Grid.Column="0"
-                                                    HorizontalAlignment="Stretch"
-                                                    HorizontalContentAlignment="Center"
-                                                    Click="OnRestoreProviderDefaults">
-                                                <TextBlock x:Name="LblRestoreDefaults" Text="Restore Defaults" FontSize="12" />
-                                            </Button>
-                                            <Button x:Name="BtnOpenProviderConfig" Grid.Column="2"
-                                                    HorizontalAlignment="Stretch"
-                                                    HorizontalContentAlignment="Center"
-                                                    Click="OnOpenProviderConfigFolder">
-                                                <TextBlock x:Name="LblOpenConfigFolder" Text="Open Config Folder" FontSize="12" />
-                                            </Button>
-                                        </Grid>
-                                    </StackPanel>
-                                </Border>
-
                                 <Border BorderBrush="{DynamicResource SubtleText}" BorderThickness="1"
                                         CornerRadius="6" Padding="10,8">
                                     <StackPanel Spacing="14">
@@ -687,6 +650,58 @@
                                           Margin="0,16,0,0"
                                           Foreground="{DynamicResource SubtleText}"
                                           IsCheckedChanged="OnShowWelcomePageChanged" />
+
+                                <!-- Shell icons are on by default and the switch is kept out of the
+                                     panel; set IsVisible="True" to offer it again. -->
+                                <CheckBox x:Name="ChkUseShellIcons" Content="Use Windows Explorer icons in the file tree"
+                                          IsVisible="False"
+                                          Margin="0,4,0,0"
+                                          Foreground="{DynamicResource SubtleText}"
+                                          IsCheckedChanged="OnUseShellIconsChanged" />
+
+                                <!-- AI Provider -->
+                                <Border BorderBrush="{DynamicResource SubtleText}" BorderThickness="1"
+                                        CornerRadius="6" Padding="10,8">
+                                    <StackPanel Spacing="12">
+                                        <TextBlock x:Name="LblAiProvider" Text="AI Provider" FontSize="15" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource SubtleText}" />
+                                        <StackPanel x:Name="PnlProviderRadios" Spacing="2" />
+                                        <StackPanel Spacing="6">
+                                            <TextBlock x:Name="LblProviderExe" Text="Executable" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <TextBox x:Name="TxtProviderExe" HorizontalAlignment="Stretch" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="6">
+                                            <TextBlock x:Name="LblProviderNewArgs" Text="New Session Args" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <TextBox x:Name="TxtProviderNewArgs" HorizontalAlignment="Stretch" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="6">
+                                            <TextBlock x:Name="LblProviderContinueArgs" Text="Continue Args" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <TextBox x:Name="TxtProviderContinueArgs" HorizontalAlignment="Stretch" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="6">
+                                            <TextBlock x:Name="LblProviderResumeArgs" Text="Resume Args" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <TextBox x:Name="TxtProviderResumeArgs" HorizontalAlignment="Stretch" />
+                                        </StackPanel>
+                                        <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0">
+                                            <Button x:Name="BtnRestoreProviderDefaults" Grid.Column="0"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Center"
+                                                    Click="OnRestoreProviderDefaults">
+                                                <TextBlock x:Name="LblRestoreDefaults" Text="Restore Defaults" FontSize="12" />
+                                            </Button>
+                                            <Button x:Name="BtnOpenProviderConfig" Grid.Column="2"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Center"
+                                                    Click="OnOpenProviderConfigFolder">
+                                                <TextBlock x:Name="LblOpenConfigFolder" Text="Open Config Folder" FontSize="12" />
+                                            </Button>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </ScrollViewer>
 

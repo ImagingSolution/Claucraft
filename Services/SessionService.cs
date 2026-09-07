@@ -536,14 +536,14 @@ public static class SessionService
         if (string.IsNullOrWhiteSpace(sessionId) ||
             sessionId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
             sessionId.Contains("..", StringComparison.Ordinal))
-            return "invalid session id";
+            return Loc.Get("SessionDeleteInvalidId");
 
         try
         {
             string claudeProjectsDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 ".claude", "projects");
-            if (!Directory.Exists(claudeProjectsDir)) return "no projects folder";
+            if (!Directory.Exists(claudeProjectsDir)) return Loc.Get("SessionDeleteNoProjectsFolder");
 
             string normalizedTarget = NormalizeFolderName(projectFolder);
             var targets = new List<string>();
@@ -560,7 +560,7 @@ public static class SessionService
                 if (Directory.Exists(sidecar)) targets.Add(sidecar);
             }
 
-            if (targets.Count == 0) return "session not found";
+            if (targets.Count == 0) return Loc.Get("SessionDeleteNotFound");
             return RecycleBin.Send(targets.ToArray());
         }
         catch (Exception ex)

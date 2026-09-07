@@ -7,6 +7,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Avalonia.Media;
+using Claucraft.Services;
 
 namespace Claucraft;
 
@@ -51,11 +52,25 @@ public class FileTreeNode : INotifyPropertyChanged
     private static readonly IBrush DefaultFileColor = new SolidColorBrush(Color.Parse("#8C8C8C"));
     private static readonly IBrush FolderColor = new SolidColorBrush(Color.Parse("#DCAD54"));
 
+    /// <summary>
+    /// Draw what Windows Explorer draws instead of the built-in glyphs. On by default, tracking
+    /// AppSettings.UseShellIcons. The glyph set below stays as the fallback for the paths the
+    /// shell has no icon for, and for anyone who turns the setting back off.
+    /// </summary>
+    public static bool UseShellIcons { get; set; } = true;
+
     public string Name { get; set; } = "";
     public string FullPath { get; set; } = "";
     public bool IsDirectory { get; set; }
     public Geometry IconData => IsDirectory ? FolderIcon : FileIcon;
     public IBrush IconColor { get; set; } = DefaultFileColor;
+
+    /// <summary>The Explorer icon, when shell icons are on and the shell had one for this path.</summary>
+    public IImage? ShellIcon { get; private set; }
+
+    public bool HasShellIcon => ShellIcon != null;
+    public bool HasGlyphIcon => ShellIcon == null;
+
     public ObservableCollection<FileTreeNode> Children { get; set; } = new();
 
     private bool _isExpanded;
@@ -175,6 +190,12 @@ public class FileTreeNode : INotifyPropertyChanged
             if (!string.IsNullOrEmpty(ext) && ExtColorMap.TryGetValue(ext, out var hex))
                 node.IconColor = new SolidColorBrush(Color.Parse(hex));
         }
+
+        // Resolved eagerly rather than on first render: the shell lookup is cached by extension,
+        // so a whole folder costs a handful of calls, and a lazy property would need change
+        // notification to reach the already-bound template.
+        if (UseShellIcons)
+            node.ShellIcon = ShellIconProvider.GetIcon(path, isDirectory);
 
         return node;
     }

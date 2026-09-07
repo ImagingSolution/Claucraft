@@ -49,10 +49,10 @@ public static class SetupDoctor
 
             var cliTask = Task.Run(() => CheckCliInstalled(cli));
             var nodeTask = Task.Run(() => CheckToolAsync("node", "DoctorNode", "Node.js",
-                "Claude Code is distributed via npm and typically needs Node.js on PATH.",
+                "DoctorNodeHint",
                 "winget install OpenJS.NodeJS.LTS"));
             var gitTask = Task.Run(() => CheckToolAsync("git", "DoctorGit", "Git",
-                "Git is used for repo detection and version control features.",
+                "DoctorGitHint",
                 "winget install Git.Git"));
             var configTask = Task.Run(() => CheckConfigDir(cli));
             var authTask = Task.Run(() => CheckAuth(cli));
@@ -97,23 +97,27 @@ public static class SetupDoctor
 
         return new DiagnosticResult(
             "cli", "DoctorCliInstalled", DiagnosticStatus.Error,
-            "not found",
-            $"{active.Name} was not found on PATH.",
+            Loc.Get("NotInstalled"),
+            string.Format(Loc.Get("DoctorCliNotOnPathFmt"), active.Name),
             active.InstallHint);
     }
 
     private static async Task<DiagnosticResult> CheckToolAsync(
-        string exe, string titleKey, string label, string fixHint, string fixCommand)
+        string exe, string titleKey, string label, string fixHintKey, string fixCommand)
     {
         var (found, output) = await TryRunVersionAsync(exe);
         if (found)
         {
             var version = CliProviderService.ParseVersion(output);
-            var detail = string.IsNullOrEmpty(version) ? $"{label} found" : $"{label} {version}";
+            var detail = string.IsNullOrEmpty(version)
+                ? string.Format(Loc.Get("DoctorFoundFmt"), label)
+                : $"{label} {version}";
             return new DiagnosticResult(exe, titleKey, DiagnosticStatus.Ok, detail, null, null);
         }
 
-        return new DiagnosticResult(exe, titleKey, DiagnosticStatus.Warning, "not found", fixHint, fixCommand);
+        return new DiagnosticResult(
+            exe, titleKey, DiagnosticStatus.Warning,
+            Loc.Get("NotInstalled"), Loc.Get(fixHintKey), fixCommand);
     }
 
     private static DiagnosticResult CheckConfigDir(CliProviderService cli)
@@ -126,8 +130,10 @@ public static class SetupDoctor
 
         return new DiagnosticResult(
             "config", "DoctorConfigDir", DiagnosticStatus.Warning,
-            string.IsNullOrEmpty(dir) ? "not configured" : $"{dir} not found",
-            "The CLI may not have been launched yet.",
+            string.IsNullOrEmpty(dir)
+                ? Loc.Get("DoctorNotConfigured")
+                : string.Format(Loc.Get("DoctorPathNotFoundFmt"), dir),
+            Loc.Get("DoctorConfigDirHint"),
             null);
     }
 
@@ -142,12 +148,13 @@ public static class SetupDoctor
 
         if (File.Exists(credentials) || File.Exists(claudeJson))
         {
-            return new DiagnosticResult("auth", "DoctorAuth", DiagnosticStatus.Ok, "credentials found", null, null);
+            return new DiagnosticResult(
+                "auth", "DoctorAuth", DiagnosticStatus.Ok, Loc.Get("DoctorCredentialsFound"), null, null);
         }
 
         return new DiagnosticResult(
-            "auth", "DoctorAuth", DiagnosticStatus.Warning, "not found",
-            "Sign in by launching the CLI once.",
+            "auth", "DoctorAuth", DiagnosticStatus.Warning, Loc.Get("NotInstalled"),
+            Loc.Get("DoctorAuthHint"),
             "claude");
     }
 
@@ -162,8 +169,8 @@ public static class SetupDoctor
         }
 
         return new DiagnosticResult(
-            "project-git", "DoctorProjectGit", DiagnosticStatus.Warning, "not a git repository",
-            "Version control makes AI-made changes easier to review and undo.",
+            "project-git", "DoctorProjectGit", DiagnosticStatus.Warning, Loc.Get("DoctorNotGitRepo"),
+            Loc.Get("DoctorProjectGitHint"),
             "git init");
     }
 

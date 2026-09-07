@@ -80,6 +80,7 @@ public static class Loc
         ["Recent"] = new() { ["English"] = "Recent", ["日本語"] = "最近" },
         ["ShowWelcomeOnStartup"] = new() { ["English"] = "Show Welcome Page on Startup", ["日本語"] = "起動時にウェルカムページを表示" },
         ["ShowWelcomePage"] = new() { ["English"] = "Show Welcome Page", ["日本語"] = "ウェルカムページを表示" },
+        ["UseShellIcons"] = new() { ["English"] = "Use Windows Explorer icons in the file tree", ["日本語"] = "ファイルツリーに Windows エクスプローラーのアイコンを使う" },
 
         // ── Tab Context Menu ──
         ["Close"] = new() { ["English"] = "Close", ["日本語"] = "閉じる" },
@@ -116,6 +117,10 @@ public static class Loc
         ["SessionCountFmt"] = new() { ["English"] = "Showing {0}", ["日本語"] = "{0} 件を表示" },
         ["DeleteSessionConfirmFmt"] = new() { ["English"] = "Delete \"{0}\"? The transcript goes to the recycle bin.", ["日本語"] = "「{0}」を削除しますか？ トランスクリプトはごみ箱に移動します。" },
         ["DeleteSessionFailedFmt"] = new() { ["English"] = "Could not delete: {0}", ["日本語"] = "削除できませんでした: {0}" },
+        // Reasons SessionService.Delete refuses; each is substituted into DeleteSessionFailedFmt.
+        ["SessionDeleteInvalidId"] = new() { ["English"] = "invalid session id", ["日本語"] = "セッション ID が不正です" },
+        ["SessionDeleteNoProjectsFolder"] = new() { ["English"] = "no projects folder", ["日本語"] = "projects フォルダがありません" },
+        ["SessionDeleteNotFound"] = new() { ["English"] = "session not found", ["日本語"] = "セッションが見つかりません" },
 
         // ── File Preview ──
         ["Preview"] = new() { ["English"] = "Preview", ["日本語"] = "プレビュー" },
@@ -208,6 +213,21 @@ public static class Loc
         ["DoctorConfigDir"] = new() { ["English"] = "Config folder", ["日本語"] = "設定フォルダ" },
         ["DoctorAuth"] = new() { ["English"] = "Sign-in", ["日本語"] = "サインイン" },
         ["DoctorProjectGit"] = new() { ["English"] = "Project under Git", ["日本語"] = "プロジェクトの Git 管理" },
+        // Status lines and fix hints for each Setup Check row. "not found" reuses NotInstalled.
+        ["DoctorNotConfigured"] = new() { ["English"] = "not configured", ["日本語"] = "未設定" },
+        // {0} = configured path
+        ["DoctorPathNotFoundFmt"] = new() { ["English"] = "{0} not found", ["日本語"] = "{0} が見つかりません" },
+        // {0} = tool name
+        ["DoctorFoundFmt"] = new() { ["English"] = "{0} found", ["日本語"] = "{0} を検出" },
+        // {0} = CLI provider name
+        ["DoctorCliNotOnPathFmt"] = new() { ["English"] = "{0} was not found on PATH.", ["日本語"] = "{0} が PATH 上に見つかりませんでした。" },
+        ["DoctorNodeHint"] = new() { ["English"] = "Claude Code is distributed via npm and typically needs Node.js on PATH.", ["日本語"] = "Claude Code は npm で配布されているため、通常 PATH 上に Node.js が必要です。" },
+        ["DoctorGitHint"] = new() { ["English"] = "Git is used for repo detection and version control features.", ["日本語"] = "Git はリポジトリの検出とバージョン管理機能に使用されます。" },
+        ["DoctorConfigDirHint"] = new() { ["English"] = "The CLI may not have been launched yet.", ["日本語"] = "CLI がまだ一度も起動されていない可能性があります。" },
+        ["DoctorCredentialsFound"] = new() { ["English"] = "credentials found", ["日本語"] = "認証情報を検出" },
+        ["DoctorAuthHint"] = new() { ["English"] = "Sign in by launching the CLI once.", ["日本語"] = "CLI を一度起動してサインインしてください。" },
+        ["DoctorNotGitRepo"] = new() { ["English"] = "not a git repository", ["日本語"] = "git リポジトリではありません" },
+        ["DoctorProjectGitHint"] = new() { ["English"] = "Version control makes AI-made changes easier to review and undo.", ["日本語"] = "バージョン管理があると、AI による変更の確認や取り消しが容易になります。" },
 
         // ── Slash command palette ──
         ["SlashCommands"] = new() { ["English"] = "Slash Commands", ["日本語"] = "スラッシュコマンド" },
@@ -227,6 +247,9 @@ public static class Loc
         ["CheckpointRestored"] = new() { ["English"] = "Restored.", ["日本語"] = "復元しました。" },
         // {0} = error detail
         ["CheckpointFailedFmt"] = new() { ["English"] = "Could not restore: {0}", ["日本語"] = "復元できませんでした: {0}" },
+        // Reasons CheckpointService.Restore gives back; each is substituted into CheckpointFailedFmt.
+        ["CheckpointSnapshotMissing"] = new() { ["English"] = "the checkpoint snapshot folder no longer exists", ["日本語"] = "チェックポイントのスナップショットフォルダが見つかりません" },
+        ["CheckpointNoDetail"] = new() { ["English"] = "Git reported no details", ["日本語"] = "Git が詳細を報告しませんでした" },
         // {0} = checkpoint label
         ["RestoreCheckpointFmt"] = new() { ["English"] = "Roll the project folder back to this checkpoint?", ["日本語"] = "プロジェクトフォルダをこのチェックポイントの状態に戻しますか？" },
 

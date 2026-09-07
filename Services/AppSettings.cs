@@ -20,6 +20,14 @@ public class AppSettings
     public string InitialPrompt { get; set; } = "";
     public bool ShowWelcomePage { get; set; } = true;
     public bool EnableChartRendering { get; set; } = true;
+
+    /// <summary>
+    /// Draw the explorer tree with the icons Windows Explorer shows, instead of the built-in
+    /// extension-coloured glyphs. On by default; the switch that turns it off is hidden in the
+    /// settings panel (ChkUseShellIcons), so this is what the tree actually uses.
+    /// </summary>
+    public bool UseShellIcons { get; set; } = true;
+
     public string CliProviderId { get; set; } = CliProviderService.ClaudeId;
 
     // ── Task completion notification ──
