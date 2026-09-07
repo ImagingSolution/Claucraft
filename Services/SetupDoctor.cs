@@ -234,7 +234,10 @@ public static class SetupDoctor
             if (string.IsNullOrWhiteSpace(text))
                 text = await stderr;
 
-            return (!string.IsNullOrWhiteSpace(text), text);
+            // cmd.exe writes "'node' is not recognized..." to stderr and exits 9009, so a
+            // non-empty stream alone would report a missing tool as found. The exit code is what
+            // separates the two; tools that print their version to stderr and exit 0 still count.
+            return (proc.ExitCode == 0 && !string.IsNullOrWhiteSpace(text), text);
         }
         catch
         {
