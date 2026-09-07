@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -67,6 +67,7 @@ public sealed class SourceControlPanel : UserControl
     private string _repo = "";
 
     private List<GitChange> _changes = new();
+    private List<IgnoreEntry> _ignored = new();
     private BranchState _branch = BranchState.None;
     private RepoOperation _operation = RepoOperation.None;
     private List<string> _conflicts = new();
@@ -114,12 +115,16 @@ public sealed class SourceControlPanel : UserControl
     private readonly Button _btnConflictContinue;
     private readonly Button _btnConflictAbort;
 
-    private readonly Expander _prExpander;
+    private readonly FoldSection _prSection;
     private readonly StackPanel _prList;
 
     private readonly CheckBox _chkStageAll;
     private readonly TextBlock _lblSummary;
+    private readonly Button _btnCheck;
     private readonly StackPanel _changesList;
+
+    private readonly FoldSection _ignoreSection;
+    private readonly StackPanel _ignoreList;
 
     private readonly Border _commitBox;
     private readonly TextBox _txtMessage;
@@ -261,16 +266,25 @@ public sealed class SourceControlPanel : UserControl
 
         // ── Pull requests ──
 
-        _prList = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
-        _prExpander = new Expander
+        _prList = new StackPanel { Spacing = 2, Margin = new Thickness(8, 0, 8, 4) };
+
+        // Open pull requests are worth a look now and then, not a permanent share of a sidebar
+        // that has a file list and a history to fit as well - so the section is a heading until
+        // it is asked for, and gives the rows a scroller of their own rather than pushing
+        // everything below it off the bottom when a repository has a dozen of them open.
+        var prScroller = new ScrollViewer
         {
-            Header = Loc.Get("PullRequests", "Pull requests"),
             Content = _prList,
-            IsVisible = false,
-            FontSize = 12,
-            Padding = new Thickness(8, 4),
+            MaxHeight = 168,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
-        DockPanel.SetDock(_prExpander, Dock.Top);
+        _prSection = new FoldSection(
+            Loc.Get("PullRequests", "Pull requests"), prScroller, DimText(), _isDark)
+        {
+            IsVisible = false,
+        };
+        DockPanel.SetDock(_prSection, Dock.Top);
 
         // ── Commit box ──
 
@@ -330,21 +344,57 @@ public sealed class SourceControlPanel : UserControl
             Foreground = new SolidColorBrush(DimText()),
         };
 
+        // The name-and-size check, on demand rather than only in front of a stage. The point of
+        // the button is that a file can be dealt with - ignored - before it is ever staged.
+        _btnCheck = ToolButton(Loc.Get("RiskyFilesCheckAction", "Check"),
+            Loc.Get("RiskyFilesCheckTooltip", ""), OnCheckRisky);
+        _btnCheck.FontSize = 10.5;
+        _btnCheck.Padding = new Thickness(6, 1);
+        _btnCheck.VerticalAlignment = VerticalAlignment.Center;
+
         var listHeader = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
             Margin = new Thickness(10, 6, 10, 2),
         };
         Grid.SetColumn(_chkStageAll, 0);
         Grid.SetColumn(_lblSummary, 1);
+        Grid.SetColumn(_btnCheck, 2);
         listHeader.Children.Add(_chkStageAll);
         listHeader.Children.Add(_lblSummary);
+        listHeader.Children.Add(_btnCheck);
         DockPanel.SetDock(listHeader, Dock.Top);
 
         _changesList = new StackPanel { Spacing = 0, Margin = new Thickness(4, 2) };
+
+        // ── Ignored ──
+
+        // Ignoring a file makes git stop reporting it, which is the whole point and also the
+        // danger: without somewhere to see the list, the user has hidden files by a route they
+        // cannot find again. This section is that route, collapsed until there is something in it.
+        // The explanation is long and this panel is short, so it hangs off the header rather than
+        // costing four lines of a list that only has room for a couple of rows. Both dialogs that
+        // offer to ignore something spell it out in full at the point of choosing.
+        _ignoreList = new StackPanel { Spacing = 0, Margin = new Thickness(4, 0, 4, 2) };
+        _ignoreSection = new FoldSection(
+            string.Format(Loc.Get("IgnoredSectionFmt", "Ignored ({0})"), 0),
+            _ignoreList, DimText(), _isDark, Loc.Get("IgnoreNote", ""))
+        {
+            IsVisible = false,
+        };
+
+        // Inside the scroller, not docked below it: this half of the panel is a few rows tall, and
+        // a bottom-docked section that expands to its content height leaves the change list with
+        // nothing. Scrolled together, expanding costs scroll distance instead of visible rows.
+        // Under the changes, where a list of things deliberately kept out of the way belongs: the
+        // rows the user is working with keep the top of the scroller.
+        var changesStack = new StackPanel { Spacing = 0 };
+        changesStack.Children.Add(_changesList);
+        changesStack.Children.Add(_ignoreSection);
+
         var changesScroller = new ScrollViewer
         {
-            Content = _changesList,
+            Content = changesStack,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
@@ -408,7 +458,7 @@ public sealed class SourceControlPanel : UserControl
         root.Children.Add(branchBorder);
         root.Children.Add(_status);
         root.Children.Add(_conflictBanner);
-        root.Children.Add(_prExpander);
+        root.Children.Add(_prSection);
         root.Children.Add(_commitBox);
         root.Children.Add(centre);
 
@@ -435,7 +485,10 @@ public sealed class SourceControlPanel : UserControl
         _operation = RepoOperation.None;
         _conflicts = new List<string>();
         _pullRequests = new List<PullRequestInfo>();
+        _ignored = new List<IgnoreEntry>();
         _changesList.Children.Clear();
+        _ignoreList.Children.Clear();
+        _ignoreSection.IsVisible = false;
         _prList.Children.Clear();
         _graph.SetGraph(CommitGraphLayout.Build(new List<GitCommit>()), false);
         _txtMessage.Text = "";
@@ -480,6 +533,16 @@ public sealed class SourceControlPanel : UserControl
     /// </summary>
     public void OnSettingsChanged() => ApplyState();
 
+    /// <summary>
+    /// The commit message as typed. The window rebuilds this panel to pick up a theme or a
+    /// language, and a half-written message is the one thing in it the user cannot get back.
+    /// </summary>
+    public string DraftMessage
+    {
+        get => _txtMessage.Text ?? "";
+        set => _txtMessage.Text = value;
+    }
+
     // ── Reload ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -497,7 +560,10 @@ public sealed class SourceControlPanel : UserControl
         if (_repo.Length == 0)
         {
             _changes = new List<GitChange>();
+            _ignored = new List<IgnoreEntry>();
             _changesList.Children.Clear();
+            _ignoreList.Children.Clear();
+            _ignoreSection.IsVisible = false;
             _lblSummary.Text = Loc.Get("NotAGitRepo");
             _branch = BranchState.None;
             _operation = RepoOperation.None;
@@ -515,10 +581,12 @@ public sealed class SourceControlPanel : UserControl
         var operationTask = GitWriteService.GetRepoOperationAsync(repo);
         var conflictTask = GitWriteService.GetConflictsAsync(repo);
         var logTask = GitLogService.GetLogAsync(repo, GraphLimit);
+        var ignoreTask = GitIgnoreService.ListAsync(repo);
 
         try
         {
-            await Task.WhenAll(changesTask, branchTask, operationTask, conflictTask, logTask);
+            await Task.WhenAll(changesTask, branchTask, operationTask, conflictTask, logTask,
+                ignoreTask);
         }
         catch
         {
@@ -532,9 +600,11 @@ public sealed class SourceControlPanel : UserControl
         _branch = Settled(branchTask) ?? BranchState.None;
         _operation = operationTask.IsCompletedSuccessfully ? operationTask.Result : RepoOperation.None;
         _conflicts = Settled(conflictTask) ?? new List<string>();
+        _ignored = Settled(ignoreTask) ?? new List<IgnoreEntry>();
         var commits = Settled(logTask) ?? new List<GitCommit>();
 
         BuildChangesList();
+        BuildIgnoreList();
         _graph.SetGraph(CommitGraphLayout.Build(commits), _changes.Count > 0, keepSelection: true);
         ApplyState();
 
@@ -592,6 +662,8 @@ public sealed class SourceControlPanel : UserControl
             : $"↑{_branch.Ahead} ↓{_branch.Behind}";
 
         _chkStageAll.IsVisible = isRepo && _changes.Count > 0;
+        _btnCheck.IsVisible = isRepo;
+        _btnCheck.IsEnabled = idle && _changes.Count > 0;
         _suppressStageAll = true;
         _chkStageAll.IsChecked = _changes.Count > 0 && staged == _changes.Count;
         _suppressStageAll = false;
@@ -771,9 +843,104 @@ public sealed class SourceControlPanel : UserControl
 
         var comment = new MenuItem { Header = Loc.Get("CommentOnFile", "Comment on this file...") };
         comment.Click += (_, _) => CommentOnFile(change);
-        row.ContextMenu = new ContextMenu { ItemsSource = new[] { comment } };
+
+        var ignore = new MenuItem { Header = Loc.Get("IgnoreFileAction", "Add to ignore list") };
+        ignore.Click += (_, _) => _ = IgnorePathsAsync(repo, new List<string> { change.Path });
+
+        row.ContextMenu = new ContextMenu { ItemsSource = new[] { comment, ignore } };
 
         return row;
+    }
+
+    // ── The ignore list ────────────────────────────────────────────────
+
+    private void BuildIgnoreList()
+    {
+        _ignoreList.Children.Clear();
+
+        _ignoreSection.Title = string.Format(
+            Loc.Get("IgnoredSectionFmt", "Ignored ({0})"), _ignored.Count);
+        _ignoreSection.IsVisible = _repo.Length > 0 && _ignored.Count > 0;
+        if (_ignored.Count == 0) return;
+
+        foreach (var entry in _ignored)
+            _ignoreList.Children.Add(BuildIgnoreRow(entry));
+    }
+
+    /// <summary>
+    /// One ignored entry, with the way it is ignored spelled out. The two mechanisms behave
+    /// differently - one keeps a file out of every commit, the other only silences local edits
+    /// to a file that stays in the repository - so the row says which, rather than presenting
+    /// them as one undifferentiated list.
+    /// </summary>
+    private Control BuildIgnoreRow(IgnoreEntry entry)
+    {
+        var value = new TextBlock
+        {
+            Text = entry.Value,
+            FontSize = 11.5,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var kind = new TextBlock
+        {
+            Text = Loc.Get(entry.Kind == IgnoreKind.SkipWorktree
+                ? "IgnoreKindSkipWorktree"
+                : "IgnoreKindExclude"),
+            FontSize = 9.5,
+            Opacity = 0.55,
+            Margin = new Thickness(6, 0, 4, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        var remove = GlyphButton("✕", Loc.Get("UnignoreAction", "Remove"),
+            () => _ = UnignoreAsync(_repo, entry));
+        remove.VerticalAlignment = VerticalAlignment.Center;
+
+        // One line: the path takes what is left after a small label and a glyph, and the tooltip
+        // has the whole of it when there is not enough. Two lines per entry was a section as tall
+        // as the change list it sits above, for a list nobody reads twice.
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
+        Grid.SetColumn(value, 0);
+        Grid.SetColumn(kind, 1);
+        Grid.SetColumn(remove, 2);
+        grid.Children.Add(value);
+        grid.Children.Add(kind);
+        grid.Children.Add(remove);
+
+        var row = new Border
+        {
+            Child = grid,
+            Padding = new Thickness(6, 1),
+            CornerRadius = new CornerRadius(4),
+        };
+        // The panel is narrow enough that anything below the top of the tree gets trimmed, and a
+        // half-shown path is not something a user can act on.
+        ToolTip.SetTip(row, entry.Value);
+        return row;
+    }
+
+    /// <summary>
+    /// Adds paths to the ignore list. Nothing is filtered out of <c>_changes</c> afterwards and
+    /// nothing needs to be: git stops listing these paths, so the next reload drops them from
+    /// the panel on its own - and from a "git add -A" typed into the terminal, which a display
+    /// filter would not have touched.
+    /// </summary>
+    private async Task IgnorePathsAsync(string repo, List<string> paths)
+    {
+        if (repo.Length == 0 || paths.Count == 0 || _busy) return;
+
+        // RunAsync raises GitChanged when it finishes, which is what reloads the panel.
+        await RunAsync(Loc.Get("IgnoringStatus", "Updating the ignore list..."),
+            () => GitIgnoreService.AddAsync(repo, paths));
+    }
+
+    private async Task UnignoreAsync(string repo, IgnoreEntry entry)
+    {
+        if (repo.Length == 0 || _busy) return;
+
+        await RunAsync(Loc.Get("UnignoringStatus", "Removing from the ignore list..."),
+            () => GitIgnoreService.RemoveAsync(repo, entry));
     }
 
     // ── Running one git write ──────────────────────────────────────────
@@ -1088,20 +1255,226 @@ public sealed class SourceControlPanel : UserControl
         if (ok && stage) TriggerSecretScan(repo, paths);
     }
 
+    /// <summary>What the user did with a list of flagged files.</summary>
+    private enum RiskyChoice
+    {
+        /// <summary>Backed out. The action that raised the warning does not happen.</summary>
+        Cancel,
+
+        /// <summary>Said the files are fine. The action goes ahead unchanged.</summary>
+        Proceed,
+
+        /// <summary>Asked for the ticked files to stop appearing at all.</summary>
+        Ignore,
+    }
+
+    private sealed record RiskyOutcome(RiskyChoice Choice, List<string> Paths);
+
     /// <summary>
     /// True when nothing in <paramref name="paths"/> is the kind of file that does not belong in a
     /// commit, and otherwise whatever the user answers to being shown the list. This is the cheap
     /// half of the two checks: it reads names and sizes, so it can run in front of the action it
     /// guards, where the AI scan can only follow behind one.
+    ///
+    /// Answering with the ignore list aborts the action as surely as cancelling does - a file the
+    /// user has just said must never be committed is not one to stage on the way out.
     /// </summary>
     private async Task<bool> ConfirmRiskyAsync(string repo, List<string> paths, bool staging)
     {
         var risks = StagingPolicy.Inspect(repo, paths);
         if (risks.Count == 0) return true;
 
-        return await _host.Confirm(Loc.Get("RiskyFilesTitle"),
-            Loc.Get(staging ? "RiskyFilesStageIntro" : "RiskyFilesCommitIntro")
-                + "\n\n" + StagingPolicy.Describe(risks));
+        var outcome = await ShowRiskyDialogAsync(risks,
+            Loc.Get(staging ? "RiskyFilesStageIntro" : "RiskyFilesCommitIntro"),
+            allowProceed: true);
+
+        if (outcome.Choice == RiskyChoice.Ignore && outcome.Paths.Count > 0)
+            await IgnorePathsAsync(repo, outcome.Paths);
+
+        return outcome.Choice == RiskyChoice.Proceed;
+    }
+
+    /// <summary>
+    /// The same check, run because the user asked rather than because they staged something. It
+    /// is the half of the feature that ends the loop the warning alone could not: a file flagged
+    /// here can be dealt with once, before it is ever staged, instead of producing the same
+    /// dialog on every attempt.
+    /// </summary>
+    private async void OnCheckRisky()
+    {
+        if (_repo.Length == 0 || _busy) return;
+
+        var repo = _repo;
+        var paths = _changes.Select(c => c.Path).ToList();
+        if (paths.Count == 0) return;
+
+        // Inspect walks the contents of a collapsed folder, so it does not belong on the UI thread.
+        var risks = await Task.Run(() => StagingPolicy.Inspect(repo, paths));
+        if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
+
+        if (risks.Count == 0)
+        {
+            _host.ShowMessage(Loc.Get("RiskyFilesTitle"), Loc.Get("RiskyFilesNone"));
+            return;
+        }
+
+        var outcome = await ShowRiskyDialogAsync(risks,
+            Loc.Get("RiskyFilesCheckIntro"), allowProceed: false);
+
+        if (outcome.Choice == RiskyChoice.Ignore && outcome.Paths.Count > 0)
+            await IgnorePathsAsync(repo, outcome.Paths);
+    }
+
+    /// <summary>
+    /// The flagged files with a tick box each, and the three things that can be done about them.
+    /// Every file is ticked to begin with, because a list the user asked to see is a list they
+    /// most likely want all of; untick is for the one exception in it.
+    ///
+    /// <paramref name="allowProceed"/> is false when nothing is waiting on the answer - the check
+    /// button - and there is therefore nothing to continue with.
+    /// </summary>
+    private Task<RiskyOutcome> ShowRiskyDialogAsync(IReadOnlyList<StagingRisk> risks,
+        string intro, bool allowProceed)
+    {
+        var none = new RiskyOutcome(RiskyChoice.Cancel, new List<string>());
+        if (TopLevel.GetTopLevel(this) is not Window owner) return Task.FromResult(none);
+
+        var introText = new TextBlock
+        {
+            Text = intro,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+        };
+
+        var boxes = new List<CheckBox>();
+        var list = new StackPanel { Spacing = 1, Margin = new Thickness(0, 10, 0, 0) };
+
+        foreach (var risk in risks)
+        {
+            var path = new TextBlock
+            {
+                Text = risk.Path,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            var reason = new TextBlock
+            {
+                Text = risk.Reason,
+                FontSize = 10.5,
+                Opacity = 0.6,
+                TextWrapping = TextWrapping.Wrap,
+            };
+            var label = new StackPanel { Spacing = 1 };
+            label.Children.Add(path);
+            label.Children.Add(reason);
+
+            var box = new CheckBox
+            {
+                IsChecked = true,
+                Content = label,
+                Tag = risk.Path,
+                Padding = new Thickness(6, 0, 0, 0),
+            };
+            boxes.Add(box);
+            list.Children.Add(box);
+        }
+
+        var scroller = new ScrollViewer
+        {
+            Content = list,
+            MaxHeight = 260,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        };
+
+        var note = new TextBlock
+        {
+            Text = Loc.Get("IgnoreNote", ""),
+            FontSize = 10.5,
+            Opacity = 0.6,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+
+        var ignore = new Button
+        {
+            Content = Loc.Get("IgnoreFileAction", "Add to ignore list"),
+            MinWidth = 130,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var proceed = new Button
+        {
+            Content = Loc.Get("RiskyFilesProceed", "Continue anyway"),
+            MinWidth = 110,
+            IsVisible = allowProceed,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var cancel = new Button
+        {
+            Content = Loc.Get(allowProceed ? "Cancel" : "Close"),
+            MinWidth = 90,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+
+        void SyncIgnore() => ignore.IsEnabled = boxes.Any(b => b.IsChecked == true);
+        foreach (var box in boxes) box.IsCheckedChanged += (_, _) => SyncIgnore();
+        SyncIgnore();
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0),
+        };
+        buttons.Children.Add(ignore);
+        buttons.Children.Add(proceed);
+        buttons.Children.Add(cancel);
+
+        var panel = new StackPanel { Margin = new Thickness(22, 20) };
+        panel.Children.Add(introText);
+        panel.Children.Add(scroller);
+        panel.Children.Add(note);
+        panel.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = Loc.Get("RiskyFilesTitle"),
+            Width = 520,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(_isDark
+                ? Color.FromRgb(30, 30, 32)
+                : Color.FromRgb(246, 246, 250)),
+            Content = panel,
+        };
+
+        var answer = new TaskCompletionSource<RiskyOutcome>();
+        var result = none;
+
+        ignore.Click += (_, _) =>
+        {
+            result = new RiskyOutcome(RiskyChoice.Ignore,
+                boxes.Where(b => b.IsChecked == true)
+                    .Select(b => (string)(b.Tag ?? ""))
+                    .Where(p => p.Length > 0)
+                    .ToList());
+            dialog.Close();
+        };
+        proceed.Click += (_, _) =>
+        {
+            result = new RiskyOutcome(RiskyChoice.Proceed, new List<string>());
+            dialog.Close();
+        };
+        cancel.Click += (_, _) => dialog.Close();
+
+        // Closed rather than each button, so the window's own close box lands on Cancel too.
+        dialog.Closed += (_, _) => answer.TrySetResult(result);
+
+        _ = dialog.ShowDialog(owner);
+        return answer.Task;
     }
 
     // ── Secret scan ────────────────────────────────────────────────────
@@ -1176,6 +1549,12 @@ public sealed class SourceControlPanel : UserControl
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         };
 
+        var ignore = new Button
+        {
+            Content = Loc.Get("SecretScanIgnore", "Add to ignore list"),
+            MinWidth = 130,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
         var unstage = new Button
         {
             Content = Loc.Get("SecretScanUnstage", "Unstage"),
@@ -1195,12 +1574,23 @@ public sealed class SourceControlPanel : UserControl
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 14, 0, 0),
         };
+        buttons.Children.Add(ignore);
         buttons.Children.Add(unstage);
         buttons.Children.Add(keep);
+
+        var note = new TextBlock
+        {
+            Text = Loc.Get("IgnoreNote", ""),
+            FontSize = 10.5,
+            Opacity = 0.6,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
 
         var panel = new StackPanel { Margin = new Thickness(22, 20) };
         panel.Children.Add(intro);
         panel.Children.Add(detailScroller);
+        panel.Children.Add(note);
         panel.Children.Add(buttons);
 
         var dialog = new Window
@@ -1223,6 +1613,14 @@ public sealed class SourceControlPanel : UserControl
             if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
             _ = RunAsync(Loc.Get("UnstagingStatus", "..."),
                 () => GitWriteService.UnstageAsync(repo, justStagedPaths));
+        };
+        // Unstaging as well, but for good: the ignore list takes these paths out of the index on
+        // its way to making git stop reporting them, so this is the stronger of the two answers.
+        ignore.Click += (_, _) =>
+        {
+            dialog.Close();
+            if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
+            _ = IgnorePathsAsync(repo, justStagedPaths);
         };
         keep.Click += (_, _) => dialog.Close();
 
@@ -1340,7 +1738,7 @@ public sealed class SourceControlPanel : UserControl
         if (generation != _refreshGeneration) return;
 
         bool show = _ghReady == true && _onGitHub;
-        _prExpander.IsVisible = show;
+        _prSection.IsVisible = show;
         ApplyState();
         if (!show) return;
 
@@ -1348,7 +1746,7 @@ public sealed class SourceControlPanel : UserControl
         if (generation != _refreshGeneration) return;
 
         _pullRequests = list;
-        _prExpander.Header = string.Format(Loc.Get("PullRequestsFmt", "Pull requests ({0})"), list.Count);
+        _prSection.Title = string.Format(Loc.Get("PullRequestsFmt", "Pull requests ({0})"), list.Count);
         BuildPullRequestList();
     }
 
@@ -1382,34 +1780,56 @@ public sealed class SourceControlPanel : UserControl
         };
 
         var approved = string.Equals(pr.ReviewDecision, "APPROVED", StringComparison.OrdinalIgnoreCase);
+        var metaText = pr.Author + "   " + pr.HeadBranch + " → " + pr.BaseBranch
+            + (pr.IsDraft ? "   " + Loc.Get("PrDraft", "draft") : "")
+            + (approved ? "   ✓ " + Loc.Get("PrApproved", "approved") : "");
         var meta = new TextBlock
         {
-            Text = pr.Author + "   " + pr.HeadBranch + " → " + pr.BaseBranch
-                + (pr.IsDraft ? "   " + Loc.Get("PrDraft", "draft") : "")
-                + (approved ? "   ✓ " + Loc.Get("PrApproved", "approved") : ""),
+            Text = metaText,
             FontSize = 10,
             Opacity = 0.6,
+            Margin = new Thickness(0, 1, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
 
-        var approve = ToolButton(Loc.Get("ApproveAction", "Approve"), "", () => ApprovePullRequest(pr));
+        // Beside the title rather than on a line of their own: two words of button were costing
+        // a third of every row's height for something the tooltip says just as well.
+        var approve = GlyphButton("✓", Loc.Get("ApproveAction", "Approve"), () => ApprovePullRequest(pr));
         approve.IsEnabled = !approved;
-        var open = ToolButton(Loc.Get("OpenInBrowser", "Open"), "", () => OpenUrl(pr.Url));
+        var open = GlyphButton("↗", Loc.Get("OpenInBrowser", "Open"), () => OpenUrl(pr.Url));
 
-        var stack = new StackPanel { Spacing = 3 };
-        stack.Children.Add(title);
-        stack.Children.Add(meta);
-        stack.Children.Add(Row(approve, open));
-
-        return new Border
+        var grid = new Grid
         {
-            Child = stack,
-            Padding = new Thickness(6, 5),
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            RowDefinitions = new RowDefinitions("Auto,Auto"),
+        };
+        Grid.SetColumn(title, 0);
+        Grid.SetRow(title, 0);
+        Grid.SetColumn(meta, 0);
+        Grid.SetRow(meta, 1);
+
+        var actions = Row(approve, open);
+        actions.Margin = new Thickness(6, 0, 0, 0);
+        actions.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(actions, 1);
+        Grid.SetRow(actions, 0);
+        Grid.SetRowSpan(actions, 2);
+
+        grid.Children.Add(title);
+        grid.Children.Add(meta);
+        grid.Children.Add(actions);
+
+        var row = new Border
+        {
+            Child = grid,
+            Padding = new Thickness(6, 3),
             CornerRadius = new CornerRadius(4),
-            Margin = new Thickness(0, 0, 0, 2),
             BorderBrush = new SolidColorBrush(Divider()),
             BorderThickness = new Thickness(0.5),
         };
+        // A branch pair does not fit a sidebar, so the row is where the whole of it lives.
+        ToolTip.SetTip(row, "#" + pr.Number + "  " + pr.Title + "\n" + metaText);
+        return row;
     }
 
     private async void ApprovePullRequest(PullRequestInfo pr)
@@ -1636,11 +2056,140 @@ public sealed class SourceControlPanel : UserControl
         return button;
     }
 
+    /// <summary>
+    /// A button the width of its glyph, for a row that has none to spare. What it does is on the
+    /// tooltip, which is where a sidebar this narrow has to keep it.
+    /// </summary>
+    private Button GlyphButton(string glyph, string tooltip, Action onClick)
+    {
+        var button = new Button
+        {
+            Content = glyph,
+            FontSize = 11,
+            Width = 22,
+            Height = 20,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+        if (tooltip.Length > 0) ToolTip.SetTip(button, tooltip);
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
     private static StackPanel Row(params Control[] children)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         foreach (var child in children) row.Children.Add(child);
         return row;
+    }
+
+    /// <summary>
+    /// A section the user can fold away, headed like the panel's other headings - a chevron and
+    /// a word, on one line. The theme's Expander does the same job in a 40px header inside a
+    /// framed box of its own, which in a sidebar this tall costs two file rows per section that
+    /// the change list never gets back; and it sizes to its content, so the header sits short of
+    /// the panel edge while its rows run past it.
+    /// </summary>
+    private sealed class FoldSection : StackPanel
+    {
+        private const string Folded = "▸";
+        private const string Unfolded = "▾";
+        private const string FoldedDrop = "▼";
+        private const string UnfoldedDrop = "▲";
+
+        private readonly TextBlock _chevron;
+        private readonly TextBlock _drop;
+        private readonly TextBlock _label;
+        private readonly Control _body;
+        private bool _isOpen;
+
+        public FoldSection(string title, Control body, Color text, bool isDark, string tip = "")
+        {
+            _body = body;
+            _body.IsVisible = false;
+
+            _chevron = new TextBlock
+            {
+                Text = Folded,
+                Width = 12,
+                FontSize = 9,
+                Foreground = new SolidColorBrush(text),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            _label = new TextBlock
+            {
+                Text = title,
+                FontSize = 11,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = new SolidColorBrush(text),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            // A second marker at the panel edge, where a drop-down keeps its arrow. The heading
+            // reads as a heading, and a heading is not obviously something to click - the left
+            // chevron is small and easy to take for a bullet, so the affordance is repeated
+            // where the eye already looks for one.
+            _drop = new TextBlock
+            {
+                Text = FoldedDrop,
+                FontSize = 8,
+                Opacity = 0.75,
+                Margin = new Thickness(6, 0, 2, 0),
+                Foreground = new SolidColorBrush(text),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+            Grid.SetColumn(_chevron, 0);
+            Grid.SetColumn(_label, 1);
+            Grid.SetColumn(_drop, 2);
+            grid.Children.Add(_chevron);
+            grid.Children.Add(_label);
+            grid.Children.Add(_drop);
+
+            var header = new Border
+            {
+                Child = grid,
+                Padding = new Thickness(8, 4),
+                Background = Brushes.Transparent,
+                Cursor = new Cursor(StandardCursorType.Hand),
+            };
+            if (tip.Length > 0) ToolTip.SetTip(header, tip);
+
+            var hover = new SolidColorBrush(isDark
+                ? Color.FromArgb(30, 255, 255, 255)
+                : Color.FromArgb(20, 0, 0, 0));
+            header.PointerEntered += (_, _) => header.Background = hover;
+            header.PointerExited += (_, _) => header.Background = Brushes.Transparent;
+            header.PointerPressed += (_, e) =>
+            {
+                if (e.GetCurrentPoint(header).Properties.IsLeftButtonPressed) IsOpen = !IsOpen;
+            };
+
+            Children.Add(header);
+            Children.Add(_body);
+        }
+
+        public string Title
+        {
+            get => _label.Text ?? "";
+            set => _label.Text = value;
+        }
+
+        public bool IsOpen
+        {
+            get => _isOpen;
+            set
+            {
+                _isOpen = value;
+                _chevron.Text = value ? Unfolded : Folded;
+                _drop.Text = value ? UnfoldedDrop : FoldedDrop;
+                _body.IsVisible = value;
+            }
+        }
     }
 
     // ── Theme ──────────────────────────────────────────────────────────

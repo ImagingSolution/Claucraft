@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 
 namespace Claucraft.Services;
 
@@ -388,6 +388,23 @@ public static class Loc
         ["RiskyKindLocalSetting"] = new() { ["English"] = "settings for one machine or editor", ["日本語"] = "PC・エディタ固有の設定" },
         ["RiskyKindBuildOutput"] = new() { ["English"] = "build output or dependency", ["日本語"] = "ビルド生成物・依存ファイル" },
         ["RiskyKindLargeFileFmt"] = new() { ["English"] = "large file ({0})", ["日本語"] = "巨大なファイル ({0})" },
+        ["RiskyFilesCheckAction"] = new() { ["English"] = "Check", ["日本語"] = "チェック" },
+        ["RiskyFilesCheckTooltip"] = new() { ["English"] = "Check the changed files for credentials, machine-local settings, build output and oversized files", ["日本語"] = "変更ファイルに鍵・PC固有の設定・ビルド生成物・巨大ファイルが含まれていないか確認します" },
+        ["RiskyFilesCheckIntro"] = new() { ["English"] = "These changed files are normally kept out of a repository. Add the ones you tick to the ignore list so they stop appearing here.", ["日本語"] = "次の変更ファイルは通常リポジトリに入れません。チェックしたものを無視リストに追加すると、以後この一覧に出なくなります。" },
+        ["RiskyFilesNone"] = new() { ["English"] = "Nothing among the changed files looks like a credential, a machine-local setting, build output or an oversized file.", ["日本語"] = "変更ファイルの中に鍵・PC固有の設定・ビルド生成物・巨大ファイルは見つかりませんでした。" },
+        ["RiskyFilesProceed"] = new() { ["English"] = "Continue anyway", ["日本語"] = "そのまま続行" },
+
+        // The ignore list: files git itself has been told to stop reporting, for this clone only.
+        ["IgnoreFileAction"] = new() { ["English"] = "Add to ignore list", ["日本語"] = "無視リストに追加" },
+        ["IgnoredSectionFmt"] = new() { ["English"] = "Ignored ({0})", ["日本語"] = "無視中 ({0})" },
+        ["UnignoreAction"] = new() { ["English"] = "Remove", ["日本語"] = "解除" },
+        ["IgnoreKindExclude"] = new() { ["English"] = "not committed", ["日本語"] = "コミットしない" },
+        ["IgnoreKindSkipWorktree"] = new() { ["English"] = "edits ignored", ["日本語"] = "変更を無視" },
+        ["IgnoringStatus"] = new() { ["English"] = "Updating the ignore list...", ["日本語"] = "無視リストを更新中..." },
+        ["UnignoringStatus"] = new() { ["English"] = "Removing from the ignore list...", ["日本語"] = "無視リストから解除中..." },
+        ["IgnoreWriteFailed"] = new() { ["English"] = "Could not write .git/info/exclude.", ["日本語"] = ".git/info/exclude を書き込めませんでした。" },
+        ["IgnoreNote"] = new() { ["English"] = "The ignore list applies to this clone only: it is never committed and never reaches anyone else. Untracked files go into .git/info/exclude; a tracked file, which no ignore pattern can reach, gets git's skip-worktree bit instead. Anything staged is unstaged first.", ["日本語"] = "無視リストはこのクローンだけに効きます。コミットされず、他の人には伝わりません。未追跡ファイルは .git/info/exclude に、無視パターンが効かない追跡済みファイルは git の skip-worktree で設定します。ステージ済みのものは先にアンステージされます。" },
+        ["SecretScanIgnore"] = new() { ["English"] = "Add to ignore list", ["日本語"] = "無視リストに追加" },
 
         // Pull requests.
         ["PullRequests"] = new() { ["English"] = "Pull requests", ["日本語"] = "プルリクエスト" },
