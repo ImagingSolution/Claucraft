@@ -2794,6 +2794,11 @@ internal partial class AppShell : UserControl, IDockOwner
         Loc.Language = language;
         ApplyLocalization();
 
+        // ApplyLocalization reaches the XAML this window owns; the source-control panel builds
+        // its own controls in code and reads every string once, when it is constructed. Same
+        // reason the theme flip has to build it again.
+        CreateSourceControlPanel();
+
         foreach (var child in _children)
         {
             child.Terminal.SetFont(_settings.FontFamily, _settings.FontSize);
@@ -3200,11 +3205,15 @@ internal partial class AppShell : UserControl, IDockOwner
 
     /// <summary>
     /// Builds the source-control panel and hands it to the host in the sidebar. Called once at
-    /// startup and again whenever the theme flips, since the panel resolves its colours at
-    /// construction.
+    /// startup and again whenever the theme or the language changes, since the panel resolves
+    /// its colours and its strings at construction.
     /// </summary>
     private void CreateSourceControlPanel()
     {
+        // Rebuilding discards whatever the panel was holding. The commit message is the part of
+        // that the user typed themselves, so it comes across to the new one.
+        var draft = _sourceControl?.DraftMessage ?? "";
+
         var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
         var host = new Controls.SourceControlHost(
             SendToActiveTerminal,
@@ -3220,6 +3229,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         _sourceControl = panel;
         SourceControlHost.Content = panel;
+        panel.DraftMessage = draft;
         panel.SetRepository(_projectFolder);
         if (_activeSidePanel == SidebarPanel.SourceControl) panel.OnPanelShown();
     }
@@ -6653,6 +6663,7 @@ internal partial class AppShell : UserControl, IDockOwner
     private void AdoptSharedLanguage()
     {
         ApplyLocalization();
+        CreateSourceControlPanel();
         foreach (var child in _children)
             child.Terminal.SetFont(_settings.FontFamily, _settings.FontSize);
     }
