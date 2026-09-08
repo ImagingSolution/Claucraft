@@ -2242,6 +2242,25 @@ internal partial class AppShell : UserControl, IDockOwner
     private readonly List<GraphChildInfo> _graphChildren = new();
 
     /// <summary>
+    /// Whether some window, in this shell or a dragged-out one, is already showing the history
+    /// for <paramref name="repoRoot"/>. Asked by the source-control panels, which fold their own
+    /// history section away while the repository has a window of its own.
+    /// </summary>
+    internal static bool IsCommitGraphOpen(string repoRoot) =>
+        !string.IsNullOrEmpty(repoRoot) &&
+        Shells.Any(s => s._graphChildren.Any(g =>
+            string.Equals(g.RepoRoot, repoRoot, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// Tells every source-control panel to look again, after a history window opened or closed.
+    /// All of them, not just this shell's: the answer is application-wide.
+    /// </summary>
+    private static void GraphWindowsChanged()
+    {
+        foreach (var shell in Shells) shell._sourceControl?.OnCommitGraphWindowsChanged();
+    }
+
+    /// <summary>
     /// Opens the commit history for <paramref name="repoRoot"/> in its own window on the MDI
     /// canvas, or brings the existing one to front if that repository is already showing.
     /// </summary>
@@ -2345,6 +2364,7 @@ internal partial class AppShell : UserControl, IDockOwner
         container.AddHandler(InputElement.PointerPressedEvent,
             (_, _) => SetActiveLayoutItem(entry), RoutingStrategies.Tunnel);
         _graphChildren.Add(entry);
+        GraphWindowsChanged();
         entry.Owner = this;
         TabDrag.Hook(entry);
         WindowStrip.Children.Add(stripButton);
@@ -2363,6 +2383,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         _graphChildren.Remove(entry);
         entry.Owner?.Release(entry);
+        GraphWindowsChanged();
     }
 
 
@@ -3220,7 +3241,8 @@ internal partial class AppShell : UserControl, IDockOwner
             ShowMessageDialog,
             ShowConfirmDialog,
             (title, watermark, initial) => ShowTextInputDialog(title, watermark, initial),
-            OpenCommitGraphWindow);
+            OpenCommitGraphWindow,
+            IsCommitGraphOpen);
 
         var panel = new Controls.SourceControlPanel(_isDark, typeface, _settings, _cli, host);
         // A write inside the panel moves the branch or the working tree, which the status bar
@@ -7638,6 +7660,10 @@ internal partial class AppShell : UserControl, IDockOwner
 
         Shells.Remove(this);
         DockOwners.Unregister(this);
+
+        // Whatever history windows this shell was holding have gone with it, so the panels that
+        // folded their history away on their account can have it back.
+        GraphWindowsChanged();
 
         CloseWelcomePage();
         _insightTimer?.Stop();

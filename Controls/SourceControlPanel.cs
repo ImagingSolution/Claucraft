@@ -27,12 +27,17 @@ namespace Claucraft.Controls;
 /// as a window on the MDI canvas. The panel does not own that window: it lives alongside the
 /// terminals and file editors, not on top of them.
 /// </param>
+/// <param name="IsCommitGraphOpen">
+/// True while any window anywhere in the application is already showing the history for this
+/// repository root. The panel folds its own history section away for as long as that holds.
+/// </param>
 public sealed record SourceControlHost(
     Action<string> SendToTerminal,
     Action<string, string> ShowMessage,
     Func<string, string, Task<bool>> Confirm,
     Func<string, string, string, Task<string?>> TextInput,
-    Action<string, string> OpenCommitGraph);
+    Action<string, string> OpenCommitGraph,
+    Func<string, bool> IsCommitGraphOpen);
 
 /// <summary>
 /// Everything git and GitHub in one panel: what has changed, what is staged, the branch and how
@@ -134,6 +139,15 @@ public sealed class SourceControlPanel : UserControl
     private readonly Button _btnCommitPush;
 
     private readonly CommitGraphView _graph;
+    private readonly Grid _centre;
+    private readonly GridSplitter _splitter;
+    private readonly Border _graphBorder;
+
+    /// <summary>
+    /// How tall the history was before it moved out into its own window, so the split the user
+    /// dragged is still theirs when the window closes.
+    /// </summary>
+    private GridLength _graphRow = new(2, GridUnitType.Star);
 
     /// <summary>Raised after a write, so the window can bring its own git readouts up to date.</summary>
     public event EventHandler? GitChanged;
@@ -155,15 +169,14 @@ public sealed class SourceControlPanel : UserControl
         _btnNewBranch = ToolButton(Loc.Get("NewBranch", "New branch"), "", OnNewBranch);
         _btnMerge = ToolButton(Loc.Get("MergeAction", "Merge"), Loc.Get("MergeTooltip", ""), OnMerge);
         _btnPr = ToolButton(Loc.Get("CreatePrAction", "Pull request"), "", OnCreatePullRequest);
-        _btnRefresh = ToolButton("⟳", Loc.Get("Refresh", "Refresh"), () => _ = RefreshAsync());
-        _btnExpand = ToolButton("⤢", Loc.Get("OpenGraphAction", "Open in a window"), OpenGraphWindow);
+        // Neither of these is a toolbar action: refresh only rereads what the panel already
+        // shows, and the graph button opens a window. Both live further down, on a heading row
+        // that has width to spare, at glyph width - the toolbar's two lines are for writes.
+        _btnRefresh = GlyphButton("⟳", Loc.Get("Refresh", "Refresh"), () => _ = RefreshAsync());
+        _btnExpand = GlyphButton("⤢", Loc.Get("OpenGraphAction", "Open in a window"), OpenGraphWindow);
 
         var remoteRow = Row(_btnFetch, _btnPull, _btnPush);
         var branchRow = Row(_btnNewBranch, _btnMerge, _btnPr);
-        // Refresh and "open in a window" ride along on the branch row below. A third toolbar row
-        // costs the file list a line it cannot spare at sidebar width.
-        var viewRow = Row(_btnRefresh, _btnExpand);
-        viewRow.Margin = new Thickness(6, 0, 0, 0);
 
         var toolbarStack = new StackPanel { Spacing = 4, Margin = new Thickness(8, 6) };
         toolbarStack.Children.Add(remoteRow);
@@ -207,14 +220,18 @@ public sealed class SourceControlPanel : UserControl
             Foreground = new SolidColorBrush(DimText()),
             VerticalAlignment = VerticalAlignment.Center,
         };
+        _btnRefresh.HorizontalAlignment = HorizontalAlignment.Right;
+        _btnRefresh.VerticalAlignment = VerticalAlignment.Center;
+        _btnRefresh.Margin = new Thickness(6, 0, 0, 0);
+
         Grid.SetColumn(branchGlyph, 0);
         Grid.SetColumn(_btnBranch, 1);
         Grid.SetColumn(_lblTracking, 2);
-        Grid.SetColumn(viewRow, 3);
+        Grid.SetColumn(_btnRefresh, 3);
         branchGrid.Children.Add(branchGlyph);
         branchGrid.Children.Add(_btnBranch);
         branchGrid.Children.Add(_lblTracking);
-        branchGrid.Children.Add(viewRow);
+        branchGrid.Children.Add(_btnRefresh);
 
         var branchBorder = new Border
         {
@@ -299,8 +316,10 @@ public sealed class SourceControlPanel : UserControl
         };
 
         _btnGenerate = ToolButton(Loc.Get("GenerateMessage", "AI draft"), "", OnGenerateMessage);
-        _btnLanguage = ToolButton("EN", Loc.Get("CommitLanguageTooltip", ""), OnToggleLanguage);
-        _btnLanguage.MinWidth = 34;
+        _btnLanguage = ToolButton("English", Loc.Get("CommitLanguageTooltip", ""), OnToggleLanguage);
+        // Each name is written in its own language, so the button reads the same whichever
+        // interface language is set. Wide enough for both, so toggling does not shift the row.
+        _btnLanguage.MinWidth = 62;
 
         _btnCommit = ToolButton(Loc.Get("CommitAction", "Commit"), "", OnCommit);
         _btnCommit.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -421,16 +440,33 @@ public sealed class SourceControlPanel : UserControl
             Text = Loc.Get("HistorySection", "History"),
             FontSize = 11,
             FontWeight = FontWeight.SemiBold,
-            Margin = new Thickness(10, 5, 10, 3),
+            Margin = new Thickness(10, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center,
             Foreground = new SolidColorBrush(DimText()),
         };
-        DockPanel.SetDock(graphHeading, Dock.Top);
+
+        // The heading row has width to spare and the button acts on the graph directly under it,
+        // so it sits here rather than on the branch row, which was only lending it space.
+        _btnExpand.HorizontalAlignment = HorizontalAlignment.Right;
+        _btnExpand.VerticalAlignment = VerticalAlignment.Center;
+        _btnExpand.Margin = new Thickness(0, 0, 6, 0);
+
+        var graphHeader = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+            Margin = new Thickness(0, 3, 0, 2),
+        };
+        Grid.SetColumn(graphHeading, 0);
+        Grid.SetColumn(_btnExpand, 1);
+        graphHeader.Children.Add(graphHeading);
+        graphHeader.Children.Add(_btnExpand);
+        DockPanel.SetDock(graphHeader, Dock.Top);
 
         var graphArea = new DockPanel();
-        graphArea.Children.Add(graphHeading);
+        graphArea.Children.Add(graphHeader);
         graphArea.Children.Add(graphScroller);
 
-        var graphBorder = new Border
+        _graphBorder = new Border
         {
             Child = graphArea,
             BorderBrush = new SolidColorBrush(Divider()),
@@ -439,19 +475,19 @@ public sealed class SourceControlPanel : UserControl
 
         // The two halves are resizable because which one matters depends on the moment: reviewing
         // a change wants the file list, working out what to branch from wants the history.
-        var centre = new Grid { RowDefinitions = new RowDefinitions("3*,4,2*") };
-        var splitter = new GridSplitter
+        _centre = new Grid { RowDefinitions = new RowDefinitions("3*,4,2*") };
+        _splitter = new GridSplitter
         {
             Height = 4,
             ResizeDirection = GridResizeDirection.Rows,
             Background = new SolidColorBrush(Divider()),
         };
         Grid.SetRow(changesArea, 0);
-        Grid.SetRow(splitter, 1);
-        Grid.SetRow(graphBorder, 2);
-        centre.Children.Add(changesArea);
-        centre.Children.Add(splitter);
-        centre.Children.Add(graphBorder);
+        Grid.SetRow(_splitter, 1);
+        Grid.SetRow(_graphBorder, 2);
+        _centre.Children.Add(changesArea);
+        _centre.Children.Add(_splitter);
+        _centre.Children.Add(_graphBorder);
 
         var root = new DockPanel();
         root.Children.Add(toolbar);
@@ -460,7 +496,7 @@ public sealed class SourceControlPanel : UserControl
         root.Children.Add(_conflictBanner);
         root.Children.Add(_prSection);
         root.Children.Add(_commitBox);
-        root.Children.Add(centre);
+        root.Children.Add(_centre);
 
         Content = root;
         ApplyState();
@@ -529,7 +565,7 @@ public sealed class SourceControlPanel : UserControl
 
     /// <summary>
     /// The settings screen owns the same two preferences this panel shows on its toolbar, so a
-    /// change there has to reach the [JA|EN] toggle here.
+    /// change there has to reach the commit-language toggle here.
     /// </summary>
     public void OnSettingsChanged() => ApplyState();
 
@@ -638,6 +674,8 @@ public sealed class SourceControlPanel : UserControl
         bool hasBranch = _branch.Current.Length > 0;
         int staged = _changes.Count(c => c.Staged);
 
+        ApplyGraphVisibility();
+
         _btnFetch.IsEnabled = idle;
         _btnPull.IsEnabled = settled;
         _btnPush.IsEnabled = settled && hasBranch;
@@ -680,7 +718,7 @@ public sealed class SourceControlPanel : UserControl
             : string.Format(Loc.Get("GenerateUnavailableFmt", "{0} has no one-shot mode"), _cli.Active.Name));
 
         _btnLanguage.Content =
-            CommitMessageService.ResolveLanguage(_settings.CommitMessageLanguage) == "ja" ? "日" : "EN";
+            CommitMessageService.ResolveLanguage(_settings.CommitMessageLanguage) == "ja" ? "日本語" : "English";
 
         bool interrupted = _operation != RepoOperation.None || _conflicts.Count > 0;
         _conflictBanner.IsVisible = isRepo && interrupted;
@@ -2013,6 +2051,44 @@ public sealed class SourceControlPanel : UserControl
         if (_repo.Length == 0) return;
 
         _host.OpenCommitGraph(_repo, System.IO.Path.GetFileName(_repo.TrimEnd('\\', '/')));
+        ApplyGraphVisibility();
+    }
+
+    /// <summary>
+    /// Called when a commit-history window opens or closes anywhere in the application, since
+    /// either can be the one this panel's repository was showing.
+    /// </summary>
+    public void OnCommitGraphWindowsChanged() => ApplyGraphVisibility();
+
+    /// <summary>
+    /// The history is either in this panel or in its own window, never both: the same commits
+    /// drawn twice are two readouts to keep in step, and the sidebar copy is the one with no room
+    /// to be read. So the section folds away while the window is up and the file list takes the
+    /// whole panel, and it comes back - at the height the user last dragged it to - when the
+    /// window closes.
+    /// </summary>
+    private void ApplyGraphVisibility()
+    {
+        var show = !_host.IsCommitGraphOpen(_repo);
+        if (show == _graphBorder.IsVisible) return;
+
+        if (show)
+        {
+            _centre.RowDefinitions[1].Height = new GridLength(4);
+            _centre.RowDefinitions[2].Height = _graphRow;
+        }
+        else
+        {
+            // Hiding the controls is not enough: a star-sized row keeps its share of the panel
+            // whether or not anything is drawn in it, so the row itself has to go to nothing for
+            // the change list to gain the space.
+            _graphRow = _centre.RowDefinitions[2].Height;
+            _centre.RowDefinitions[1].Height = new GridLength(0);
+            _centre.RowDefinitions[2].Height = new GridLength(0);
+        }
+
+        _splitter.IsVisible = show;
+        _graphBorder.IsVisible = show;
     }
 
     private async void ShowDiff(GitChange change)
