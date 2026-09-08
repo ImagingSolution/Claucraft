@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -13,7 +14,16 @@ public enum SecretScanVerdict { Safe, Risk }
 /// A verdict plus, when it is <see cref="SecretScanVerdict.Risk"/>, the AI's own words about what
 /// it found and where.
 /// </summary>
-public sealed record SecretScanResult(SecretScanVerdict Verdict, string Detail);
+public sealed record SecretScanResult(SecretScanVerdict Verdict, string Detail)
+{
+    /// <summary>
+    /// The staged files this verdict is about. A scan covers everything in the index, not only
+    /// what the last stage action put there, so these are the paths a dialog's answers have to
+    /// act on - naming a file in the warning and then unstaging or ignoring a different one is
+    /// worse than doing nothing. Empty on a single file's own verdict, which knows no path.
+    /// </summary>
+    public IReadOnlyList<string> Paths { get; init; } = Array.Empty<string>();
+}
 
 /// <summary>
 /// Asks whichever AI CLI is selected to read the staged diff and say whether it looks safe to
@@ -66,7 +76,10 @@ public static class SecretScanService
         if (risky.Count == 0) return null;
 
         var detail = string.Join("\n\n", risky.Select(r => $"{r.path}:\n{r.result!.Detail}"));
-        return new SecretScanResult(SecretScanVerdict.Risk, detail);
+        return new SecretScanResult(SecretScanVerdict.Risk, detail)
+        {
+            Paths = risky.Select(r => r.path).ToList(),
+        };
     }
 
     /// <summary>One file's own staged diff, truncated and scanned on its own.</summary>

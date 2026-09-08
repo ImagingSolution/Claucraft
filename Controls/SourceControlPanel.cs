@@ -928,7 +928,8 @@ public sealed class SourceControlPanel : UserControl
     /// </summary>
     private async Task IgnorePathsAsync(string repo, List<string> paths)
     {
-        if (repo.Length == 0 || paths.Count == 0 || _busy) return;
+        if (repo.Length == 0 || paths.Count == 0) return;
+        if (!await WaitForIdleAsync()) return;
 
         // RunAsync raises GitChanged when it finishes, which is what reloads the panel.
         await RunAsync(Loc.Get("IgnoringStatus", "Updating the ignore list..."),
@@ -937,10 +938,27 @@ public sealed class SourceControlPanel : UserControl
 
     private async Task UnignoreAsync(string repo, IgnoreEntry entry)
     {
-        if (repo.Length == 0 || _busy) return;
+        if (repo.Length == 0) return;
+        if (!await WaitForIdleAsync()) return;
 
         await RunAsync(Loc.Get("UnignoringStatus", "Removing from the ignore list..."),
             () => GitIgnoreService.RemoveAsync(repo, entry));
+    }
+
+    /// <summary>
+    /// Waits out a git write already running, up to ten seconds. The panel's buttons are disabled
+    /// while one is in flight, so returning on <c>_busy</c> is honest for them - but the ignore
+    /// list is also reached from the scan's own dialog, which appears whenever the AI answers and
+    /// can land on top of the five-minute auto-fetch. There the same check made the click do
+    /// nothing and say nothing. Waiting also serialises the writes, which is what matters: two
+    /// git commands rewriting the index at once is the one outcome to avoid.
+    /// </summary>
+    private async Task<bool> WaitForIdleAsync()
+    {
+        for (int i = 0; i < 100 && _busy; i++)
+            await Task.Delay(100);
+
+        return !_busy;
     }
 
     // ── Running one git write ──────────────────────────────────────────
@@ -1520,13 +1538,20 @@ public sealed class SourceControlPanel : UserControl
     }
 
     /// <summary>
-    /// The dialog for a RISK verdict: the AI's own words, and a choice between leaving the file(s)
-    /// staged and undoing exactly the stage action that triggered this scan.
+    /// The dialog for a RISK verdict: the AI's own words, and a choice between leaving the flagged
+    /// file(s) staged, unstaging them, or keeping git from reporting them again.
     /// </summary>
     private void ShowSecretWarning(SecretScanResult result, string repo, List<string> justStagedPaths)
     {
         var owner = TopLevel.GetTopLevel(this) as Window;
         if (owner == null) return;
+
+        // Every answer here acts on the files the scan flagged, which is not the same list as the
+        // stage action that set it off: the scan reads the whole index, so a file staged earlier
+        // can be the one it objects to. Acting on the stage action instead left the flagged file
+        // exactly where it was and quietly ignored an innocent one in its place. A verdict that
+        // names no file at all - only the older parse path can produce one - falls back to it.
+        var flagged = result.Paths.Count > 0 ? result.Paths.ToList() : justStagedPaths;
 
         var intro = new TextBlock
         {
@@ -1611,8 +1636,7 @@ public sealed class SourceControlPanel : UserControl
         {
             dialog.Close();
             if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
-            _ = RunAsync(Loc.Get("UnstagingStatus", "..."),
-                () => GitWriteService.UnstageAsync(repo, justStagedPaths));
+            _ = UnstageFlaggedAsync();
         };
         // Unstaging as well, but for good: the ignore list takes these paths out of the index on
         // its way to making git stop reporting them, so this is the stronger of the two answers.
@@ -1620,11 +1644,18 @@ public sealed class SourceControlPanel : UserControl
         {
             dialog.Close();
             if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
-            _ = IgnorePathsAsync(repo, justStagedPaths);
+            _ = IgnorePathsAsync(repo, flagged);
         };
         keep.Click += (_, _) => dialog.Close();
 
         _ = dialog.ShowDialog(owner);
+
+        async Task UnstageFlaggedAsync()
+        {
+            if (!await WaitForIdleAsync()) return;
+            await RunAsync(Loc.Get("UnstagingStatus", "..."),
+                () => GitWriteService.UnstageAsync(repo, flagged));
+        }
     }
 
     private async void OnCommit() => await CommitAsync();
