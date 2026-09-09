@@ -131,6 +131,14 @@ internal partial class AppShell : UserControl, IDockOwner
     private bool _sawWorking;
     private int _idlePolls;
 
+    /// <summary>
+    /// The active window's turn state as <see cref="IsChildBusy"/> last judged it - the spinner
+    /// plus everything still running behind it. Cached for the poll rather than recomputed:
+    /// the status bar, the progress line and the blink all have to agree, and the check reads
+    /// the disk.
+    /// </summary>
+    private bool _activeBusy;
+
     /// <summary>Banner action that opens the hand-off flow rather than typing a slash command.</summary>
     private const string HandoffActionCommand = "claucraft:handoff";
 
@@ -281,6 +289,15 @@ internal partial class AppShell : UserControl, IDockOwner
 
         /// <summary>Consecutive idle polls since <see cref="SawWorking"/>, debouncing that edge.</summary>
         public int IdlePolls { get; set; }
+
+        /// <summary>
+        /// Claucraft's own jobs for this window that have not come back yet, by name. The CLI
+        /// can hand the prompt back while the app is still finishing what the turn started -
+        /// snapshotting the tree for a checkpoint, say - and a window that calls itself done
+        /// with one of these outstanding is answering for the CLI alone, not for the turn.
+        /// Keyed by name rather than counted so a job cannot be ended twice.
+        /// </summary>
+        public HashSet<string> PendingWork { get; } = new(StringComparer.Ordinal);
 
         /// <summary>
         /// The name the transcript gives this window's session, once one has been read. It
@@ -3799,6 +3816,7 @@ internal partial class AppShell : UserControl, IDockOwner
             if (_bannerKey != null) HideBanner();
             _sawWorking = false;
             _idlePolls = 0;
+            _activeBusy = false;
             return;
         }
 
@@ -3808,8 +3826,12 @@ internal partial class AppShell : UserControl, IDockOwner
 
         _insight = TerminalInsight.Analyze(screen);
 
+        // Judged once here and reused for the rest of the poll: the blink, the progress line
+        // and the activity readout all answer the same question and must not disagree.
+        _activeBusy = IsChildBusy(_children[_activeChildIndex], _insight.IsWorking);
+
         // The blink is a signal, not a readout, so it survives the status-bar toggles.
-        NoteRunState(_insight);
+        NoteRunState(_activeBusy);
 
         if (!_settings.EnableLiveStatus && !_settings.EnableErrorBanner)
         {
@@ -3828,10 +3850,30 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     /// <summary>
+    /// Whether a window still has a turn in flight.
+    ///
+    /// The spinner is only half the answer. The CLI takes the spinner down as soon as it has
+    /// nothing further to say, and that is not the same as having nothing left running: a
+    /// backgrounded subagent or a <c>run_in_background</c> command is answered the instant it
+    /// launches, so a turn that dispatched one hands the prompt back with the work still going.
+    /// Reporting that as "done" - green dot, no progress line, the frame blinking to say the
+    /// answer is in - was the whole complaint. Claucraft's own jobs for the window count too:
+    /// <see cref="MdiChildInfo.PendingWork"/> holds whatever the turn started on this side.
+    ///
+    /// Ordered cheapest first, because this runs for every window on every 700 ms poll: the
+    /// transcript is only consulted once the two in-memory checks have both come back false.
+    /// </summary>
+    private bool IsChildBusy(MdiChildInfo child, bool spinner)
+    {
+        if (spinner || child.PendingWork.Count > 0) return true;
+        return SubagentMonitor.AnyWorkPending(ResolveSessionPath(child));
+    }
+
+    /// <summary>
     /// Runs the progress line under the input row of every child that is mid-turn, so a window
-    /// working in the background still shows it. The active child reuses the snapshot
-    /// <see cref="RefreshLiveStatus"/> just took; the rest only need the spinner, which is
-    /// always on screen, so they read the screen without its scrollback.
+    /// working in the background still shows it. The active child reuses the judgement
+    /// <see cref="RefreshLiveStatus"/> just made; the rest read the spinner off their own
+    /// screen, which always carries it, so they need no scrollback.
     /// </summary>
     private void RefreshGenerationBars()
     {
@@ -3842,8 +3884,8 @@ internal partial class AppShell : UserControl, IDockOwner
             try
             {
                 bool working = i == _activeChildIndex
-                    ? _insight.IsWorking
-                    : TerminalInsight.IsWorking(terminal.GetScreenText(0));
+                    ? _activeBusy
+                    : IsChildBusy(child, TerminalInsight.IsWorking(terminal.GetScreenText(0)));
                 terminal.IsGenerating = working;
                 PaintChildDots(child);
                 NoteChildTurnEnd(child, working);
@@ -3885,13 +3927,14 @@ internal partial class AppShell : UserControl, IDockOwner
     private const int TurnEndIdlePolls = 2;
 
     /// <summary>
-    /// Watches the working → idle edge and blinks the active window's frame when the CLI hands
-    /// the prompt back. The idle state has to hold for two polls: mid-turn the spinner can be
-    /// absent from a single frame, and blinking on that would be noise.
+    /// Watches the working → idle edge and blinks the active window's frame when the turn is
+    /// really over - see <see cref="IsChildBusy"/> for what "really" takes in beyond the
+    /// spinner. The idle state has to hold for two polls: mid-turn the spinner can be absent
+    /// from a single frame, and blinking on that would be noise.
     /// </summary>
-    private void NoteRunState(TerminalSnapshot snap)
+    private void NoteRunState(bool busy)
     {
-        if (snap.IsWorking)
+        if (busy)
         {
             _sawWorking = true;
             _idlePolls = 0;
@@ -4070,13 +4113,17 @@ internal partial class AppShell : UserControl, IDockOwner
     /// <summary>
     /// What the AI is doing right now, with the elapsed time, and the stop control beside it.
     /// Both belong to a turn in flight, so they share one visibility and vanish together when
-    /// the prompt comes back.
+    /// the turn is over - which includes whatever the turn left running behind the prompt,
+    /// hence <see cref="_activeBusy"/> rather than the spinner alone. Once the spinner is gone
+    /// the CLI stops naming an activity, so the row falls back to the bare "working" label.
     /// </summary>
     private void ApplyRunReadout(TerminalSnapshot snap)
     {
-        bool running = snap.IsWorking;
+        bool running = _activeBusy;
 
         string text = snap.ActivityText;
+        if (running && !snap.IsWorking)
+            text = Loc.Get("ActivityBackground", "Background work still running…");
         if (snap.ElapsedSeconds is int secs && secs > 0)
         {
             var elapsed = FormatElapsed(secs);
@@ -5271,12 +5318,19 @@ internal partial class AppShell : UserControl, IDockOwner
 
         Debug.WriteLine($"[Checkpoint] capturing for {folder}: {label}");
 
+        // A stash commit over a large tree outlasts short turns, and the window must not call
+        // itself finished while its own snapshot is still being taken.
+        entry.PendingWork.Add(CheckpointWork);
         try
         {
             await _checkpoints.CreateAsync(folder, label);
         }
         catch { }
+        finally { entry.PendingWork.Remove(CheckpointWork); }
     }
+
+    /// <summary>Name <see cref="CaptureCheckpoint"/> registers itself under in <see cref="MdiChildInfo.PendingWork"/>.</summary>
+    private const string CheckpointWork = "checkpoint";
 
     private void ShowCheckpointList()
     {

@@ -22,24 +22,51 @@ public sealed record SubagentRun
 }
 
 /// <summary>
-/// Lists the subagents a session still has in flight.
+/// Tracks what a session still has running behind the prompt: the subagents it spawned, and the
+/// commands it launched with <c>run_in_background</c>.
 ///
 /// The CLI writes one <c>agent-&lt;id&gt;.meta.json</c> per task beside the transcript, which is
 /// where the description, type and model come from. Finishing is not recorded there, and it
 /// cannot be read from the tool result either - a backgrounded task is answered the moment it
 /// launches - so the end is taken from the completion notice the CLI posts back into the parent
 /// transcript. That transcript is only ever read forward from where the last read stopped.
+///
+/// A backgrounded command has no meta file at all, so both ends of it come from the transcript:
+/// its launch is the <c>backgroundTaskId</c> the tool result carries, and its end is the same
+/// <c>task-notification</c> that closes a subagent - the CLI gives both kinds the one id space.
 /// </summary>
 public static class SubagentMonitor
 {
     private static readonly Regex TaskId =
         new(@"<task-id>([A-Za-z0-9_-]{1,64})</task-id>", RegexOptions.Compiled);
 
-    /// <summary>Where a transcript's forward scan stopped, and what it had seen finish.</summary>
+    /// <summary>
+    /// Matches the id the CLI stamps on a tool result it answered by backgrounding:
+    /// <c>"toolUseResult":{...,"backgroundTaskId":"b036nfy2h"}</c>.
+    /// </summary>
+    private static readonly Regex BackgroundTaskId =
+        new(@"""backgroundTaskId""\s*:\s*""([A-Za-z0-9_-]{1,64})""", RegexOptions.Compiled);
+
+    /// <summary>Matches the record's own ISO timestamp, which dates the launch above.</summary>
+    private static readonly Regex RecordTimestamp =
+        new(@"""timestamp""\s*:\s*""([^""]{10,40})""", RegexOptions.Compiled);
+
+    /// <summary>Where a transcript's forward scan stopped, and what it had seen start and finish.</summary>
     private sealed class Progress
     {
         public long Offset;
+
+        /// <summary>
+        /// File length as of the last scan, so a poll over an unchanged transcript costs one
+        /// metadata call instead of opening it. -1 until the first scan, which a real length
+        /// can never be, so the first call always reads.
+        /// </summary>
+        public long LastLength = -1;
+
         public readonly HashSet<string> Finished = new(StringComparer.Ordinal);
+
+        /// <summary>Backgrounded commands this transcript launched, by id, dated by the record that launched them.</summary>
+        public readonly Dictionary<string, DateTime> Background = new(StringComparer.Ordinal);
     }
 
     private static readonly Dictionary<string, Progress> Scans = new(StringComparer.OrdinalIgnoreCase);
@@ -51,6 +78,12 @@ public static class SubagentMonitor
     /// two of the twenty-six on this machine - and without a cutoff those would be reported as
     /// running forever the next time the session was resumed. Long enough that a real agent
     /// sitting inside one slow tool call is not written off.
+    ///
+    /// The same cutoff caps a backgrounded command, where it does a second job: a dev server
+    /// launched with <c>run_in_background</c> is meant to outlive the turn and never posts a
+    /// completion notice, so without a cap it would hold every window it touched at "still
+    /// working" for the rest of the session. Builds and test runs - the backgrounded commands a
+    /// turn is actually waiting on - are long finished by then.
     /// </summary>
     private static readonly TimeSpan Abandoned = TimeSpan.FromMinutes(10);
 
@@ -66,7 +99,7 @@ public static class SubagentMonitor
         var dir = SubagentDirectory(transcriptPath);
         if (dir == null || !Directory.Exists(dir)) return runs;
 
-        var finished = FinishedIds(transcriptPath);
+        var finished = Scan(transcriptPath).Finished;
 
         foreach (var meta in SafeFiles(dir, "agent-*.meta.json"))
         {
@@ -81,6 +114,46 @@ public static class SubagentMonitor
 
         runs.Sort((a, b) => a.Started.CompareTo(b.Started));
         return runs;
+    }
+
+    /// <summary>
+    /// Whether this session still has anything running behind the prompt - a subagent that has
+    /// not reported back, or a backgrounded command that has not been notified as finished.
+    ///
+    /// This is what says a turn is really over. The CLI hands the prompt back the moment it has
+    /// nothing left to say, which is not the same as having nothing left running: it answers a
+    /// backgrounded tool call immediately and picks the result up later. The answer is a bare
+    /// bool because that is all the indicator needs - <see cref="ReadRunning"/> is what builds
+    /// the list the panel shows.
+    ///
+    /// Called for every window on every poll, so it is built to be cheap: the transcript scan
+    /// is incremental and no metadata is parsed.
+    /// </summary>
+    public static bool AnyWorkPending(string? transcriptPath)
+    {
+        if (string.IsNullOrEmpty(transcriptPath) || !File.Exists(transcriptPath)) return false;
+
+        var scan = Scan(transcriptPath);
+        var now = DateTime.Now;
+
+        foreach (var launched in scan.Background)
+        {
+            if (scan.Finished.Contains(launched.Key)) continue;
+            if (now - launched.Value > Abandoned) continue;
+            return true;
+        }
+
+        var dir = SubagentDirectory(transcriptPath);
+        if (dir == null || !Directory.Exists(dir)) return false;
+
+        foreach (var meta in SafeFiles(dir, "agent-*.meta.json"))
+        {
+            var id = IdFromMetaPath(meta);
+            if (id == null || scan.Finished.Contains(id)) continue;
+            if (now - LastActivity(dir, id, meta) > Abandoned) continue;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>Frees the scan state for a transcript nothing is watching any more.</summary>
@@ -158,11 +231,11 @@ public static class SubagentMonitor
             : null;
 
     /// <summary>
-    /// Ids the parent transcript has already reported finished. Only the bytes appended since
-    /// the last call are read; a transcript that shrank - a rewrite, or a different session at
-    /// the same path - is read again from the start.
+    /// What the parent transcript has reported started and finished. Only the bytes appended
+    /// since the last call are read; a transcript that shrank - a rewrite, or a different
+    /// session at the same path - is read again from the start.
     /// </summary>
-    private static HashSet<string> FinishedIds(string transcriptPath)
+    private static Progress Scan(string transcriptPath)
     {
         if (!Scans.TryGetValue(transcriptPath, out var scan))
         {
@@ -172,6 +245,11 @@ public static class SubagentMonitor
 
         try
         {
+            // Nothing appended since the last look, so there is nothing new to read. Checked
+            // before opening the file because this now runs for every window on every poll,
+            // not only while the windows panel is up.
+            if (new FileInfo(transcriptPath).Length == scan.LastLength) return scan;
+
             using var stream = new FileStream(
                 transcriptPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
@@ -179,6 +257,7 @@ public static class SubagentMonitor
             {
                 scan.Offset = 0;
                 scan.Finished.Clear();
+                scan.Background.Clear();
             }
             stream.Position = scan.Offset;
 
@@ -190,16 +269,45 @@ public static class SubagentMonitor
                 if (line.Contains("task-notification", StringComparison.Ordinal))
                     foreach (Match match in TaskId.Matches(line))
                         scan.Finished.Add(match.Groups[1].Value);
+
+                if (line.Contains("backgroundTaskId", StringComparison.Ordinal))
+                {
+                    var launch = BackgroundTaskId.Match(line);
+                    // Dated from the record rather than from now: the first pass over a resumed
+                    // session reads its whole history at once, and stamping those launches with
+                    // the wall clock would revive every command it ever backgrounded.
+                    if (launch.Success)
+                        scan.Background[launch.Groups[1].Value] = RecordTime(line);
+                }
             }
 
             // ReadLine can stop mid-line if the CLI is still writing; resuming from the
             // stream's own position would then split a record. Committing the whole length
             // is wrong for the same reason, so the tail is re-read next time instead.
             scan.Offset = LastCompleteLineEnd(transcriptPath, stream.Length);
+            scan.LastLength = stream.Length;
         }
         catch { }
 
-        return scan.Finished;
+        return scan;
+    }
+
+    /// <summary>
+    /// The local time a transcript record was written. A record with no readable timestamp is
+    /// dated now - the launch is real either way, and the abandonment cutoff will retire it.
+    /// </summary>
+    private static DateTime RecordTime(string line)
+    {
+        var m = RecordTimestamp.Match(line);
+        // Read as an offset rather than a DateTime: the CLI writes UTC with a trailing Z, and
+        // DateTimeOffset is the parse that keeps that zone instead of guessing at one.
+        return m.Success && DateTimeOffset.TryParse(
+                   m.Groups[1].Value,
+                   System.Globalization.CultureInfo.InvariantCulture,
+                   System.Globalization.DateTimeStyles.RoundtripKind,
+                   out var parsed)
+            ? parsed.LocalDateTime
+            : DateTime.Now;
     }
 
     /// <summary>
