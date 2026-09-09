@@ -304,7 +304,7 @@ public static class Loc
         // ── Hand-off ──
         ["HandoffAction"] = new() { ["English"] = "Hand off to a new session", ["日本語"] = "引き継いで新規セッション" },
         ["HandoffTitle"] = new() { ["English"] = "This session is getting expensive to continue", ["日本語"] = "このセッションは継続コストが高くなっています" },
-        ["HandoffDetailFormat"] = new() { ["English"] = "The conversation prefix is now {0} tokens. Each further turn costs roughly ${1} just to re-read it. Handing off starts fresh from a brief built locally, at no token cost.", ["日本語"] = "会話のコンテキストが {0} トークンに達しました。以降は読み直すだけで1ターンあたり約 ${1} かかります。引き継ぎならローカル生成したブリーフでやり直せて、トークン費用はかかりません。" },
+        ["HandoffDetailFormat"] = new() { ["English"] = "The conversation prefix is now {0} tokens. Each further turn costs roughly ${1} just to re-read it. Press New Session on the toolbar, or run /compact, /clear or /new in the terminal.", ["日本語"] = "会話のコンテキストが {0} トークンに達しました。以降は読み直すだけで1ターンあたり約 ${1} かかります。ツールバーの「新規セッション」を押すか、ターミナルで /compact・/clear・/new を実行してください。" },
         ["HandoffDialogTitle"] = new() { ["English"] = "Hand off to a new session", ["日本語"] = "新規セッションへ引き継ぐ" },
         ["HandoffDialogHint"] = new() { ["English"] = "Extracted from this session's transcript. Edit freely - it is placed in the new session's input box, and nothing is sent until you press Enter.", ["日本語"] = "このセッションの記録から抽出したものです。自由に編集できます。新規セッションの入力欄に差し込まれるだけで、Enter を押すまで送信されません。" },
         ["HandoffStart"] = new() { ["English"] = "Start new session", ["日本語"] = "新規セッションを開始" },
@@ -585,6 +585,14 @@ public static class Loc
 
         // {0} = reset time reported by the CLI
         ["DiagUsageLimitResetSuffix"] = new() { ["English"] = "It resets at {0}.", ["日本語"] = "{0} にリセットされます。" },
+        // Fallback when the usage-limit line names no time: whichever of the account's real
+        // windows is the fuller one. {0} = clock time, {1} = time remaining
+        ["DiagUsageLimitWindowFmt"] = new() { ["English"] = "The 5-hour window resets at {0} ({1} from now).", ["日本語"] = "5時間枠は {0}（あと {1}）にリセットされます。" },
+        ["DiagUsageLimitWeekWindowFmt"] = new() { ["English"] = "The weekly window resets at {0} ({1} from now).", ["日本語"] = "週次枠は {0}（あと {1}）にリセットされます。" },
+        // {0} = clock time the CLI named on the error line
+        ["DiagRateLimitedResetAt"] = new() { ["English"] = "It clears at {0}.", ["日本語"] = "{0} に解除されます。" },
+        // {0} = wait the CLI named on the error line, e.g. "30 seconds"
+        ["DiagRateLimitedRetryIn"] = new() { ["English"] = "Try again in {0}.", ["日本語"] = "{0} 後に再試行してください。" },
 
         // ── Permission prompt: what the command does ──
         ["CmdExplainRunTitle"] = new() { ["English"] = "Run command: {0}", ["日本語"] = "コマンドを実行します: {0}" },

@@ -22,6 +22,13 @@ public sealed class ErrorDiagnosis
     public string? ActionLabel { get; init; }
     public string? ActionCommand { get; init; }
     public string MatchedLine { get; init; } = "";
+
+    /// <summary>
+    /// True when <see cref="Detail"/> already names when the condition lifts, taken from the
+    /// error line itself. The banner uses this to decide whether a recovery time still has to be
+    /// filled in from elsewhere - it must not append a second, possibly contradicting, one.
+    /// </summary>
+    public bool HasResetTime { get; init; }
 }
 
 /// <summary>A point-in-time reading of what the terminal screen shows about the AI's current state.</summary>
@@ -153,6 +160,15 @@ public static class TerminalInsight
 
     /// <summary>Matches "resets at 3pm" so the reset time can be surfaced in the detail text.</summary>
     private static readonly Regex UsageResetRegex = new(@"resets?\s+at\s+([^\n\r.,;]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Matches the wait a 429 names: "try again in 30 seconds", "retry after 1m 30s",
+    /// "please try again in 2 minutes". Deliberately narrow - only digit+unit runs are taken,
+    /// so the box-drawing characters that share the line cannot be swept into the message.
+    /// </summary>
+    private static readonly Regex RetryAfterRegex = new(
+        @"(?:try\s+again|retry)\s+(?:in|after)\s+((?:\d+\s*(?:h(?:ours?|rs?)?|m(?:in(?:ute)?s?)?|s(?:ec(?:ond)?s?)?)\s*){1,3})",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>Matches "ENOTFOUND", "ETIMEDOUT", "ECONNREFUSED", "network error", "fetch failed", or "getaddrinfo".</summary>
     private static readonly Regex DiagNetworkDownRegex = new(@"enotfound|etimedout|econnrefused|network error|fetch failed|getaddrinfo", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -413,10 +429,37 @@ public static class TerminalInsight
                     "DiagAuthExpiredAction", "Sign in", "/login");
 
             if (DiagRateLimitedRegex.IsMatch(line))
-                return BuildDiagnosis(DiagnosisKind.RateLimited, trimmed,
-                    "DiagRateLimitedTitle", "Rate limit reached",
-                    "DiagRateLimitedDetail", "Too many requests were sent in a short time. Wait a moment and try again.",
-                    null, null, null);
+            {
+                // A 429 is short-term throttling, not the plan's usage window, so the only time
+                // worth showing is the one the CLI names on the line - it knows what it was
+                // throttled on. Naming nothing is honest; the 5-hour window belongs to
+                // UsageLimit and would overstate this wait by hours.
+                var detail = Loc.Get("DiagRateLimitedDetail", "Too many requests were sent in a short time. Wait a moment and try again.");
+                string? resetSuffix = null;
+
+                var resetsAt = UsageResetRegex.Match(line);
+                if (resetsAt.Success)
+                    resetSuffix = string.Format(Loc.Get("DiagRateLimitedResetAt", "It clears at {0}."),
+                        resetsAt.Groups[1].Value.Trim());
+                else
+                {
+                    var retryIn = RetryAfterRegex.Match(line);
+                    if (retryIn.Success)
+                        resetSuffix = string.Format(Loc.Get("DiagRateLimitedRetryIn", "Try again in {0}."),
+                            retryIn.Groups[1].Value.Trim());
+                }
+
+                return new ErrorDiagnosis
+                {
+                    Kind = DiagnosisKind.RateLimited,
+                    Title = Loc.Get("DiagRateLimitedTitle", "Rate limit reached"),
+                    Detail = resetSuffix == null ? detail : detail + " " + resetSuffix,
+                    ActionLabel = null,
+                    ActionCommand = null,
+                    MatchedLine = trimmed,
+                    HasResetTime = resetSuffix != null
+                };
+            }
 
             if (DiagUsageLimitRegex.IsMatch(line))
             {
@@ -435,7 +478,8 @@ public static class TerminalInsight
                     Detail = detail,
                     ActionLabel = null,
                     ActionCommand = null,
-                    MatchedLine = trimmed
+                    MatchedLine = trimmed,
+                    HasResetTime = resetMatch.Success
                 };
             }
 

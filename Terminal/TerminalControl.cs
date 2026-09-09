@@ -4116,7 +4116,7 @@ public class TerminalControl : Control, IDisposable
                 var bg = ResolveColor(cell.Background, bgDefault, false);
 
                 if (cell.Attributes.HasFlag(CellAttributes.Bold) && cell.Foreground >= 0 && cell.Foreground < 8)
-                    fg = GetAnsiColor(cell.Foreground + 8);
+                    fg = GetAnsiColor(cell.Foreground + 8, true);
 
                 if (cell.Attributes.HasFlag(CellAttributes.Dim))
                     fg = Color.FromArgb(180, fg.R, fg.G, fg.B);
@@ -4562,7 +4562,7 @@ public class TerminalControl : Control, IDisposable
         }
         else if (colorIndex >= 0 && colorIndex < 256)
         {
-            c = GetAnsiColor(colorIndex);
+            c = GetAnsiColor(colorIndex, isFg);
         }
         else
         {
@@ -4598,6 +4598,19 @@ public class TerminalControl : Control, IDisposable
         }
         return c;
     }
+
+    // Blue and red carry too little luminance to be read on a near-black background at
+    // full saturation: the standard ANSI blue (0,0,187) lands at 1.4:1 against the
+    // #1C1C1E terminal background and red (187,0,0) at 2.5:1, and neither hue clears
+    // 4.5:1 even at full intensity (pure blue peaks near 2:1, pure red at 4.3:1). So
+    // dark-mode *text* uses these lightened variants instead of palette entries 1, 4, 9
+    // and 12. The bright pair is lifted along with the normal one to keep bold text
+    // visibly brighter than plain text. Backgrounds keep the dark palette entries, so
+    // white-on-blue and white-on-red bars stay readable.
+    private static readonly Color DarkRedFg = Color.FromRgb(238, 75, 75);           // 4.7:1
+    private static readonly Color DarkBrightRedFg = Color.FromRgb(255, 145, 140);   // 7.8:1
+    private static readonly Color DarkBlueFg = Color.FromRgb(80, 150, 255);         // 5.8:1
+    private static readonly Color DarkBrightBlueFg = Color.FromRgb(130, 190, 255);  // 8.7:1
 
     private static readonly Color[] DarkColors16 =
     {
@@ -4640,11 +4653,24 @@ public class TerminalControl : Control, IDisposable
         Color.FromRgb(238, 238, 236),    // 15 Bright White
     };
 
-    private Color GetAnsiColor(int index)
+    private Color GetAnsiColor(int index, bool isFg)
     {
         var colors16 = _isDark ? DarkColors16 : LightColors16;
 
-        if (index < 16) return colors16[index];
+        if (index < 16)
+        {
+            if (isFg && _isDark)
+            {
+                switch (index)
+                {
+                    case 1: return DarkRedFg;
+                    case 4: return DarkBlueFg;
+                    case 9: return DarkBrightRedFg;
+                    case 12: return DarkBrightBlueFg;
+                }
+            }
+            return colors16[index];
+        }
 
         if (index < 232)
         {

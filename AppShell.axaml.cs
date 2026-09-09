@@ -192,6 +192,8 @@ internal partial class AppShell : UserControl, IDockOwner
     private string? _bannerKey;
     private string? _bannerActionCommand;
     private readonly HashSet<string> _dismissedBanners = new();
+    /// <summary>Retires an advisory banner on its own once it has had time to be read.</summary>
+    private DispatcherTimer? _bannerAutoHide;
     /// <summary>
     /// The source-control panel, built in code and hosted by SourceControlHost. It owns every
     /// git readout the sidebar shows; the window only tells it which repository to look at and
@@ -4144,12 +4146,13 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         string? key = null, title = null, detail = null, actionLabel = null, actionCommand = null;
         var accent = Color.FromRgb(255, 69, 58);
+        int autoHideSeconds = 0;
 
         if (_settings.EnableErrorBanner && snap.Error != null)
         {
             key = "err:" + snap.Error.Kind;
             title = snap.Error.Title;
-            detail = snap.Error.Detail;
+            detail = WithRecoveryTime(snap.Error);
             actionLabel = snap.Error.ActionLabel;
             actionCommand = snap.Error.ActionCommand;
         }
@@ -4179,11 +4182,11 @@ internal partial class AppShell : UserControl, IDockOwner
 
             if (key != null)
             {
-                // Handing off is the cheaper of the two ways out, so it gets the button. /compact
-                // stays one click away on the context meter itself.
-                actionLabel = Loc.Get("HandoffAction");
-                actionCommand = HandoffActionCommand;
+                // No button: the ways out are the New Session button and the CLI's own
+                // /compact, /clear and /new, all named in the text. The banner is advice,
+                // so it steps aside on its own rather than waiting to be dismissed.
                 accent = Color.FromRgb(255, 214, 10);
+                autoHideSeconds = AdviceBannerAutoHideSeconds;
             }
         }
 
@@ -4202,11 +4205,63 @@ internal partial class AppShell : UserControl, IDockOwner
         }
 
         if (_bannerKey == key) return;
-        ShowBanner(key, title ?? "", detail ?? "", actionLabel, actionCommand, accent);
+        ShowBanner(key, title ?? "", detail ?? "", actionLabel, actionCommand, accent, autoHideSeconds);
+    }
+
+    /// <summary>
+    /// How long an advisory banner stays up before retiring itself. Error banners have no timer:
+    /// they describe something still broken, so they wait to be dismissed.
+    /// </summary>
+    private const int AdviceBannerAutoHideSeconds = 30;
+
+    /// <summary>
+    /// A usage-limit banner is only useful if it says when the allowance comes back. The CLI names
+    /// its own reset time on the error line whenever it knows one, and that reading wins. When it
+    /// does not, the account's real 5-hour window is the next best answer. Rate limiting is a
+    /// different condition - a short 429 that clears on its own - so the window is never appended
+    /// there, where it would overstate the wait by hours.
+    /// </summary>
+    private string WithRecoveryTime(ErrorDiagnosis error)
+    {
+        if (error.Kind != DiagnosisKind.UsageLimit || error.HasResetTime) return error.Detail;
+        if (_rateLimits.Current is not { } info) return error.Detail;
+
+        // The plan is metered on two windows and either one can be the one that stopped the work,
+        // so the fuller one is the honest answer - naming the 5-hour reset while it is the weekly
+        // allowance that ran out would promise the work back hours too early. A window with no
+        // reset time cannot be reported at all. On a tie the 5-hour wins: it is the shorter wait
+        // and by far the one hit more often.
+        var five = info.FiveHour?.ResetsAt is null ? null : info.FiveHour;
+        var week = info.SevenDay?.ResetsAt is null ? null : info.SevenDay;
+
+        RateLimitWindow? window;
+        string key;
+        if (five != null && (week == null || five.UtilizationPercent >= week.UtilizationPercent))
+            (window, key) = (five, "DiagUsageLimitWindowFmt");
+        else
+            (window, key) = (week, "DiagUsageLimitWeekWindowFmt");
+
+        if (window?.ResetsAt is not { } at) return error.Detail;
+
+        var suffix = string.Format(Loc.Get(key), FormatResetClock(at), window.ResetsIn);
+        return error.Detail + " " + suffix;
+    }
+
+    /// <summary>
+    /// A reset instant as a wall clock the user can compare against their own: local time, and
+    /// the date too once the reset is no longer today.
+    /// </summary>
+    private static string FormatResetClock(DateTimeOffset at)
+    {
+        var local = at.ToLocalTime();
+        return local.Date == DateTimeOffset.Now.Date
+            ? local.ToString("HH:mm")
+            : local.ToString("M/d HH:mm");
     }
 
     private void ShowBanner(string key, string title, string detail,
-                            string? actionLabel, string? actionCommand, Color accent)
+                            string? actionLabel, string? actionCommand, Color accent,
+                            int autoHideSeconds = 0)
     {
         _bannerKey = key;
         _bannerActionCommand = actionCommand;
@@ -4221,10 +4276,36 @@ internal partial class AppShell : UserControl, IDockOwner
         LblBannerAction.Text = actionLabel ?? "";
         BtnBannerAction.IsVisible = !string.IsNullOrWhiteSpace(actionLabel);
         InfoBanner.IsVisible = true;
+        StartBannerAutoHide(key, autoHideSeconds);
+    }
+
+    /// <summary>
+    /// Arms the self-dismissal. The key is treated as dismissed on expiry, otherwise the next
+    /// status poll - the condition is still true - would put the same banner straight back up.
+    /// It re-arms when the condition clears, the same as pressing the close button.
+    /// </summary>
+    private void StartBannerAutoHide(string key, int seconds)
+    {
+        _bannerAutoHide?.Stop();
+        _bannerAutoHide = null;
+        if (seconds <= 0) return;
+
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(seconds) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (_bannerKey != key) return;
+            _dismissedBanners.Add(key);
+            HideBanner();
+        };
+        _bannerAutoHide = timer;
+        timer.Start();
     }
 
     private void HideBanner()
     {
+        _bannerAutoHide?.Stop();
+        _bannerAutoHide = null;
         _bannerKey = null;
         _bannerActionCommand = null;
         InfoBanner.IsVisible = false;
