@@ -291,6 +291,13 @@ internal partial class AppShell : UserControl, IDockOwner
         public int IdlePolls { get; set; }
 
         /// <summary>
+        /// How many polls the current turn has been busy for. A turn that never lasted more
+        /// than a poll is a flicker - a spinner caught on one frame as a window opens or a
+        /// session resumes - and raising a "your answer is ready" toast for it would be a lie.
+        /// </summary>
+        public int BusyPolls { get; set; }
+
+        /// <summary>
         /// Claucraft's own jobs for this window that have not come back yet, by name. The CLI
         /// can hand the prompt back while the app is still finishing what the turn started -
         /// snapshotting the tree for a checkpoint, say - and a window that calls itself done
@@ -3961,15 +3968,50 @@ internal partial class AppShell : UserControl, IDockOwner
         {
             entry.SawWorking = true;
             entry.IdlePolls = 0;
+            entry.BusyPolls++;
             return;
         }
 
         if (!entry.SawWorking) return;
         if (++entry.IdlePolls < TurnEndIdlePolls) return;
 
+        var busyPolls = entry.BusyPolls;
         entry.SawWorking = false;
         entry.IdlePolls = 0;
+        entry.BusyPolls = 0;
         _ = SyncTitleFromSessionAsync(entry);
+        NotifyTurnEnd(entry, busyPolls);
+    }
+
+    /// <summary>A turn shorter than this many polls is a flicker, not an answer. See BusyPolls.</summary>
+    private const int TurnEndMinBusyPolls = 2;
+
+    /// <summary>
+    /// Raises the Windows notification for a finished answer, on the same working → idle edge
+    /// the frame blink uses - so it covers a window that answered in the background too.
+    ///
+    /// Held back when the answer is already in front of the user: the frame blink, the progress
+    /// line and the strip dot have said it, and a tray balloon on every turn of a session
+    /// somebody is sitting and watching is noise. "In front of" means the app has focus *and*
+    /// this is the window it is showing - a background window finishing is worth a toast even
+    /// when Claucraft itself is focused, which is the case the strip dot alone reports weakly.
+    /// </summary>
+    private void NotifyTurnEnd(MdiChildInfo entry, int busyPolls)
+    {
+        if (!_settings.NotifyOnComplete || entry.IsClosing) return;
+        if (busyPolls < TurnEndMinBusyPolls) return;
+
+        bool inFront = _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+                       && ReferenceEquals(_children[_activeChildIndex], entry);
+        if (HostWindow.IsActive && inFront) return;
+
+        if (!HostWindow.IsActive) FlashTaskbar();
+
+        var name = string.IsNullOrWhiteSpace(entry.Title) ? _cli.Active.Name : entry.Title;
+        _notifications.Notify(
+            NotifyKind.TaskComplete,
+            Loc.Get("AnswerReady"),
+            string.Format(Loc.Get("AnswerReadyFmt"), name));
     }
 
     /// <summary>

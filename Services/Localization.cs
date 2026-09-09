@@ -259,6 +259,10 @@ public static class Loc
         ["NotifySound"] = new() { ["English"] = "Play a sound", ["日本語"] = "音を鳴らす" },
         // {0} = tab title
         ["TaskCompleteFmt"] = new() { ["English"] = "{0} has finished", ["日本語"] = "{0} が終了しました" },
+        // Raised on the turn-end edge, so it must not read like the session itself ended -
+        // that wording belongs to TaskComplete above, which fires when the CLI process exits.
+        ["AnswerReady"] = new() { ["English"] = "Answer ready", ["日本語"] = "回答完了" },
+        ["AnswerReadyFmt"] = new() { ["English"] = "{0} has finished generating its answer", ["日本語"] = "{0} の回答生成が完了しました" },
 
         // ── Workspaces ──
         ["Workspaces"] = new() { ["English"] = "Workspaces", ["日本語"] = "ワークスペース" },
