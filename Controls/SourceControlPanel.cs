@@ -163,23 +163,25 @@ public sealed class SourceControlPanel : UserControl
 
         // ── Toolbar ──
 
-        _btnFetch = ToolButton(Loc.Get("FetchAction", "Fetch"), Loc.Get("FetchTooltip", ""), OnFetch);
-        _btnPull = ToolButton(Loc.Get("PullAction", "Pull"), Loc.Get("PullTooltip", ""), OnPull);
-        _btnPush = ToolButton(Loc.Get("PushAction", "Push"), Loc.Get("PushTooltip", ""), OnPush);
         _btnNewBranch = ToolButton(Loc.Get("NewBranch", "New branch"), "", OnNewBranch);
         _btnMerge = ToolButton(Loc.Get("MergeAction", "Merge"), Loc.Get("MergeTooltip", ""), OnMerge);
         _btnPr = ToolButton(Loc.Get("CreatePrAction", "Pull request"), "", OnCreatePullRequest);
+        // The three remote actions read against the history rather than the file list - what
+        // fetch found and what pull or push will move are all commits - so they sit on the
+        // history's own heading row at glyph width, the way the graph view does it, and the
+        // toolbar keeps its one line for the branch actions.
+        _btnFetch = IconButton(IconFetch, ActionTip("FetchAction", "Fetch", "FetchTooltip"), OnFetch);
+        _btnPull = IconButton(IconPull, ActionTip("PullAction", "Pull", "PullTooltip"), OnPull);
+        _btnPush = IconButton(IconPush, ActionTip("PushAction", "Push", "PushTooltip"), OnPush);
         // Neither of these is a toolbar action: refresh only rereads what the panel already
         // shows, and the graph button opens a window. Both live further down, on a heading row
-        // that has width to spare, at glyph width - the toolbar's two lines are for writes.
+        // that has width to spare, at glyph width - the toolbar's line is for writes.
         _btnRefresh = GlyphButton("⟳", Loc.Get("Refresh", "Refresh"), () => _ = RefreshAsync());
-        _btnExpand = GlyphButton("⤢", Loc.Get("OpenGraphAction", "Open in a window"), OpenGraphWindow);
+        _btnExpand = IconButton(IconExpand, Loc.Get("OpenGraphAction", "Open in a window"), OpenGraphWindow);
 
-        var remoteRow = Row(_btnFetch, _btnPull, _btnPush);
         var branchRow = Row(_btnNewBranch, _btnMerge, _btnPr);
 
         var toolbarStack = new StackPanel { Spacing = 4, Margin = new Thickness(8, 6) };
-        toolbarStack.Children.Add(remoteRow);
         toolbarStack.Children.Add(branchRow);
 
         var toolbar = new Border
@@ -445,11 +447,20 @@ public sealed class SourceControlPanel : UserControl
             Foreground = new SolidColorBrush(DimText()),
         };
 
-        // The heading row has width to spare and the button acts on the graph directly under it,
-        // so it sits here rather than on the branch row, which was only lending it space.
-        _btnExpand.HorizontalAlignment = HorizontalAlignment.Right;
-        _btnExpand.VerticalAlignment = VerticalAlignment.Center;
-        _btnExpand.Margin = new Thickness(0, 0, 6, 0);
+        // The heading row has width to spare and the buttons act on the graph directly under it,
+        // so they sit here rather than on the branch row, which was only lending space.
+        var graphActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 2,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0),
+        };
+        graphActions.Children.Add(_btnFetch);
+        graphActions.Children.Add(_btnPull);
+        graphActions.Children.Add(_btnPush);
+        graphActions.Children.Add(_btnExpand);
 
         var graphHeader = new Grid
         {
@@ -457,9 +468,9 @@ public sealed class SourceControlPanel : UserControl
             Margin = new Thickness(0, 3, 0, 2),
         };
         Grid.SetColumn(graphHeading, 0);
-        Grid.SetColumn(_btnExpand, 1);
+        Grid.SetColumn(graphActions, 1);
         graphHeader.Children.Add(graphHeading);
-        graphHeader.Children.Add(_btnExpand);
+        graphHeader.Children.Add(graphActions);
         DockPanel.SetDock(graphHeader, Dock.Top);
 
         var graphArea = new DockPanel();
@@ -686,12 +697,12 @@ public sealed class SourceControlPanel : UserControl
         _btnExpand.IsEnabled = isRepo;
         _btnBranch.IsEnabled = settled;
 
-        _btnPull.Content = _branch.Behind > 0
-            ? Loc.Get("PullAction", "Pull") + " ↓" + _branch.Behind
-            : Loc.Get("PullAction", "Pull");
-        _btnPush.Content = _branch.Ahead > 0
-            ? Loc.Get("PushAction", "Push") + " ↑" + _branch.Ahead
-            : Loc.Get("PushAction", "Push");
+        // At glyph width the counts no longer fit beside the label, so they go where the rest of
+        // each button's meaning already is - the tooltip. The branch row keeps showing them.
+        ToolTip.SetTip(_btnPull, ActionTip("PullAction", "Pull", "PullTooltip",
+            _branch.Behind > 0 ? " ↓" + _branch.Behind : ""));
+        ToolTip.SetTip(_btnPush, ActionTip("PushAction", "Push", "PushTooltip",
+            _branch.Ahead > 0 ? " ↑" + _branch.Ahead : ""));
 
         _btnBranch.Content = hasBranch ? _branch.Current : "-";
         _lblTracking.Text = !hasBranch ? ""
@@ -2065,7 +2076,7 @@ public sealed class SourceControlPanel : UserControl
     /// drawn twice are two readouts to keep in step, and the sidebar copy is the one with no room
     /// to be read. So the section folds away while the window is up and the file list takes the
     /// whole panel, and it comes back - at the height the user last dragged it to - when the
-    /// window closes.
+    /// window closes. Fetch, pull and push go with it; the window carries its own.
     /// </summary>
     private void ApplyGraphVisibility()
     {
@@ -2157,6 +2168,77 @@ public sealed class SourceControlPanel : UserControl
             FontSize = 11.5,
             Padding = new Thickness(8, 3),
             HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        if (tooltip.Length > 0) ToolTip.SetTip(button, tooltip);
+        button.Click += (_, _) => onClick();
+        return button;
+    }
+
+    /// <summary>
+    /// The tooltip for a button that shows only a glyph: the name the button lost, then the
+    /// sentence explaining it, so hovering answers both "what is this" and "what will it do".
+    /// </summary>
+    private static string ActionTip(string nameKey, string fallback, string tipKey, string suffix = "")
+    {
+        var tip = Loc.Get(tipKey, "");
+        return Loc.Get(nameKey, fallback) + suffix + (tip.Length > 0 ? " - " + tip : "");
+    }
+
+    // The history header's actions drawn the way the editor next door draws them, so the row
+    // reads as four actions rather than four unrelated arrows: a commit on a branch line with
+    // the arrow that moves it, and a window in front of a window. Traced from the codicons of
+    // the same names (repo-fetch, repo-pull, repo-push, multiple-windows) on their 16x16 grid.
+    // F0 keeps the even-odd rule each of them needs - without it the ring fills in as a dot and
+    // the window becomes a solid block.
+
+    private const string IconFetch =
+        "F0 M7.5 3C7.776 3 8 2.776 8 2.5V1.5C8 1.224 7.776 1 7.5 1C7.224 1 7 1.224 7 1.5V2.5C7 2.776 7.224 3 7.5 3Z " +
+        "M7.5 10C7.372 10 7.245 9.95 7.15 9.85L4.15 6.85C4.05 6.755 4 6.628 4 6.5C4 6.372 4.05 6.245 4.15 6.15C4.245 6.05 4.373 6 4.5 6C4.627 6 4.755 6.05 4.85 6.15L7 8.29V7.5C7 7.22 7.22 7 7.5 7C7.78 7 8 7.22 8 7.5V8.29L10.15 6.15C10.245 6.05 10.372 6 10.5 6C10.628 6 10.755 6.05 10.85 6.15C10.95 6.245 11 6.373 11 6.5C11 6.627 10.95 6.755 10.85 6.85L7.85 9.85C7.755 9.95 7.628 10 7.5 10Z " +
+        "M9.95 13H12.5C12.78 13 13 13.22 13 13.5C13 13.78 12.78 14 12.5 14H9.95C9.72 15.14 8.71 16 7.5 16C6.29 16 5.28 15.14 5.05 14H2.5C2.22 14 2 13.78 2 13.5C2 13.22 2.22 13 2.5 13H5.05C5.28 11.86 6.29 11 7.5 11C8.71 11 9.72 11.86 9.95 13ZM7.5 15C8.15 15 8.71 14.58 8.91 14C8.97 13.84 9 13.68 9 13.5C9 13.32 8.97 13.16 8.91 13C8.71 12.42 8.15 12 7.5 12C6.85 12 6.29 12.42 6.09 13C6.03 13.16 6 13.32 6 13.5C6 13.68 6.03 13.84 6.09 14C6.29 14.58 6.85 15 7.5 15Z " +
+        "M8 5.5C8 5.776 7.776 6 7.5 6C7.224 6 7 5.776 7 5.5V4.5C7 4.224 7.224 4 7.5 4C7.776 4 8 4.224 8 4.5V5.5Z";
+
+    private const string IconPull =
+        "F0 M4.85 6.15C4.755 6.05 4.627 6 4.5 6C4.372 6 4.245 6.05 4.15 6.15C4.05 6.245 4 6.373 4 6.5C4 6.627 4.05 6.755 4.15 6.85L7.15 9.85C7.245 9.95 7.372 10 7.5 10C7.628 10 7.755 9.95 7.85 9.85L10.85 6.85C10.95 6.755 11 6.628 11 6.5C11 6.372 10.95 6.245 10.85 6.15C10.755 6.05 10.627 6 10.5 6C10.373 6 10.245 6.05 10.15 6.15L8 8.29V1.5C8 1.22 7.78 1 7.5 1C7.22 1 7 1.22 7 1.5V8.29L4.85 6.15Z " +
+        "M9.95 13H12.5C12.78 13 13 13.22 13 13.5C13 13.78 12.78 14 12.5 14H9.95C9.72 15.14 8.71 16 7.5 16C6.29 16 5.28 15.14 5.05 14H2.5C2.22 14 2 13.78 2 13.5C2 13.22 2.22 13 2.5 13H5.05C5.28 11.86 6.29 11 7.5 11C8.71 11 9.72 11.86 9.95 13ZM6.09 14C6.29 14.58 6.85 15 7.5 15C8.15 15 8.71 14.58 8.91 14C8.97 13.84 9 13.68 9 13.5C9 13.32 8.97 13.16 8.91 13C8.71 12.42 8.15 12 7.5 12C6.85 12 6.29 12.42 6.09 13C6.03 13.16 6 13.32 6 13.5C6 13.68 6.03 13.84 6.09 14Z";
+
+    private const string IconPush =
+        "F0 M4.85 4.85C4.755 4.95 4.627 5 4.5 5C4.372 5 4.245 4.95 4.15 4.85C4.05 4.755 4 4.627 4 4.5C4 4.373 4.05 4.245 4.15 4.15L7.15 1.15C7.245 1.05 7.372 1 7.5 1C7.628 1 7.755 1.05 7.85 1.15L10.85 4.15C10.95 4.245 11 4.372 11 4.5C11 4.628 10.95 4.755 10.85 4.85C10.755 4.95 10.627 5 10.5 5C10.373 5 10.245 4.95 10.15 4.85L8 2.71V9.5C8 9.78 7.78 10 7.5 10C7.22 10 7 9.78 7 9.5V2.71L4.85 4.85Z " +
+        "M9.95 13H12.5C12.78 13 13 13.22 13 13.5C13 13.78 12.78 14 12.5 14H9.95C9.72 15.14 8.71 16 7.5 16C6.29 16 5.28 15.14 5.05 14H2.5C2.22 14 2 13.78 2 13.5C2 13.22 2.22 13 2.5 13H5.05C5.28 11.86 6.29 11 7.5 11C8.71 11 9.72 11.86 9.95 13ZM6.09 14C6.29 14.58 6.85 15 7.5 15C8.15 15 8.71 14.58 8.91 14C8.97 13.84 9 13.68 9 13.5C9 13.32 8.97 13.16 8.91 13C8.71 12.42 8.15 12 7.5 12C6.85 12 6.29 12.42 6.09 13C6.03 13.16 6 13.32 6 13.5C6 13.68 6.03 13.84 6.09 14Z";
+
+    private const string IconExpand =
+        "F0 M10.5 13C11.878 13 13 11.879 13 10.5V3.5C13 2.121 11.878 1 10.5 1H3.5C2.122 1 1 2.121 1 3.5V10.5C1 11.879 2.122 13 3.5 13H10.5ZM3.5 2H10.5C11.327 2 12 2.673 12 3.5V4H2V3.5C2 2.673 2.673 2 3.5 2ZM2 10.5V5H12V10.5C12 11.327 11.327 12 10.5 12H3.5C2.673 12 2 11.327 2 10.5ZM15 5.5V10.5C15 12.98 12.98 15 10.5 15H5.5C4.68 15 3.96 14.61 3.5 14H10.5C12.43 14 14 12.43 14 10.5V3.5C14.61 3.96 15 4.68 15 5.5Z";
+
+    /// <summary>The side of the codicon grid every icon here was drawn on.</summary>
+    private const double IconGrid = 16;
+
+    /// <summary>How much of that grid the icons take up on screen.</summary>
+    private const double IconSize = 14;
+
+    /// <summary>
+    /// <see cref="GlyphButton"/> with a drawn icon in place of the glyph. The icon takes no
+    /// Foreground of its own so it dims with the button when the action is unavailable.
+    /// </summary>
+    private Button IconButton(string pathData, string tooltip, Action onClick)
+    {
+        // PathIcon scales what is drawn, not the grid it was drawn on, so asking for one size
+        // would blow a narrow icon up until it out-weighed a square one beside it. Sizing each
+        // to its own bounds against the shared grid is what keeps the row to one scale.
+        var data = Geometry.Parse(pathData);
+        var bounds = data.Bounds;
+
+        var button = new Button
+        {
+            Content = new PathIcon
+            {
+                Data = data,
+                Width = bounds.Width * IconSize / IconGrid,
+                Height = bounds.Height * IconSize / IconGrid,
+            },
+            Width = 22,
+            Height = 20,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
         };
         if (tooltip.Length > 0) ToolTip.SetTip(button, tooltip);
         button.Click += (_, _) => onClick();

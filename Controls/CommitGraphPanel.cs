@@ -14,9 +14,12 @@ namespace Claucraft.Controls;
 
 /// <summary>
 /// Commit history for one repository, drawn as a graph with a detail pane underneath, in the
-/// spirit of VS Code's Git Graph. Read-only throughout: it reads the log, lists what a commit
-/// changed, and hands a single file's diff to <see cref="DiffWindow"/>. Nothing here writes to
-/// the repository.
+/// spirit of VS Code's Git Graph. Reading is the whole of it bar one row: it reads the log,
+/// lists what a commit changed, and hands a single file's diff to <see cref="DiffWindow"/>.
+///
+/// The exception is the toolbar's fetch, pull and push. The sidebar folds its own history away
+/// while this window is up, and those three went with it, so they are here for the same reason
+/// the graph is - they are the actions that move what the graph draws. Nothing else here writes.
 ///
 /// A panel rather than a window: the history opens as an MDI child on the main canvas, sized
 /// and arranged by the same layout code as terminal and editor windows, so it has no chrome,
@@ -43,8 +46,20 @@ public class CommitGraphPanel : UserControl
     private readonly ScrollViewer _scroller;
     private readonly Button _refreshButton;
     private readonly Button _loadMoreButton;
+    private readonly Button _fetchButton;
+    private readonly Button _pullButton;
+    private readonly Button _pushButton;
     private readonly TextBlock _statusText;
     private readonly Grid _header;
+
+    /// <summary>Where a refused git write is reported. Null leaves the failure unannounced.</summary>
+    private readonly Action<string, string>? _showMessage;
+
+    /// <summary>Asks before publishing. Null means this window cannot push at all.</summary>
+    private readonly Func<string, string, Task<bool>>? _confirm;
+
+    /// <summary>Set while one of the three remote actions is in flight.</summary>
+    private bool _gitBusy;
 
     private readonly TextBlock _detailHash;
     private readonly TextBlock _detailAuthor;
@@ -83,6 +98,12 @@ public class CommitGraphPanel : UserControl
     /// <summary>Escape asks to be closed; the host window owns the actual closing.</summary>
     public event EventHandler? CloseRequested;
 
+    /// <summary>
+    /// Raised after fetch, pull or push, so the readouts outside this window - the status bar,
+    /// the file tree, the source-control panel - are not left showing the branch as it was.
+    /// </summary>
+    public event EventHandler? GitChanged;
+
     /// <summary>Guards the first load: Loaded fires again if the panel is ever re-attached.</summary>
     private bool _loadStarted;
 
@@ -90,13 +111,22 @@ public class CommitGraphPanel : UserControl
     /// Where a comment written against a diff goes. Passed straight through to
     /// <see cref="DiffWindow"/>; null leaves those windows read-only.
     /// </param>
+    /// <param name="showMessage">Shows git's own words when it refuses one of the remote actions.</param>
+    /// <param name="confirm">
+    /// Asks before publishing. Leaving it null is what turns push off: the button stays, and says
+    /// so when pressed, rather than sending commits out with nothing asked.
+    /// </param>
     public CommitGraphPanel(string repoRoot, string repoLabel, bool isDark, Typeface mono,
-        Action<string>? sendComment = null)
+        Action<string>? sendComment = null,
+        Action<string, string>? showMessage = null,
+        Func<string, string, Task<bool>>? confirm = null)
     {
         _repoRoot = repoRoot;
         _isDark = isDark;
         _mono = mono;
         _sendComment = sendComment;
+        _showMessage = showMessage;
+        _confirm = confirm;
 
         GraphTitle = string.IsNullOrEmpty(repoLabel)
             ? Loc.Get("CommitGraphTitle", "Commit Graph")
@@ -121,6 +151,25 @@ public class CommitGraphPanel : UserControl
         // view instead of being thrown back to the top of the history.
         _loadMoreButton.Click += (_, _) => { _limit += PageSize; _ = ReloadAsync(keepSelection: true); };
 
+        // The three the sidebar folded away with its own history. Spelled out rather than drawn:
+        // this toolbar has the width the sidebar's heading row did not, and its neighbours are
+        // words already.
+        _fetchButton = ToolButton(Loc.Get("FetchAction", "Fetch"), Loc.Get("FetchTooltip", ""));
+        _fetchButton.Click += (_, _) => OnFetch();
+
+        _pullButton = ToolButton(Loc.Get("PullAction", "Pull"), Loc.Get("PullTooltip", ""));
+        _pullButton.Click += (_, _) => OnPull();
+
+        _pushButton = ToolButton(Loc.Get("PushAction", "Push"), Loc.Get("PushTooltip", ""));
+        _pushButton.Click += (_, _) => OnPush();
+
+        var toolbarDivider = new Border
+        {
+            Width = 1,
+            Margin = new Thickness(4, 3, 10, 3),
+            Background = new SolidColorBrush(Divider()),
+        };
+
         _statusText = new TextBlock
         {
             Foreground = new SolidColorBrush(DimText()),
@@ -136,7 +185,12 @@ public class CommitGraphPanel : UserControl
         };
         toolbar.Children.Add(_refreshButton);
         toolbar.Children.Add(_loadMoreButton);
+        toolbar.Children.Add(toolbarDivider);
+        toolbar.Children.Add(_fetchButton);
+        toolbar.Children.Add(_pullButton);
+        toolbar.Children.Add(_pushButton);
         toolbar.Children.Add(_statusText);
+        ApplyRemoteState();
 
         // -- Column header, aligned to the graph once its width is known --
         _header = new Grid
@@ -339,6 +393,98 @@ public class CommitGraphPanel : UserControl
         {
             if (generation == _reloadGeneration) _refreshButton.IsEnabled = true;
         }
+    }
+
+    // -- Remote ---------------------------------------------------------
+
+    private void OnFetch() =>
+        _ = RunGitAsync(Loc.Get("FetchingStatus", "Fetching..."),
+            () => GitWriteService.FetchAsync(_repoRoot, quiet: false));
+
+    private void OnPull() =>
+        _ = RunGitAsync(Loc.Get("PullingStatus", "Pulling..."),
+            () => GitWriteService.PullRebaseAsync(_repoRoot), quietOnConflict: true);
+
+    private async void OnPush()
+    {
+        if (_gitBusy || _confirm == null) return;
+
+        // The sidebar keeps a branch state to hand; this window does not follow the branch
+        // between clicks, so it reads it fresh and pushes exactly what it just read.
+        var state = await GitWriteService.GetBranchStateAsync(_repoRoot);
+        if (state.Current.Length == 0) return;
+
+        if (state.HasUpstream && state.Ahead == 0)
+        {
+            _showMessage?.Invoke(Loc.Get("PushAction"), Loc.Get("NothingToPush"));
+            return;
+        }
+
+        // Publishing is outward-facing and awkward to walk back, so it is always confirmed.
+        var detail = state.HasUpstream
+            ? string.Format(CultureInfo.CurrentCulture, Loc.Get("PushConfirmFmt"),
+                Format(Loc.Get("BranchAheadFmt"), state.Ahead), state.Current)
+            : Loc.Get("PushConfirmNewUpstream");
+
+        if (!await _confirm(Loc.Get("PushConfirmTitle"), detail)) return;
+
+        await RunGitAsync(Loc.Get("PushingStatus", "Pushing..."),
+            () => GitWriteService.PushAsync(_repoRoot, state));
+    }
+
+    /// <summary>
+    /// Runs one remote action with the three buttons out of reach, shows git's own words when it
+    /// refuses, and reloads afterwards whether it worked or not - a stopped rebase still leaves
+    /// the graph looking different from before.
+    ///
+    /// <paramref name="quietOnConflict"/> is for pull, which is *meant* to stop on a conflict.
+    /// There the non-zero exit is not news, and the place that names the conflicting files and
+    /// offers the way out is the sidebar's banner, not a dialog over the history.
+    /// </summary>
+    private async Task RunGitAsync(string status, Func<Task<GitResult>> work,
+        bool quietOnConflict = false)
+    {
+        if (_gitBusy) return;
+
+        _gitBusy = true;
+        _statusText.Text = status;
+        ApplyRemoteState();
+
+        try
+        {
+            var result = await work();
+            if (!result.Ok &&
+                !(quietOnConflict && (await GitWriteService.GetConflictsAsync(_repoRoot)).Count > 0))
+            {
+                var detail = result.Message;
+                _showMessage?.Invoke(Loc.Get("GitFailedTitle"),
+                    detail.Length > 0 ? detail : Loc.Get("GitFailedTitle"));
+            }
+        }
+        catch (Exception ex)
+        {
+            _showMessage?.Invoke(Loc.Get("GitFailedTitle"), ex.Message);
+        }
+        finally
+        {
+            _gitBusy = false;
+            ApplyRemoteState();
+
+            // The graph is the readout of what just moved, so it reloads before anything else is
+            // told - keeping the selection, since a fetch leaves the commit being read in place.
+            await ReloadAsync(keepSelection: true);
+            GitChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void ApplyRemoteState()
+    {
+        _fetchButton.IsEnabled = !_gitBusy;
+        _pullButton.IsEnabled = !_gitBusy;
+
+        // Without somewhere to ask, push is not on offer at all, and the button says so by
+        // being dead rather than by doing nothing when pressed.
+        _pushButton.IsEnabled = !_gitBusy && _confirm != null;
     }
 
     // -- Detail pane ----------------------------------------------------
@@ -580,6 +726,13 @@ public class CommitGraphPanel : UserControl
         Cursor = new Cursor(StandardCursorType.Hand),
         Margin = new Thickness(0, 0, 6, 0),
     };
+
+    private Button ToolButton(string text, string tooltip)
+    {
+        var button = ToolButton(text);
+        if (tooltip.Length > 0) ToolTip.SetTip(button, tooltip);
+        return button;
+    }
 
     private static string Format(string format, object arg)
     {

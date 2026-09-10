@@ -2298,10 +2298,15 @@ internal partial class AppShell : UserControl, IDockOwner
             string.Equals(g.RepoRoot, repoRoot, StringComparison.OrdinalIgnoreCase));
         if (existing != null) { ActivateLayoutItem(existing); return; }
 
+        // The dialogs are the shell's to show, and the sidebar folds its history away while this
+        // window is up - so the window's fetch, pull and push report through the same message and
+        // confirmation boxes the sidebar's did, and tell the shell afterwards so the status bar and
+        // the panel behind it are not left showing the branch as it was.
         var panel = new Controls.CommitGraphPanel(
             repoRoot, repoLabel, _isDark,
             new Typeface(_settings.FontFamily + ", Consolas, Courier New"),
-            SendToActiveTerminal);
+            SendToActiveTerminal, ShowMessageDialog, ShowConfirmDialog);
+        panel.GitChanged += (_, _) => RefreshGitInfo();
 
         var titleText = new TextBlock
         {
