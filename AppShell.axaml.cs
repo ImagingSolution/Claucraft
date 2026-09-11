@@ -411,6 +411,7 @@ internal partial class AppShell : UserControl, IDockOwner
         FileTreeNode.UseShellIcons = _settings.UseShellIcons;
         RefreshFileTree();
         HookFileTreeDrag();
+        HookFileTreeScrollbarSlack();
 
         // What follows is the application starting up, and that happens once. A shell opened by
         // dragging a terminal out is handed a window rather than opening the application.
@@ -2417,6 +2418,32 @@ internal partial class AppShell : UserControl, IDockOwner
         GraphWindowsChanged();
     }
 
+
+    // ── Explorer horizontal scrollbar ──
+
+    /// <summary>
+    /// The horizontal scrollbar floats over the tree instead of taking a row of its own, so the
+    /// bottom entry ends up underneath it and cannot be clicked. One row of slack below the items
+    /// — only while that bar is up — lets the last entry be scrolled clear of it.
+    /// </summary>
+    private const double FileTreeScrollbarSlack = 20;
+
+    private void HookFileTreeScrollbarSlack()
+    {
+        FileTree.AddHandler(ScrollViewer.ScrollChangedEvent, OnFileTreeScrollChanged);
+    }
+
+    private void OnFileTreeScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        if (e.Source is not ScrollViewer sv || sv.Content is not Control items) return;
+
+        var slack = sv.Extent.Width > sv.Viewport.Width + 0.5 ? FileTreeScrollbarSlack : 0;
+
+        // Also what stops the loop: the margin grows the extent, which lands back here.
+        if (Math.Abs(items.Margin.Bottom - slack) < 0.1) return;
+
+        items.Margin = new Thickness(items.Margin.Left, items.Margin.Top, items.Margin.Right, slack);
+    }
 
     // ── Explorer → terminal drag & drop ──
 
