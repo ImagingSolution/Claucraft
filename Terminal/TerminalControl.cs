@@ -1359,7 +1359,7 @@ public class TerminalControl : Control, IDisposable
                 // Skip wide-char trail cells (their content is '\0')
                 if (cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
                     continue;
-                sb.Append(cell.Character == '\0' ? ' ' : cell.Character);
+                sb.Append(cell.Text);
             }
             if (absRow < er)
             {
@@ -1914,7 +1914,7 @@ public class TerminalControl : Control, IDisposable
                     caret = sb.Length;
                 var cell = GetCellAt(row, col);
                 if (cell.Attributes.HasFlag(CellAttributes.WideCharTrail)) continue;
-                sb.Append(cell.Character == '\0' ? ' ' : cell.Character);
+                sb.Append(cell.Text);
             }
             if (caret < 0 && row == _buffer.CursorRow) caret = sb.Length;
 
@@ -1947,7 +1947,7 @@ public class TerminalControl : Control, IDisposable
         {
             int first = FirstNonBlankCol(r);
             if (first < 0) return false;                 // blank row: above the input
-            char c = GetCellAt(r, first).Character;
+            int c = GetCellAt(r, first).Character;
             if (first == 0 && (c == '>' || c == '❯'))
             {
                 promptRow = r;
@@ -2796,7 +2796,7 @@ public class TerminalControl : Control, IDisposable
                 cell = _buffer.GetCell(absRow - scrollbackCount, col);
             }
             if (cell.Attributes.HasFlag(CellAttributes.WideCharTrail)) continue;
-            sb.Append(cell.Character == '\0' ? ' ' : cell.Character);
+            sb.Append(cell.Text);
         }
         return sb.ToString();
     }
@@ -4159,11 +4159,11 @@ public class TerminalControl : Control, IDisposable
                     if (cell.Character >= '\u2580' && cell.Character <= '\u259F')
                     {
                         var fgBrush = new SolidColorBrush(fg);
-                        DrawBlockElement(context, cell.Character, x, y, cellW, _cellHeight, fg, fgBrush);
+                        DrawBlockElement(context, (char)cell.Character, x, y, cellW, _cellHeight, fg, fgBrush);
                     }
                     else
                     {
-                        var ft = new FormattedText(cell.Character.ToString(), CultureInfo.CurrentCulture,
+                        var ft = new FormattedText(cell.Text, CultureInfo.CurrentCulture,
                             FlowDirection.LeftToRight, _typeface, _fontSize, new SolidColorBrush(fg));
                         context.DrawText(ft, new Point(x, y));
                     }

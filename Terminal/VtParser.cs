@@ -15,6 +15,9 @@ public class VtParser
     // UTF-8 decoding state
     private readonly Decoder _utf8Decoder = Encoding.UTF8.GetDecoder();
 
+    // Lead half of a surrogate pair waiting for its trail (see ProcessChar). 0 = none.
+    private int _pendingHighSurrogate;
+
     public string Title => _title;
     public event Action<string>? TitleChanged;
 
@@ -55,7 +58,38 @@ public class VtParser
         _buffer.NotifyChanged();
     }
 
+    /// <summary>
+    /// Recombines UTF-16 surrogate pairs before dispatching. A code point above the BMP —
+    /// every emoji — decodes to two UTF-16 units, and the grid stores whole code points:
+    /// feeding the halves through separately would leave two lone surrogates in the grid,
+    /// each of which renders as U+FFFD (the "&#xFFFD;&#xFFFD;" mojibake).
+    /// </summary>
     private void ProcessChar(int b)
+    {
+        if (_pendingHighSurrogate != 0)
+        {
+            int high = _pendingHighSurrogate;
+            _pendingHighSurrogate = 0;
+            if (b >= 0xDC00 && b <= 0xDFFF)
+            {
+                Dispatch(char.ConvertToUtf32((char)high, (char)b));
+                return;
+            }
+            Dispatch(high);   // unpaired lead: pass it through, then handle b normally
+        }
+
+        // Only hold a lead surrogate back in the printable path; escape/OSC/DCS payloads
+        // are collected as raw UTF-16 units and must not be merged.
+        if (b >= 0xD800 && b <= 0xDBFF && _state == ParserState.Normal)
+        {
+            _pendingHighSurrogate = b;
+            return;
+        }
+
+        Dispatch(b);
+    }
+
+    private void Dispatch(int b)
     {
         switch (_state)
         {
@@ -116,7 +150,7 @@ public class VtParser
                 break;
             default:
                 if (b >= 0x20)
-                    _buffer.WriteChar((char)b);
+                    _buffer.WriteChar(b);
                 break;
         }
     }

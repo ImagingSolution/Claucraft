@@ -345,7 +345,7 @@ public class CodeBlockDetector
                 cell = buffer.GetCell(absRow - scrollbackCount, col);
             }
             if (cell.Attributes.HasFlag(CellAttributes.WideCharTrail)) continue;
-            sb.Append(cell.Character == '\0' ? ' ' : cell.Character);
+            sb.Append(cell.Text);
         }
         return sb.ToString();
     }

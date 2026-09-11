@@ -89,8 +89,14 @@ public class TerminalBuffer
             _cells[row, col] = cell;
     }
 
-    public void WriteChar(char c)
+    /// <summary>Writes one Unicode code point (not a UTF-16 code unit) at the cursor.</summary>
+    public void WriteChar(int c)
     {
+        // Combining marks, variation selectors and emoji modifiers take no column of their
+        // own. The CLI lays its output out that way, so consuming a cell here would shift
+        // everything after them to the right. Dropping them keeps the grid aligned.
+        if (IsZeroWidth(c)) return;
+
         bool wide = IsWideChar(c);
 
         if (wide && CursorCol >= Cols - 1)
@@ -141,7 +147,7 @@ public class TerminalBuffer
             // Write trail marker in the next cell
             _cells[CursorRow, CursorCol] = new TerminalCell
             {
-                Character = '\0',
+                Character = 0,
                 Foreground = CurrentFg,
                 Background = CurrentBg,
                 Attributes = CurrentAttrs | CellAttributes.WideCharTrail
@@ -154,8 +160,35 @@ public class TerminalBuffer
     /// Determines if a character is a double-width (full-width) character
     /// that occupies 2 cells in a terminal.
     /// </summary>
-    public static bool IsWideChar(char c)
+    public static bool IsWideChar(int c)
     {
+        if (c < 0x1100) return false;
+
+        if (c >= 0x1100 && c <= 0x115F) return true; // Hangul Jamo initial consonants
+        // Symbols Unicode gives East_Asian_Width=Wide. The CLI counts these as two
+        // columns when it lays out its own output, so the grid has to agree.
+        if (c >= 0x231A && c <= 0x231B) return true;
+        if (c >= 0x23E9 && c <= 0x23EC) return true;
+        if (c == 0x23F0 || c == 0x23F3) return true;
+        if (c >= 0x25FD && c <= 0x25FE) return true;
+        if (c >= 0x2614 && c <= 0x2615) return true;
+        if (c >= 0x2648 && c <= 0x2653) return true;
+        if (c == 0x267F || c == 0x2693 || c == 0x26A1) return true;
+        if (c >= 0x26AA && c <= 0x26AB) return true;
+        if (c >= 0x26BD && c <= 0x26BE) return true;
+        if (c >= 0x26C4 && c <= 0x26C5) return true;
+        if (c == 0x26CE || c == 0x26D4 || c == 0x26EA) return true;
+        if (c >= 0x26F2 && c <= 0x26F3) return true;
+        if (c == 0x26F5 || c == 0x26FA || c == 0x26FD) return true;
+        if (c == 0x2705) return true;
+        if (c >= 0x270A && c <= 0x270B) return true;
+        if (c == 0x2728 || c == 0x274C || c == 0x274E) return true;
+        if (c >= 0x2753 && c <= 0x2755) return true;
+        if (c == 0x2757) return true;
+        if (c >= 0x2795 && c <= 0x2797) return true;
+        if (c == 0x27B0 || c == 0x27BF) return true;
+        if (c >= 0x2B1B && c <= 0x2B1C) return true;
+        if (c == 0x2B50 || c == 0x2B55) return true;
         // CJK Radicals Supplement, Kangxi Radicals
         if (c >= 0x2E80 && c <= 0x2FDF) return true;
         // CJK Symbols and Punctuation, Hiragana, Katakana, Bopomofo, etc.
@@ -174,6 +207,32 @@ public class TerminalBuffer
         if (c >= 0xFE10 && c <= 0xFE6F) return true; // CJK Compatibility Forms, Small Forms
         if (c >= 0xFF01 && c <= 0xFF60) return true; // Fullwidth Forms
         if (c >= 0xFFE0 && c <= 0xFFE6) return true; // Fullwidth Signs
+        // Above the BMP: emoji and the later CJK extensions.
+        if (c >= 0x1F000 && c <= 0x1F02F) return true; // Mahjong Tiles
+        if (c >= 0x1F0A0 && c <= 0x1F0FF) return true; // Playing Cards
+        if (c >= 0x1F1E6 && c <= 0x1F1FF) return true; // Regional Indicators (flags)
+        if (c >= 0x1F200 && c <= 0x1F2FF) return true; // Enclosed Ideographic Supplement
+        if (c >= 0x1F300 && c <= 0x1F9FF) return true; // Pictographs, Emoticons, Transport, Supplemental
+        if (c >= 0x1FA70 && c <= 0x1FAFF) return true; // Symbols and Pictographs Extended-A
+        if (c >= 0x20000 && c <= 0x2FFFD) return true; // CJK Unified Ext B-F
+        if (c >= 0x30000 && c <= 0x3FFFD) return true; // CJK Unified Ext G and later
+        return false;
+    }
+
+    /// <summary>
+    /// Characters that attach to the preceding cell instead of taking a column of their own.
+    /// </summary>
+    public static bool IsZeroWidth(int c)
+    {
+        if (c < 0x0300) return false;
+        if (c >= 0x0300 && c <= 0x036F) return true;   // Combining Diacritical Marks
+        if (c >= 0x200B && c <= 0x200F) return true;   // zero-width space/joiners, bidi marks
+        if (c == 0xFEFF) return true;                  // zero-width no-break space / BOM
+        // U+FE00-FE0F (variation selectors) are deliberately NOT listed. They render as
+        // nothing but keep their column, which is how "base + VS16" ends up two columns
+        // wide - the same width the CLI counts for an emoji-presentation sequence.
+        if (c >= 0x1F3FB && c <= 0x1F3FF) return true; // emoji skin-tone modifiers
+        if (c >= 0xE0100 && c <= 0xE01EF) return true; // Variation Selectors Supplement
         return false;
     }
 
