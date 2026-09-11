@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -1342,23 +1342,21 @@ public class TerminalControl : Control, IDisposable
 
     // The column the selected rows share as their left edge: the rightmost one that
     // still has nothing but blanks to its left on every row. Rows that are blank all
-    // the way across say nothing about it and are passed over. Never reaches further
-    // right than the text does, so a selection that already starts at column zero -
-    // anything outside the CLI's indented message column - is left as it is.
-    private int GetSelectionIndent(int startRow, int endRow)
+    // the way across say nothing about it and are passed over, as are rows that only
+    // exist because the one above them ran out of width - their left edge is the
+    // wrap's, not the block's. Never reaches further right than the text does, so a
+    // selection that already starts at column zero - anything outside the CLI's
+    // indented message column - is left as it is.
+    private int GetSelectionIndent(int startRow, int endRow, JoinKind[] runsOn)
     {
-        int rowEnd = _buffer.Cols - _selLeftMargin - 1;
         int indent = int.MaxValue;
         for (int absRow = startRow; absRow <= endRow; absRow++)
         {
-            for (int col = _selLeftMargin; col <= rowEnd && col < _buffer.Cols; col++)
-            {
-                var cell = GetCellAtAbs(absRow, col);
-                if (cell.Character <= ' ' && !cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
-                    continue;
-                if (col < indent) indent = col;
-                break;
-            }
+            if (absRow > startRow && runsOn[absRow - 1 - startRow] != JoinKind.Break) continue;
+            int rowEnd = RowWidth(absRow) - _selLeftMargin - 1;
+            int first = FirstUsedCol(absRow, _selLeftMargin, rowEnd);
+            if (first < 0) continue;
+            if (first < indent) indent = first;
             if (indent <= _selLeftMargin) break;   // cannot get any shallower
         }
         return indent == int.MaxValue ? _selLeftMargin : indent;
@@ -1369,11 +1367,19 @@ public class TerminalControl : Control, IDisposable
         if (!_hasSelection) return "";
         GetOrderedSelection(out int sr, out int sc, out int er, out int ec);
 
+        // Which of these rows are a row only because the line was too long for the
+        // screen. The CLI wraps its own output to the terminal's width and starts the
+        // remainder on the next row, so the break between them is the screen's, not the
+        // text's, and copying it out hands back a command or a path snapped in two.
+        var runsOn = new JoinKind[Math.Max(0, er - sr)];
+        for (int i = 0; i < runsOn.Length; i++)
+            runsOn[i] = RowRunsOn(sr + i);
+
         // Code the CLI prints to be copied sits indented - past the message bullet,
         // and again for the block itself - and that gutter is layout, not text. Taking
         // off the shallowest indentation the selected rows share clears it from every
         // row while leaving the code's own nesting, which is the part that matters.
-        int indent = GetSelectionIndent(sr, er);
+        int indent = GetSelectionIndent(sr, er, runsOn);
 
         var sb = new System.Text.StringBuilder();
         for (int absRow = sr; absRow <= er; absRow++)
@@ -1381,10 +1387,16 @@ public class TerminalControl : Control, IDisposable
             // The input block is padded on the right by as much as it is indented on
             // the left, so a row there ends short of the terminal's own edge. Reading
             // past it would fold that padding into a soft-wrapped line.
-            int rowEnd = _buffer.Cols - _selLeftMargin - 1;
-            int colStart = Math.Max(indent, (absRow == sr) ? sc : 0);
+            int rowEnd = RowWidth(absRow) - _selLeftMargin - 1;
+            bool continued = absRow > sr && runsOn[absRow - 1 - sr] != JoinKind.Break;
+            // What a continuation carries on its left is the space the CLI used to line
+            // it up under the row above - the wrap showing, not text - so such a row
+            // starts where its own first character does.
+            int colStart = continued
+                ? Math.Max(_selLeftMargin, FirstUsedCol(absRow, _selLeftMargin, rowEnd))
+                : Math.Max(indent, (absRow == sr) ? sc : 0);
             int colEnd = Math.Min(rowEnd, (absRow == er) ? ec : rowEnd);
-            for (int col = colStart; col <= colEnd && col < _buffer.Cols; col++)
+            for (int col = colStart; col <= colEnd; col++)
             {
                 var cell = GetCellAtAbs(absRow, col);
                 // Skip wide-char trail cells (their content is '\0')
@@ -1394,49 +1406,43 @@ public class TerminalControl : Control, IDisposable
             }
             if (absRow < er)
             {
-                // Use buffer's line-wrap tracking for accurate detection
-                int sbCount = _buffer.Scrollback.Count;
-                bool isWrapped;
-                if (_selLeftMargin > 0)
-                {
-                    // Inside the input block that flag says nothing: the CLI pads every
-                    // row out to the right edge and lets the terminal wrap, so all of
-                    // them come back wrapped.
-                    isWrapped = RowContinuesOnNextRow(absRow, _selLeftMargin);
-                }
-                else
-                {
-                    isWrapped = absRow < sbCount
-                        ? _buffer.IsScrollbackLineWrapped(absRow)
-                        : _buffer.IsLineWrapped(absRow - sbCount);
-
-                    // The flag is only to be believed when it says a row was not
-                    // continued. Anywhere the CLI paints a row out to the right edge -
-                    // a code block's background, a padded panel - the terminal wraps at
-                    // the edge of that padding and flags a row whose text ended long
-                    // before. Joining the next row onto it would swallow the line break
-                    // and keep the padding, which is exactly what makes a copied code
-                    // block unusable. Blank room at the end settles it: a line that
-                    // really ran out of space has none.
-                    if (isWrapped) isWrapped = RowContinuesOnNextRow(absRow, 0);
-                }
-
                 // Blank cells at the end of a row are never text. At a real line break
                 // they are the unwritten rest of the line; on a row that wrapped they
-                // are the gap left behind when the wrap came early rather than split a
-                // double-width character across the edge - and carrying that gap into
-                // the join would drop a space into the middle of a path or a command.
-                // A row that genuinely ran out of room has no blank tail to strip.
+                // are the room the next word needed and could not get. Either way what
+                // goes in their place is decided below, not carried over from the grid.
                 int len = sb.Length;
                 while (len > 0 && sb[len - 1] == ' ') len--;
                 sb.Length = len;
 
-                // Real line break: start a new one. Wrapped: the text just carries on.
-                if (!isWrapped)
-                    sb.AppendLine();
+                switch (runsOn[absRow - sr])
+                {
+                    case JoinKind.Break: sb.AppendLine(); break;
+                    case JoinKind.JoinWithSpace: sb.Append(' '); break;
+                    // JoinKind.Join: the wrap cut through a word; the text carries
+                    // straight on with nothing in between.
+                }
             }
         }
         return sb.ToString().TrimEnd();
+    }
+
+    // Is this row's line carried on by the row below it? Two things wrap a line here
+    // and only one of them leaves a mark in the buffer. The terminal's own wrap sets the
+    // buffer's flag, and it only ever fires on text that ran past the last column, so
+    // there is no space in it to put back. The CLI's wrap - the common one, because it
+    // lays its output out itself - sets nothing at all, and has to be read off the row.
+    private JoinKind RowRunsOn(int absRow)
+    {
+        var kind = RowJoinKind(absRow, _selLeftMargin);
+        if (kind != JoinKind.Break) return kind;
+        if (_selLeftMargin > 0) return JoinKind.Break;
+        if (IsFramedBoundary(absRow, _selLeftMargin)) return JoinKind.Break;
+
+        int sbCount = _buffer.Scrollback.Count;
+        bool flagged = absRow < sbCount
+            ? _buffer.IsScrollbackLineWrapped(absRow)
+            : _buffer.IsLineWrapped(absRow - sbCount);
+        return flagged ? JoinKind.Join : JoinKind.Break;
     }
 
     private void ClearSelection()
@@ -1965,8 +1971,14 @@ public class TerminalControl : Control, IDisposable
             sb.Length = len;
             if (caret > len) caret = len;
 
-            if (row < bottom && !RowContinuesOnNextRow(ScreenRowToAbsolute(row), textLeft))
-                sb.Append('\n');
+            if (row < bottom)
+            {
+                switch (RowJoinKind(ScreenRowToAbsolute(row), textLeft))
+                {
+                    case JoinKind.Break: sb.Append('\n'); break;
+                    case JoinKind.JoinWithSpace: sb.Append(' '); break;
+                }
+            }
         }
 
         text = sb.ToString();
@@ -2054,46 +2066,134 @@ public class TerminalControl : Control, IDisposable
         return -1;
     }
 
-    // Did this row run out of room, or did its line end here? The buffer's wrap flag
-    // cannot say on its own: wherever the CLI pads a row with spaces out to the right
-    // edge - every row of its input block, and any block it paints a background behind
-    // - the terminal wraps at the edge of the padding and marks a row that had ended
-    // long before. What does say is whether the next row's first character would still
-    // have fitted here. A box padded by `margin` columns on the right just as it is
-    // indented by that many on the left has its last usable column at Cols - margin - 1.
-    private bool RowContinuesOnNextRow(int absRow, int margin)
+    // How wide the terminal was when this row was written. Scrollback holds each line in
+    // an array cut to the width of the day, and a resize since then leaves the old lines
+    // ending short of - or running past - today's right edge. Reading them against the
+    // current width would call a line that filled its own last column merely short, and
+    // that is exactly the line that ran out of room and carried on below.
+    private int RowWidth(int absRow)
     {
-        int boxRight = _buffer.Cols - margin - 1;
+        var sb = _buffer.Scrollback;
+        if (absRow >= 0 && absRow < sb.Count)
+        {
+            int len = sb[absRow].Length;
+            if (len > 0) return len;
+        }
+        return _buffer.Cols;
+    }
 
-        int used = margin - 1;
-        for (int col = boxRight; col >= margin; col--)
+    // The first and last column of a row that hold something - a glyph, or the trailing
+    // half of a double-width one, whose cell reads '\0' but is occupied all the same.
+    // -1 when there is nothing between the two bounds.
+    private int FirstUsedCol(int absRow, int from, int to)
+    {
+        int width = RowWidth(absRow);
+        for (int col = Math.Max(0, from); col <= to && col < width; col++)
         {
             var cell = GetCellAtAbs(absRow, col);
-            // A double-width character's trail cell holds '\0', but it is occupied.
             if (cell.Character > ' ' || cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
-            {
-                used = col;
-                break;
-            }
+                return col;
         }
+        return -1;
+    }
 
-        // How much room that next character needs. It is not always in the row's first
-        // column - a code block carries its own indentation - and a line wrapped early
-        // to keep a double-width character whole leaves exactly one column free, which
-        // is the case this has to tell apart from a line that simply ended one short.
-        int nextWidth = 1;
-        for (int col = margin; col <= boxRight; col++)
+    private int LastUsedCol(int absRow, int from, int to)
+    {
+        for (int col = Math.Min(to, RowWidth(absRow) - 1); col >= from && col >= 0; col--)
         {
-            var cell = GetCellAtAbs(absRow + 1, col);
-            if (cell.Character <= ' ' && !cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
-                continue;
-            nextWidth = col < boxRight &&
-                GetCellAtAbs(absRow + 1, col + 1).Attributes.HasFlag(CellAttributes.WideCharTrail)
-                ? 2 : 1;
-            break;
+            var cell = GetCellAtAbs(absRow, col);
+            if (cell.Character > ' ' || cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
+                return col;
         }
+        return -1;
+    }
 
-        return boxRight - used < nextWidth;
+    // Box drawing and the block elements beside it are how the CLI frames its panels.
+    // A row that ends in one, or a row that opens with one, is a border rather than
+    // text that ran out of room; joining either to its neighbour would flatten a frame
+    // into a single line.
+    private static bool IsFrameChar(int c) => c >= 0x2500 && c <= 0x259F;
+
+    // Is the boundary between this row and the next one the edge of a drawn frame?
+    // Worth asking on its own because a border runs the full width of the terminal, and
+    // so leaves behind every sign of a line that overflowed - the wrap flag included.
+    private bool IsFramedBoundary(int absRow, int margin)
+    {
+        int used = LastUsedCol(absRow, margin, RowWidth(absRow) - margin - 1);
+        if (used >= 0 && IsFrameChar(GetCellAtAbs(absRow, used).Character)) return true;
+
+        int nextFirst = FirstUsedCol(absRow + 1, margin, RowWidth(absRow + 1) - margin - 1);
+        return nextFirst >= 0 && IsFrameChar(GetCellAtAbs(absRow + 1, nextFirst).Character);
+    }
+
+    // What holds the end of one row to the start of the next.
+    private enum JoinKind
+    {
+        Break,          // the line ended here; the rows are separate lines
+        Join,           // the wrap fell inside a word; the halves belong together as they are
+        JoinWithSpace,  // the wrap fell on a space, which has to be put back
+    }
+
+    // The columns the row's opening word needs before it can share a row with anything.
+    // A word runs to the next space, so all of it has to fit; text written in
+    // double-width characters breaks between characters instead, so for that only the
+    // first character counts.
+    private int NextWordCols(int absRow, int from, int to, out bool isWide)
+    {
+        isWide = from < to &&
+            GetCellAtAbs(absRow, from + 1).Attributes.HasFlag(CellAttributes.WideCharTrail);
+        if (isWide) return 2;
+
+        int cols = 0;
+        for (int col = from; col <= to; col++)
+        {
+            if (GetCellAtAbs(absRow, col).Character <= ' ') break;   // a space, or a trail cell
+            if (col < to &&
+                GetCellAtAbs(absRow, col + 1).Attributes.HasFlag(CellAttributes.WideCharTrail))
+                break;                                               // a wide character ends it
+            cols++;
+        }
+        return Math.Max(1, cols);
+    }
+
+    // Did this row run out of room, or did its line end here? Nothing in the buffer says
+    // so: the CLI lays its own output out to the terminal's width and closes every row
+    // with a line break of its own, so a row it wrapped is indistinguishable from a row
+    // whose line simply stopped there. What tells them apart is why the break fell where
+    // it did. A line wraps when the next word will not fit in what is left of the row, so
+    // that is the question to ask - and a row that had the room to take that word kept
+    // nothing back, which means its line ended of its own accord. Asking instead whether
+    // the row reached the last column would only ever catch the one word too long to
+    // break at all: the CLI breaks between words, and that leaves the right edge ragged.
+    //
+    // A box padded by `margin` columns on the right just as it is indented by that many
+    // on the left has its last usable column at the row's own width, less the margin -
+    // each row measured at the width it was written at, which for a line that has since
+    // scrolled into the scrollback is not necessarily today's.
+    private JoinKind RowJoinKind(int absRow, int margin)
+    {
+        int boxRight = RowWidth(absRow) - margin - 1;
+
+        int used = LastUsedCol(absRow, margin, boxRight);
+        if (used < 0) return JoinKind.Break;           // a blank row carries nothing on
+
+        // The next row's first character is not always in its first column - the CLI
+        // indents what it wraps to line up under the row above.
+        int nextRight = RowWidth(absRow + 1) - margin - 1;
+        int nextFirst = FirstUsedCol(absRow + 1, margin, nextRight);
+        if (nextFirst < 0) return JoinKind.Break;      // nothing follows to carry on
+
+        if (IsFramedBoundary(absRow, margin)) return JoinKind.Break;
+
+        int wordCols = NextWordCols(absRow + 1, nextFirst, nextRight, out bool wordIsWide);
+        int free = boxRight - used;                    // columns still going spare here
+        if (free >= wordCols + 1) return JoinKind.Break;   // it would have fitted; the line ended
+
+        // A break that left columns free fell on the space between two words, and that
+        // space is part of the text. One that filled the row to its edge - or stopped a
+        // column short only because a double-width character will not straddle it - cut
+        // through a word, whose halves go back together with nothing between them.
+        return (free > 0 && !wordIsWide) ? JoinKind.JoinWithSpace : JoinKind.Join;
     }
 
     // ── Expanded Input Panel ──
