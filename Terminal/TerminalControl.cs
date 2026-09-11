@@ -1340,10 +1340,41 @@ public class TerminalControl : Control, IDisposable
         return true;
     }
 
+    // The column the selected rows share as their left edge: the rightmost one that
+    // still has nothing but blanks to its left on every row. Rows that are blank all
+    // the way across say nothing about it and are passed over. Never reaches further
+    // right than the text does, so a selection that already starts at column zero -
+    // anything outside the CLI's indented message column - is left as it is.
+    private int GetSelectionIndent(int startRow, int endRow)
+    {
+        int rowEnd = _buffer.Cols - _selLeftMargin - 1;
+        int indent = int.MaxValue;
+        for (int absRow = startRow; absRow <= endRow; absRow++)
+        {
+            for (int col = _selLeftMargin; col <= rowEnd && col < _buffer.Cols; col++)
+            {
+                var cell = GetCellAtAbs(absRow, col);
+                if (cell.Character <= ' ' && !cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
+                    continue;
+                if (col < indent) indent = col;
+                break;
+            }
+            if (indent <= _selLeftMargin) break;   // cannot get any shallower
+        }
+        return indent == int.MaxValue ? _selLeftMargin : indent;
+    }
+
     private string GetSelectedText()
     {
         if (!_hasSelection) return "";
         GetOrderedSelection(out int sr, out int sc, out int er, out int ec);
+
+        // Code the CLI prints to be copied sits indented - past the message bullet,
+        // and again for the block itself - and that gutter is layout, not text. Taking
+        // off the shallowest indentation the selected rows share clears it from every
+        // row while leaving the code's own nesting, which is the part that matters.
+        int indent = GetSelectionIndent(sr, er);
+
         var sb = new System.Text.StringBuilder();
         for (int absRow = sr; absRow <= er; absRow++)
         {
@@ -1351,7 +1382,7 @@ public class TerminalControl : Control, IDisposable
             // the left, so a row there ends short of the terminal's own edge. Reading
             // past it would fold that padding into a soft-wrapped line.
             int rowEnd = _buffer.Cols - _selLeftMargin - 1;
-            int colStart = Math.Max(_selLeftMargin, (absRow == sr) ? sc : 0);
+            int colStart = Math.Max(indent, (absRow == sr) ? sc : 0);
             int colEnd = Math.Min(rowEnd, (absRow == er) ? ec : rowEnd);
             for (int col = colStart; col <= colEnd && col < _buffer.Cols; col++)
             {
@@ -1371,23 +1402,34 @@ public class TerminalControl : Control, IDisposable
                     // Inside the input block that flag says nothing: the CLI pads every
                     // row out to the right edge and lets the terminal wrap, so all of
                     // them come back wrapped.
-                    isWrapped = IsInputRowWrapped(absRow, _selLeftMargin);
+                    isWrapped = RowContinuesOnNextRow(absRow, _selLeftMargin);
                 }
-                else if (absRow < sbCount)
-                    isWrapped = _buffer.IsScrollbackLineWrapped(absRow);
                 else
-                    isWrapped = _buffer.IsLineWrapped(absRow - sbCount);
-
-                // Trailing spaces go at a real line break, and inside the input block
-                // they go at a wrapped one too: the CLI wraps early rather than split a
-                // double-width character across the edge, and the gap it leaves behind
-                // is padding, not text.
-                if (!isWrapped || _selLeftMargin > 0)
                 {
-                    int len = sb.Length;
-                    while (len > 0 && sb[len - 1] == ' ') len--;
-                    sb.Length = len;
+                    isWrapped = absRow < sbCount
+                        ? _buffer.IsScrollbackLineWrapped(absRow)
+                        : _buffer.IsLineWrapped(absRow - sbCount);
+
+                    // The flag is only to be believed when it says a row was not
+                    // continued. Anywhere the CLI paints a row out to the right edge -
+                    // a code block's background, a padded panel - the terminal wraps at
+                    // the edge of that padding and flags a row whose text ended long
+                    // before. Joining the next row onto it would swallow the line break
+                    // and keep the padding, which is exactly what makes a copied code
+                    // block unusable. Blank room at the end settles it: a line that
+                    // really ran out of space has none.
+                    if (isWrapped) isWrapped = RowContinuesOnNextRow(absRow, 0);
                 }
+
+                // Blank cells at the end of a row are never text. At a real line break
+                // they are the unwritten rest of the line; on a row that wrapped they
+                // are the gap left behind when the wrap came early rather than split a
+                // double-width character across the edge - and carrying that gap into
+                // the join would drop a space into the middle of a path or a command.
+                // A row that genuinely ran out of room has no blank tail to strip.
+                int len = sb.Length;
+                while (len > 0 && sb[len - 1] == ' ') len--;
+                sb.Length = len;
 
                 // Real line break: start a new one. Wrapped: the text just carries on.
                 if (!isWrapped)
@@ -1923,7 +1965,7 @@ public class TerminalControl : Control, IDisposable
             sb.Length = len;
             if (caret > len) caret = len;
 
-            if (row < bottom && !IsInputRowWrapped(ScreenRowToAbsolute(row), textLeft))
+            if (row < bottom && !RowContinuesOnNextRow(ScreenRowToAbsolute(row), textLeft))
                 sb.Append('\n');
         }
 
@@ -2012,13 +2054,14 @@ public class TerminalControl : Control, IDisposable
         return -1;
     }
 
-    // Did this row of the CLI's input block run out of room, or did the user end it?
-    // The buffer's wrap flag cannot say: the CLI pads every row with spaces out to the
-    // terminal's right edge and lets it wrap, so every one of them comes back wrapped.
-    // What does say is whether the next row's first character would still have fitted
-    // here - the box is padded by `margin` columns on the right just as it is indented
-    // by that many on the left, so its last usable column is Cols - margin - 1.
-    private bool IsInputRowWrapped(int absRow, int margin)
+    // Did this row run out of room, or did its line end here? The buffer's wrap flag
+    // cannot say on its own: wherever the CLI pads a row with spaces out to the right
+    // edge - every row of its input block, and any block it paints a background behind
+    // - the terminal wraps at the edge of the padding and marks a row that had ended
+    // long before. What does say is whether the next row's first character would still
+    // have fitted here. A box padded by `margin` columns on the right just as it is
+    // indented by that many on the left has its last usable column at Cols - margin - 1.
+    private bool RowContinuesOnNextRow(int absRow, int margin)
     {
         int boxRight = _buffer.Cols - margin - 1;
 
@@ -2034,8 +2077,22 @@ public class TerminalControl : Control, IDisposable
             }
         }
 
-        int nextWidth = GetCellAtAbs(absRow + 1, margin + 1)
-                            .Attributes.HasFlag(CellAttributes.WideCharTrail) ? 2 : 1;
+        // How much room that next character needs. It is not always in the row's first
+        // column - a code block carries its own indentation - and a line wrapped early
+        // to keep a double-width character whole leaves exactly one column free, which
+        // is the case this has to tell apart from a line that simply ended one short.
+        int nextWidth = 1;
+        for (int col = margin; col <= boxRight; col++)
+        {
+            var cell = GetCellAtAbs(absRow + 1, col);
+            if (cell.Character <= ' ' && !cell.Attributes.HasFlag(CellAttributes.WideCharTrail))
+                continue;
+            nextWidth = col < boxRight &&
+                GetCellAtAbs(absRow + 1, col + 1).Attributes.HasFlag(CellAttributes.WideCharTrail)
+                ? 2 : 1;
+            break;
+        }
+
         return boxRight - used < nextWidth;
     }
 
@@ -4165,7 +4222,17 @@ public class TerminalControl : Control, IDisposable
                     {
                         var ft = new FormattedText(cell.Text, CultureInfo.CurrentCulture,
                             FlowDirection.LeftToRight, _typeface, _fontSize, new SolidColorBrush(fg));
-                        context.DrawText(ft, new Point(x, y));
+
+                        // A variation selector belongs to the glyph before it rather than
+                        // being a character of its own, so the pair may use both columns.
+                        double glyphW = cellW;
+                        if (!isWide && col + 1 < _buffer.Cols)
+                        {
+                            int next = GetCellAt(row, col + 1).Character;
+                            if (next >= 0xFE00 && next <= 0xFE0F) glyphW += _cellWidth;
+                        }
+
+                        DrawGlyph(context, ft, x, y, glyphW);
                     }
                 }
 
@@ -4514,6 +4581,33 @@ public class TerminalControl : Control, IDisposable
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Draws one cell's glyph, squeezed horizontally when the font draws it wider than the
+    /// columns the terminal gave that character.
+    ///
+    /// Japanese monospace fonts (BIZ UDGothic, MS Gothic, Meiryo) draw every East Asian
+    /// "Ambiguous" character at full width - twice the ASCII advance. That set is large and
+    /// turns up constantly in CLI output: Greek letters, the multiplication sign, the box
+    /// drawing range, and the geometric shapes used as bullets. Terminals, and the CLI that
+    /// lays its output out for one, all count those as a single column. Drawn at its natural
+    /// width the glyph spills past its cell and collides with the next character.
+    /// </summary>
+    private static void DrawGlyph(DrawingContext ctx, FormattedText ft, double x, double y, double maxWidth)
+    {
+        // Half a pixel of slack: side bearings can push an otherwise fitting glyph a
+        // fraction past the boundary, and scaling those would be visible churn for nothing.
+        if (ft.Width <= maxWidth + 0.5 || ft.Width <= 0)
+        {
+            ctx.DrawText(ft, new Point(x, y));
+            return;
+        }
+
+        // Horizontal only. Scaling both axes would break the grid - box-drawing runs would
+        // stop meeting their neighbours and vertical rules would no longer reach the next row.
+        using (ctx.PushTransform(Matrix.CreateScale(maxWidth / ft.Width, 1) * Matrix.CreateTranslation(x, y)))
+            ctx.DrawText(ft, new Point(0, 0));
     }
 
     private static void DrawBlockElement(DrawingContext ctx, char c, double x, double y, double w, double h, Color fg, IBrush brush)
