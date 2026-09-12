@@ -594,6 +594,13 @@
                                               IsCheckedChanged="OnNotifySettingChanged" />
                                 </StackPanel>
                                 <StackPanel Spacing="4" Margin="0,12,0,0">
+                                    <TextBlock x:Name="LblUpdates" Text="Updates" FontSize="13"
+                                               Foreground="{DynamicResource SubtleText}" />
+                                    <CheckBox x:Name="ChkCheckUpdate" Content="Check for updates at startup"
+                                              Foreground="{DynamicResource SubtleText}"
+                                              IsCheckedChanged="OnCheckUpdateSettingChanged" />
+                                </StackPanel>
+                                <StackPanel Spacing="4" Margin="0,12,0,0">
                                     <TextBlock x:Name="LblCheckpoints" Text="Checkpoints" FontSize="13"
                                                Foreground="{DynamicResource SubtleText}" />
                                     <CheckBox x:Name="ChkEnableCheckpoints" Content="Snapshot the project before each prompt"
@@ -879,6 +886,57 @@
             </DockPanel>
         </Grid>
     </DockPanel>
+
+    <!-- Update notice. Bottom-left and clear of the status bar, so a session stays readable
+         while it is up. Raised only by the primary shell - see AppShell.Update.cs. -->
+    <Border x:Name="UpdateBanner" IsVisible="False" ZIndex="20" Width="360"
+            HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="12,0,0,38"
+            CornerRadius="6" BorderThickness="1"
+            Background="{DynamicResource ToolBarBg}"
+            BorderBrush="{DynamicResource DividerColor}"
+            BoxShadow="0 4 14 0 #66000000">
+        <StackPanel Margin="14,12" Spacing="6">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock x:Name="UpdateTitleText" Grid.Column="0"
+                           Text="A new version is available"
+                           FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+                <Button x:Name="BtnUpdateDismiss" Grid.Column="1" Classes="icon-btn" Padding="4"
+                        VerticalAlignment="Top" ToolTip.Tip="Dismiss" Click="OnUpdateCancel">
+                    <PathIcon Data="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12Z"
+                              Width="10" Height="10" />
+                </Button>
+            </Grid>
+            <TextBlock x:Name="UpdateVersionText" Text="" FontSize="11"
+                       Foreground="{DynamicResource SubtleText}" />
+            <ScrollViewer x:Name="UpdateNotesScroll" MaxHeight="96"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <TextBlock x:Name="UpdateNotes" Text="" FontSize="11" TextWrapping="Wrap"
+                           Foreground="{DynamicResource SubtleText}" />
+            </ScrollViewer>
+            <Button x:Name="BtnUpdateNotesLink" Classes="icon-btn" Padding="0,2"
+                    HorizontalAlignment="Left" Click="OnUpdateNotesLink">
+                <TextBlock x:Name="LblUpdateNotesLink" Text="View release notes"
+                           FontSize="11" Foreground="#0A84FF" />
+            </Button>
+            <ProgressBar x:Name="UpdateProgress" IsVisible="False" Height="4"
+                         Minimum="0" Maximum="100" Margin="0,2,0,0" />
+            <TextBlock x:Name="UpdateProgressText" IsVisible="False" Text="" FontSize="11"
+                       Foreground="{DynamicResource SubtleText}" />
+            <TextBlock x:Name="UpdateError" IsVisible="False" Text="" FontSize="11"
+                       TextWrapping="Wrap" Foreground="#FF6B6B" />
+            <StackPanel Orientation="Horizontal" Spacing="8"
+                        HorizontalAlignment="Right" Margin="0,4,0,0">
+                <Button x:Name="BtnUpdateCancel" Padding="12,5" Click="OnUpdateCancel">
+                    <TextBlock x:Name="LblUpdateCancel" Text="Cancel" FontSize="12" />
+                </Button>
+                <Button x:Name="BtnUpdateApply" Classes="primary" Padding="12,5" Click="OnUpdateApply">
+                    <TextBlock x:Name="LblUpdateApply" Text="Update" FontSize="12" />
+                </Button>
+            </StackPanel>
+        </StackPanel>
+    </Border>
 
     <!-- Above everything, for the ghost of a tab being dragged and the strip caret. -->
     <Canvas x:Name="DragOverlay" IsHitTestVisible="False" />

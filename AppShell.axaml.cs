@@ -438,6 +438,9 @@ internal partial class AppShell : UserControl, IDockOwner
             _settings.Save();
             _ = ShowSetupDoctorIfProblemsAsync();
         }
+
+        // Asks GitHub for a newer release and raises the notice in the corner if there is one.
+        StartUpdateCheck();
     }
 
     /// <summary>
@@ -551,6 +554,13 @@ internal partial class AppShell : UserControl, IDockOwner
         ChkNotifySound.Content = Loc.Get("NotifySound");
         LblCheckpoints.Text = Loc.Get("Checkpoints");
         ChkEnableCheckpoints.Content = Loc.Get("EnableCheckpoints");
+        LblUpdates.Text = Loc.Get("Updates");
+        ChkCheckUpdate.Content = Loc.Get("CheckUpdateOnStartup");
+        UpdateTitleText.Text = Loc.Get("UpdateTitle");
+        LblUpdateNotesLink.Text = Loc.Get("UpdateNotesLink");
+        LblUpdateApply.Text = Loc.Get("UpdateApply");
+        // Reads "Abort" for as long as a download is running, and must keep saying so.
+        if (_updateDownload == null) LblUpdateCancel.Text = Loc.Get("Cancel");
 
         // Source control, tokens & cost, and the live status readouts
         ToolTip.SetTip(BtnActivitySourceControl, Loc.Get("SourceControlTooltip"));
@@ -2758,6 +2768,7 @@ internal partial class AppShell : UserControl, IDockOwner
         ChkEnableCheckpoints.IsChecked = _settings.EnableCheckpoints;
         ChkEnableLiveStatus.IsChecked = _settings.EnableLiveStatus;
         ChkEnableErrorBanner.IsChecked = _settings.EnableErrorBanner;
+        ChkCheckUpdate.IsChecked = _settings.CheckUpdateOnStartup;
         ChkGitAutoFetch.IsChecked = _settings.GitAutoFetch;
         FillCommitLanguageCombo();
         FillPlanTierCombo();

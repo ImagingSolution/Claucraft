@@ -264,6 +264,22 @@ public static class Loc
         ["AnswerReady"] = new() { ["English"] = "Answer ready", ["日本語"] = "回答完了" },
         ["AnswerReadyFmt"] = new() { ["English"] = "{0} has finished generating its answer", ["日本語"] = "{0} の回答生成が完了しました" },
 
+        // ── Updates ──
+        ["Updates"] = new() { ["English"] = "Updates", ["日本語"] = "アップデート" },
+        ["CheckUpdateOnStartup"] = new() { ["English"] = "Check for updates at startup", ["日本語"] = "起動時に更新を確認する" },
+        ["UpdateTitle"] = new() { ["English"] = "A new version is available", ["日本語"] = "新しいバージョンがあります" },
+        // {0} = running version, {1} = the version on offer
+        ["UpdateVersionFmt"] = new() { ["English"] = "{0} → {1}", ["日本語"] = "{0} → {1}" },
+        ["UpdateApply"] = new() { ["English"] = "Update", ["日本語"] = "バージョンアップ" },
+        ["UpdateNotesLink"] = new() { ["English"] = "View release notes", ["日本語"] = "リリースノートを見る" },
+        // {0} = bytes received, {1} = bytes in total
+        ["UpdateDownloadingFmt"] = new() { ["English"] = "{0} / {1}", ["日本語"] = "{0} / {1}" },
+        ["UpdateAbort"] = new() { ["English"] = "Abort", ["日本語"] = "中止" },
+        ["UpdateFailed"] = new() { ["English"] = "The download failed. Please try again later.", ["日本語"] = "ダウンロードに失敗しました。時間をおいて再試行してください。" },
+        ["UpdateNoPermission"] = new() { ["English"] = "Claucraft.exe could not be replaced. Download it from the release page and overwrite it yourself.", ["日本語"] = "Claucraft.exe を置き換えられませんでした。リリースページから手動でダウンロードして上書きしてください。" },
+        // {0} = number of sessions still open
+        ["UpdateSessionsRunningFmt"] = new() { ["English"] = "{0} session(s) are still running. Close them and update?", ["日本語"] = "{0} 個のセッションが実行中です。終了して更新しますか？" },
+
         // ── Workspaces ──
         ["Workspaces"] = new() { ["English"] = "Workspaces", ["日本語"] = "ワークスペース" },
         ["SaveWorkspaceAs"] = new() { ["English"] = "Save Workspace As...", ["日本語"] = "ワークスペースを名前を付けて保存..." },

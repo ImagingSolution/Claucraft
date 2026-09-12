@@ -81,6 +81,11 @@ public class AppSettings
     /// </summary>
     public long HandoffBannerTokens { get; set; } = 150_000;
 
+    // ── Updates ──
+
+    /// <summary>Ask GitHub for a newer release at startup and offer to install it.</summary>
+    public bool CheckUpdateOnStartup { get; set; } = true;
+
     private static readonly string SettingsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Claucraft");
