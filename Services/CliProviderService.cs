@@ -18,6 +18,7 @@ namespace Claucraft.Services;
 public class CliProviderService
 {
     public const string ClaudeId = "claude";
+    public const string GrokId = "grok";
 
     public const string LightProfileId = "light";
     public const string StandardProfileId = "standard";
@@ -639,6 +640,27 @@ public class CliProviderService
             ConfigDir = ".copilot",
             InstallHint = "npm i -g @github/copilot",
             Features = new CliFeatures(),
+        },
+        new CliProvider
+        {
+            Id = GrokId,
+            Name = "Grok CLI",
+            Exe = "grok",
+            // Bare `grok` opens the TUI; the prompt rides along as the trailing positional
+            // argument, the same shape Claude Code and Codex use.
+            NewArgs = "{prompt}",
+            ContinueArgs = "-c",
+            // -r takes the id, or resumes the most recent one when omitted.
+            ResumeArgs = "-r {sessionId}",
+            // -p is xAI's headless flag (--single); it takes the prompt as its value.
+            OneShotArgs = "-p {prompt}",
+            ConfigDir = ".grok",
+            InstallHint = "npm i -g @xai-official/grok",
+            Features = new CliFeatures
+            {
+                // Grok's TUI quits on /quit, with /exit as an alias.
+                ExitCommand = "/exit\r",
+            },
         },
     };
 }

@@ -897,6 +897,12 @@ internal partial class AppShell : UserControl, IDockOwner
         "antigravity" => (
             "M12,3 L21,19 L3,19 Z",
             Color.FromRgb(0x42, 0x85, 0xF4)),
+        // X's mark is white-on-black, so the glyph stays near-white against the dark panels
+        // rather than joining the mid-greys above.
+        CliProviderService.GrokId => (
+            "M4,3 L7.2,3 L20,21 L16.8,21 Z "
+            + "M16.8,3 L20,3 L7.2,21 L4,21 Z",
+            Color.FromRgb(0xE5, 0xE5, 0xEA)),
         _ => (
             "M12,2 L14,9 L21,11 L14,13 L12,20 L10,13 L3,11 L10,9 Z",
             Color.FromRgb(0x8E, 0x8E, 0x93)),
