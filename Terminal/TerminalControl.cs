@@ -173,6 +173,13 @@ public class TerminalControl : Control, IDisposable
 
     /// <summary>True while the CLI process is alive.</summary>
     public bool IsProcessRunning => _pty?.IsRunning == true;
+
+    /// <summary>
+    /// The pid ConPTY started, which is the host shell - cmd.exe or PowerShell - not the CLI.
+    /// The CLI runs underneath it, so anything that needs to identify this window's CLI process
+    /// walks down from here. Zero before the process starts.
+    /// </summary>
+    public int ShellProcessId => _pty?.ProcessId ?? 0;
     public event Action? Clicked;
     public event Action<double>? FontSizeChanged;
 

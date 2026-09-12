@@ -50,6 +50,34 @@ public static class RunningSessionService
     public static bool IsHeldByAgent(string? sessionId, string? projectFolder = null)
         => !string.IsNullOrEmpty(sessionId) && AgentSessionIds(projectFolder).Contains(sessionId!);
 
+    /// <summary>
+    /// The session one specific CLI process is running, or null if that pid is not a live CLI.
+    /// The ledger is keyed by pid, so this is an exact answer where a search by folder or by
+    /// creation time is a guess - and it is available about a second after launch, where the
+    /// transcript that would name the same session may not be written for minutes.
+    ///
+    /// Read straight off disk rather than through the cache: the caller is polling a process
+    /// that has only just started, and a two-second-old snapshot would not have it yet.
+    /// </summary>
+    public static string? SessionIdForProcess(int pid, string? expectedCwd = null)
+    {
+        if (pid <= 0) return null;
+        try
+        {
+            string path = Path.Combine(ClaudeDir, "sessions", pid + ".json");
+            if (!File.Exists(path)) return null;
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            // ReadEntry drops the record when its pid is dead or has been recycled into a
+            // different process, which is the same check that keeps a stale ledger file from
+            // naming a session nobody is running.
+            if (ReadEntry(doc.RootElement) is not { } entry) return null;
+            if (!string.IsNullOrEmpty(expectedCwd) && !PathEquals(entry.Cwd, expectedCwd)) return null;
+            return entry.SessionId;
+        }
+        catch { return null; }
+    }
+
     private static HashSet<string> Select(List<Held> held, string? projectFolder)
     {
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

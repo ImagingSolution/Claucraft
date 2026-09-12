@@ -6661,7 +6661,11 @@ internal partial class AppShell : UserControl, IDockOwner
             {
                 ProjectFolder = child.ProjectFolder ?? "",
                 TabTitle = child.StripText.Text ?? _cli.Active.Name,
-                SessionId = child.SessionId ?? "",
+                // Only an id with a transcript behind it, because only that one can be resumed.
+                // A window is known by its id from the moment its CLI registers, which is well
+                // before the first turn writes anything; saving one of those would have the
+                // workspace reopen with "--resume" on a conversation that does not exist.
+                SessionId = ResolveSessionPath(child) != null ? child.SessionId! : "",
                 ProviderId = _cli.ActiveId,
                 IsManualTitle = child.Terminal.IsManualTitle,
                 WorktreePath = child.WorktreePath ?? "",
@@ -7531,21 +7535,72 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     /// <summary>
-    /// Learns the id of a session we started ourselves. The CLI only reveals it by creating its
-    /// transcript, so the project's session folder is polled briefly after launch. Without this a
-    /// saved workspace could only reopen blank sessions.
+    /// Learns the id of a session we started ourselves, which is what lets the window resume
+    /// later and what points the status bar's context meter at the right transcript.
+    ///
+    /// Two routes, tried in that order. The CLI registers itself in ~/.claude/sessions/{pid}.json
+    /// about a second after it starts, so matching the pid running under this window's own shell
+    /// names the session exactly. The older route - the newest transcript created since launch -
+    /// stays as a fallback for a CLI that keeps no such ledger, and keeps its short deadline
+    /// because it is a guess by timing: past the first few seconds the file it finds is as likely
+    /// to belong to a neighbouring window as to this one.
+    ///
+    /// The pid route has no such ambiguity, so it keeps looking for as long as the window and its
+    /// process live. Having only the transcript route, on that deadline, was the bug: the CLI
+    /// does not write its transcript until the first turn actually runs - nothing after 37
+    /// seconds at an idle prompt, and 184 seconds for a real session whose first prompt came
+    /// late - so a window the user did not type into straight away never learned its id at all,
+    /// and its context meter stood at 0% for the rest of its life.
     /// </summary>
     private async Task TrackSessionIdAsync(MdiChildInfo entry, DateTime launchedAt)
     {
         var folder = entry.ProjectFolder;
         if (string.IsNullOrEmpty(folder) || !_cli.Features.SessionList) return;
 
-        for (int i = 0; i < 20 && string.IsNullOrEmpty(entry.SessionId); i++)
+        for (int i = 0; string.IsNullOrEmpty(entry.SessionId); i++)
         {
-            await Task.Delay(1500);
+            // Brisk while a launch could still be settling, then slow: past that point this is a
+            // window whose CLI has not registered at all - sitting on a trust prompt, say - and
+            // there is no reason to keep taking a snapshot of the process table every second.
+            bool early = i < 20;
+            await Task.Delay(early ? 1500 : 5000);
             if (!_children.Contains(entry)) return;
-            entry.SessionId = SessionService.FindSessionIdCreatedAfter(folder, launchedAt, TakenSessionIds(entry));
+
+            // Read on the UI thread, since both look at the window list, then search off it: a
+            // snapshot of the process table and a directory scan do not belong on the thread
+            // that is drawing the terminal.
+            int shell = entry.Terminal.ShellProcessId;
+            var taken = TakenSessionIds(entry);
+            var found = await Task.Run(() => LedgerSessionId(shell, folder, taken)
+                ?? (early ? SessionService.FindSessionIdCreatedAfter(folder, launchedAt, taken) : null));
+
+            if (!_children.Contains(entry)) return;
+            entry.SessionId = found;
+
+            // Nothing more will register once the CLI is gone, and a window left open on a dead
+            // process would otherwise poll for the rest of the session.
+            if (string.IsNullOrEmpty(entry.SessionId) && !entry.Terminal.IsProcessRunning) return;
         }
+    }
+
+    /// <summary>
+    /// The session the CLI under this window's shell is registered as running, or null while
+    /// nothing under it has registered one. Walking down from the shell pid is what makes this
+    /// exact: the ledger entry found this way belongs to this window's own process, not to
+    /// whichever session in the folder happened to be written most recently.
+    /// </summary>
+    private static string? LedgerSessionId(int shellPid, string folder, HashSet<string> taken)
+    {
+        if (shellPid == 0) return null;
+
+        foreach (int pid in ProcessTree.Descendants(shellPid))
+        {
+            var id = RunningSessionService.SessionIdForProcess(pid, folder);
+            // A pid can be recycled between the snapshot and the read, so an id another window
+            // already holds is treated as a mismatch rather than taken from it.
+            if (!string.IsNullOrEmpty(id) && !taken.Contains(id!)) return id;
+        }
+        return null;
     }
 
     /// <summary>
