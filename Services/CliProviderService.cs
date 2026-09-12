@@ -49,7 +49,14 @@ public class CliProviderService
     private const string LightExtraArgsV1 =
         "--model sonnet --effort low --autocompact 100k --strict-mcp-config --disable-slash-commands";
 
-    private static string LightExtraArgs() => $"{LightExtraArgsV1} --settings {QuoteArg(LightSettingsFile)}";
+    /// <summary>
+    /// Plain double quotes rather than QuoteArg, because this result is persisted into
+    /// providers.json, where it outlives the launch that wrote it and has to read the same in
+    /// either shell. A path under %APPDATA% holds no quote, no $ and no backtick, so the two
+    /// shells agree on it; the shell-specific escapes QuoteArg emits would only agree with the
+    /// shell that happened to be active when the file was written.
+    /// </summary>
+    private static string LightExtraArgs() => $"{LightExtraArgsV1} --settings \"{LightSettingsFile}\"";
 
     private static readonly Regex VersionRegex = new(@"\d+\.\d+[\w.\-]*", RegexOptions.Compiled);
 
@@ -134,7 +141,8 @@ public class CliProviderService
     public string BuildNewCommand(string? initialPrompt, LaunchProfile? profile = null)
     {
         var p = Active;
-        var exe = QuoteExe(p.Exe);
+        var shell = ShellHost.For(p);
+        var exe = QuoteExe(p.Exe, shell);
         var prompt = SanitizePrompt(initialPrompt);
         var extra = SanitizePrompt(profile?.ExtraArgs);
 
@@ -143,10 +151,10 @@ public class CliProviderService
 
         var args = p.NewArgs;
         args = string.IsNullOrWhiteSpace(args)
-            ? QuoteArg(prompt)
+            ? QuoteArg(prompt, shell)
             : args.Contains("{prompt}")
-                ? args.Replace("{prompt}", QuoteArg(prompt))
-                : $"{args} {QuoteArg(prompt)}";
+                ? args.Replace("{prompt}", QuoteArg(prompt, shell))
+                : $"{args} {QuoteArg(prompt, shell)}";
 
         // Profile flags lead so a prompt beginning with "-" still lands as the trailing
         // positional argument rather than being eaten as a flag value.
@@ -164,7 +172,7 @@ public class CliProviderService
     public string BuildContinueCommand(LaunchProfile? profile = null)
     {
         var p = Active;
-        var exe = QuoteExe(p.Exe);
+        var exe = QuoteExe(p.Exe, ShellHost.For(p));
         var extra = SanitizePrompt(profile?.ExtraArgs);
         var args = string.IsNullOrWhiteSpace(p.ContinueArgs) ? "" : p.ContinueArgs.Trim();
         return JoinCommand(exe, extra, args);
@@ -177,7 +185,7 @@ public class CliProviderService
         if (string.IsNullOrWhiteSpace(p.ResumeArgs))
             return BuildContinueCommand(profile);
 
-        var exe = QuoteExe(p.Exe);
+        var exe = QuoteExe(p.Exe, ShellHost.For(p));
         var extra = SanitizePrompt(profile?.ExtraArgs);
         var args = p.ResumeArgs.Replace("{sessionId}", sessionId).Trim();
         return JoinCommand(exe, extra, args);
@@ -192,20 +200,29 @@ public class CliProviderService
         return sb.ToString();
     }
 
-    private static string QuoteExe(string exe)
+    /// <summary>
+    /// Names the executable for the shell that will run it. cmd needs quotes only when the path
+    /// holds a space; PowerShell treats a quoted string in command position as a value rather
+    /// than a command, so it needs the call operator to run one either way.
+    /// </summary>
+    private static string QuoteExe(string exe, ShellKind shell)
     {
         exe = (exe ?? "").Trim();
         if (exe.Length == 0) return "";
+        if (shell == ShellKind.PowerShell)
+            return "& " + ShellHost.SingleQuote(exe.Trim('"'));
         if (exe.StartsWith("\"")) return exe;
         return exe.Contains(' ') ? $"\"{exe}\"" : exe;
     }
 
     /// <summary>
-    /// Wraps a value in double quotes so cmd.exe treats &amp;, |, &gt; and friends literally.
-    /// Embedded quotes are doubled, which keeps cmd's quote parity intact and is what the
-    /// C runtime argument parser expects for a literal quote.
+    /// Wraps a value so the shell hands it on as one literal argument. Both shells need the
+    /// same thing said in their own escapes, and ShellHost is where each one is written down.
     /// </summary>
-    private static string QuoteArg(string value) => $"\"{value.Replace("\"", "\"\"")}\"";
+    private static string QuoteArg(string value, ShellKind shell)
+        => shell == ShellKind.PowerShell
+            ? ShellHost.PowerShellArg(value)
+            : ShellHost.CmdArg(value);
 
     private static string SanitizePrompt(string? prompt)
     {
@@ -311,7 +328,7 @@ public class CliProviderService
     }
 
     /// <summary>Mirrors how cmd.exe resolves a bare command name against PATH + PATHEXT.</summary>
-    private static string? ResolveExecutable(string exe)
+    internal static string? ResolveExecutable(string exe)
     {
         exe = (exe ?? "").Trim().Trim('"');
         if (exe.Length == 0) return null;
@@ -507,6 +524,20 @@ public class CliProviderService
                 if (profile.Id == LightProfileId && profile.ExtraArgs == LightExtraArgsV1)
                 {
                     profile.ExtraArgs = LightExtraArgs();
+                    changed = true;
+                }
+            }
+
+            // A CLI found to work in only one shell gets pinned in its preset. Backfilling that
+            // onto an entry written before the field existed is what keeps an upgrade from
+            // launching it into the shell it cannot survive; an entry the user has pinned
+            // themselves already holds a value and is left alone.
+            if (string.IsNullOrWhiteSpace(stale.Shell))
+            {
+                var match = presets.FirstOrDefault(p => p.Id == stale.Id);
+                if (match != null && !string.IsNullOrWhiteSpace(match.Shell))
+                {
+                    stale.Shell = match.Shell;
                     changed = true;
                 }
             }

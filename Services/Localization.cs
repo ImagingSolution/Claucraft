@@ -49,6 +49,24 @@ public static class Loc
         ["FontSize"] = new() { ["English"] = "Font Size", ["日本語"] = "フォントサイズ" },
         ["InitialPrompt"] = new() { ["English"] = "Initial Prompt", ["日本語"] = "初期プロンプト" },
         ["LanguageSetting"] = new() { ["English"] = "Language", ["日本語"] = "言語" },
+        ["TerminalShell"] = new() { ["English"] = "Host Shell", ["日本語"] = "ホストシェル" },
+        ["TerminalShellCmd"] = new() { ["English"] = "Command Prompt", ["日本語"] = "コマンドプロンプト" },
+        ["TerminalShellPowerShell"] = new() { ["English"] = "PowerShell", ["日本語"] = "PowerShell" },
+        ["TerminalShellHint"] = new()
+        {
+            ["English"] = "The shell the AI CLI runs inside. Takes effect for sessions opened after Apply; open tabs keep the shell they started in.",
+            ["日本語"] = "AI CLI を動かすシェルです。「適用」後に開くセッションから有効になります（開いているタブは起動時のシェルのまま）。",
+        },
+        ["TerminalShellMissing"] = new()
+        {
+            ["English"] = "Not found on PATH - cmd.exe will be used instead.",
+            ["日本語"] = "PATH 上に見つかりません。cmd.exe が使われます。",
+        },
+        ["TerminalShellPinnedFmt"] = new()
+        {
+            ["English"] = "{0} runs only in {1}, so this is fixed while it is the active AI. Switch AI to choose again.",
+            ["日本語"] = "{0} は「{1}」でのみ動作するため固定されています。AI を切り替えると再び選択できます。",
+        },
         ["Apply"] = new() { ["English"] = "Apply", ["日本語"] = "適用" },
 
         // ── Snippets Panel ──

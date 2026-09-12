@@ -507,6 +507,7 @@ internal partial class AppShell : UserControl, IDockOwner
         LblLanguage.Text = Loc.Get("LanguageSetting");
         LblFontFamily.Text = Loc.Get("FontFamily");
         LblFontSize.Text = Loc.Get("FontSize");
+        LblTerminalShell.Text = Loc.Get("TerminalShell");
         LblInitialPrompt.Text = Loc.Get("InitialPrompt");
         LblApplySettings.Text = Loc.Get("Apply");
         ChkShowWelcomePage.Content = Loc.Get("ShowWelcomePage");
@@ -782,6 +783,12 @@ internal partial class AppShell : UserControl, IDockOwner
         LblOpenClaudeFolder.Text = string.Format(Loc.Get("OpenConfigDirFmt"), configDir);
         LoadProviderFieldsIntoUi();
         RefreshProviderRadios();
+
+        // Whether the Host Shell combo is a choice at all depends on the CLI that just became
+        // active, and the panel can be open while the AI selector switches it.
+        _suppressSettingsChanged = true;
+        FillTerminalShellCombo();
+        _suppressSettingsChanged = false;
 
         UpdateAiSelector();
         UpdateWindowTitle();
@@ -1149,6 +1156,8 @@ internal partial class AppShell : UserControl, IDockOwner
             // The source-control panel has its own [JA|EN] toggle over the same setting.
             _suppressSettingsChanged = true;
             FillCommitLanguageCombo();
+            // Re-runs the PATH lookup, so a PowerShell installed since launch shows up here.
+            FillTerminalShellCombo();
             _suppressSettingsChanged = false;
         }
         // Shown starts the auto-fetch timer and reloads; anything else stops it.
@@ -2777,6 +2786,7 @@ internal partial class AppShell : UserControl, IDockOwner
         ChkCheckUpdate.IsChecked = _settings.CheckUpdateOnStartup;
         ChkGitAutoFetch.IsChecked = _settings.GitAutoFetch;
         FillCommitLanguageCombo();
+        FillTerminalShellCombo();
         FillPlanTierCombo();
         _suppressSettingsChanged = false;
     }
@@ -2885,10 +2895,24 @@ internal partial class AppShell : UserControl, IDockOwner
         _settings.Language = language;
         _settings.FontFamily = fontFamily;
         _settings.FontSize = fontSize;
+        // Open tabs keep the shell they were launched in; this reaches the next new session.
+        // While a pinned CLI is active the combo shows that CLI's shell rather than a choice, so
+        // saving it would quietly overwrite the preference the user gets back on the next CLI.
+        if (ShellHost.Pinned(_cli.Active) == null)
+        {
+            _settings.TerminalShell = ShellHost.Ids[
+                Math.Clamp(CmbTerminalShell.SelectedIndex, 0, ShellHost.Ids.Length - 1)];
+        }
         _settings.Save();
 
         Loc.Language = language;
         ApplyLocalization();
+
+        // The shell names and the hint under them are localized combo content, which
+        // ApplyLocalization cannot reach.
+        _suppressSettingsChanged = true;
+        FillTerminalShellCombo();
+        _suppressSettingsChanged = false;
 
         // ApplyLocalization reaches the XAML this window owns; the source-control panel builds
         // its own controls in code and reads every string once, when it is constructed. Same
@@ -5127,6 +5151,67 @@ internal partial class AppShell : UserControl, IDockOwner
 
     /// <summary>Commit-message languages in the order the settings combo lists them.</summary>
     private static readonly string[] CommitLanguageIds = { "auto", "ja", "en" };
+
+    private void FillTerminalShellCombo()
+    {
+        // The panel is the one place that offers PowerShell, so it is where a lookup done once
+        // at startup would go stale.
+        ShellHost.InvalidateResolution();
+
+        CmbTerminalShell.ItemsSource = new List<string>
+        {
+            Loc.Get("TerminalShellCmd"),
+            Loc.Get("TerminalShellPowerShell"),
+        };
+
+        // A CLI that runs in only one shell decides for itself. Showing the stored preference
+        // next to a session that would ignore it is what the pin exists to avoid, so the combo
+        // shows the pin and goes read-only until another CLI is picked.
+        var pinned = ShellHost.Pinned(_cli.Active);
+        var shown = pinned ?? ShellHost.Parse(_settings.TerminalShell);
+        CmbTerminalShell.SelectedIndex = shown == ShellKind.PowerShell ? 1 : 0;
+        CmbTerminalShell.IsEnabled = pinned == null;
+        UpdateTerminalShellHint();
+    }
+
+    /// <summary>
+    /// Says when the change takes effect and, for PowerShell, which executable was found: pwsh
+    /// and Windows PowerShell differ on encoding, and a machine with neither falls back to
+    /// cmd.exe silently otherwise. A pinned CLI says so instead - the timing note would be a
+    /// lie about a setting that is not being read.
+    /// </summary>
+    private void UpdateTerminalShellHint()
+    {
+        var pinned = ShellHost.Pinned(_cli.Active);
+        var hint = pinned == null
+            ? Loc.Get("TerminalShellHint")
+            : string.Format(
+                Loc.Get("TerminalShellPinnedFmt"),
+                _cli.Active.Name,
+                Loc.Get(pinned == ShellKind.PowerShell ? "TerminalShellPowerShell" : "TerminalShellCmd"));
+
+        // The combo names the shell; the hint names the executable it comes down to, which for
+        // PowerShell is the one thing the name does not say - pwsh and Windows PowerShell differ
+        // on encoding, and a machine with neither falls back to cmd.exe silently otherwise.
+        if (CmbTerminalShell.SelectedIndex == 1)
+        {
+            var exe = ShellHost.ResolvePowerShell();
+            // PATHEXT hands back the extension in the case the file system recorded it, which on
+            // this one is POWERSHELL.EXE. Lowercase reads as a file name rather than shouting.
+            hint += exe == null
+                ? " " + Loc.Get("TerminalShellMissing")
+                : $" ({System.IO.Path.GetFileName(exe).ToLowerInvariant()})";
+        }
+        else
+        {
+            hint += " (cmd.exe)";
+        }
+
+        LblTerminalShellHint.Text = hint;
+    }
+
+    private void OnTerminalShellSelectionChanged(object? sender, SelectionChangedEventArgs e)
+        => UpdateTerminalShellHint();
 
     private void FillCommitLanguageCombo()
     {
@@ -7432,11 +7517,10 @@ internal partial class AppShell : UserControl, IDockOwner
 
         Dispatcher.UIThread.Post(() =>
         {
-            string cdPart = !string.IsNullOrEmpty(workFolder) && Directory.Exists(workFolder)
-                ? $"cd /d \"{workFolder}\" && "
-                : "";
-            string fullCommand = $"cmd.exe /c chcp 65001 >nul && {cdPart}{command}";
-            terminal.StartProcess(fullCommand, workFolder);
+            // The host shell - cmd.exe or PowerShell - is a setting the active CLI can override,
+            // and ShellHost is the one place that knows how each one wraps a launch. The CLI goes
+            // in because `command` was quoted for whatever shell it picks.
+            terminal.StartProcess(ShellHost.Build(command, workFolder, _cli.Active), workFolder);
             terminal.FocusTerminal();
             // The new child is already active, so nothing else will refresh the status bar
             // for it: without this, Stop / Undo stay blank until the tab is clicked.

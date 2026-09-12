@@ -94,6 +94,14 @@ public class CliProvider
     /// <summary>Config directory name under the user profile, e.g. ".claude".</summary>
     public string ConfigDir { get; set; } = "";
 
+    /// <summary>
+    /// Host shell this CLI has to run in: "cmd", "powershell", or empty when either works.
+    /// A CLI that only survives in one of them - because of the shim an installer leaves on
+    /// PATH, or how it reads the console - pins it here, and the Host Shell setting is
+    /// overridden rather than producing a session that starts dead.
+    /// </summary>
+    public string Shell { get; set; } = "";
+
     public string InstallHint { get; set; } = "";
 
     public CliFeatures Features { get; set; } = new();
@@ -131,6 +139,7 @@ public class CliProvider
         ResumeArgs = ResumeArgs,
         OneShotArgs = OneShotArgs,
         ConfigDir = ConfigDir,
+        Shell = Shell,
         InstallHint = InstallHint,
         Features = Features.Clone(),
         Profiles = Profiles.Select(p => p.Clone()).ToList(),

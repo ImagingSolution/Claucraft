@@ -533,6 +533,16 @@
                                                            FormatString="0"
                                                            HorizontalAlignment="Stretch" />
                                         </StackPanel>
+                                        <StackPanel Spacing="6">
+                                            <TextBlock x:Name="LblTerminalShell" Text="Host Shell" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <ComboBox x:Name="CmbTerminalShell" Classes="modern"
+                                                      HorizontalAlignment="Stretch"
+                                                      SelectionChanged="OnTerminalShellSelectionChanged" />
+                                            <TextBlock x:Name="LblTerminalShellHint" Text="" FontSize="11"
+                                                       TextWrapping="Wrap" Opacity="0.75"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                        </StackPanel>
                                         <CheckBox x:Name="ChkDarkMode" Content="Dark Mode"
                                                   Margin="0,4,0,4"
                                                   Foreground="{DynamicResource SubtleText}"

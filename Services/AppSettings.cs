@@ -30,6 +30,12 @@ public class AppSettings
 
     public string CliProviderId { get; set; } = CliProviderService.ClaudeId;
 
+    /// <summary>
+    /// Which shell a new session's CLI is launched inside: "cmd" or "powershell". Open tabs keep
+    /// the shell they were started in, so a change here reaches the next new session only.
+    /// </summary>
+    public string TerminalShell { get; set; } = ShellHost.CmdId;
+
     // ── Task completion notification ──
 
     /// <summary>Raise a tray toast when a terminal finishes while the window is in the background.</summary>
