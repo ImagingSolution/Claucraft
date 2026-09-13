@@ -3183,6 +3183,9 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         InactiveBorder.Color = MdiContainerBorder(_isDark);
 
+        // Built controls, not a styled TextBlock, so they do not follow the dynamic resources.
+        RenderUpdateNotes();
+
         var res = Application.Current?.Resources;
         if (res == null) return;
 

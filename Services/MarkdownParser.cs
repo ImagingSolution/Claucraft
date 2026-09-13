@@ -159,11 +159,14 @@ public static class MarkdownParser
                     };
                     SetInlineText(itemContent, itemText, fg, codeBg, codeFg, linkColor, codeFont);
 
-                    var itemPanel = new StackPanel
+                    // A horizontal StackPanel measures its children with unbounded width, so a
+                    // wrapping item would run off the edge. The grid gives the text a real width.
+                    var itemPanel = new Grid
                     {
-                        Orientation = Orientation.Horizontal,
+                        ColumnDefinitions = new ColumnDefinitions("Auto,*"),
                         Margin = new Thickness(0, 1),
                     };
+                    Grid.SetColumn(itemContent, 1);
                     itemPanel.Children.Add(bullet);
                     itemPanel.Children.Add(itemContent);
                     controls.Add(itemPanel);
@@ -199,11 +202,12 @@ public static class MarkdownParser
                     };
                     SetInlineText(itemContent, match.Groups[2].Value, fg, codeBg, codeFg, linkColor, codeFont);
 
-                    var itemPanel = new StackPanel
+                    var itemPanel = new Grid
                     {
-                        Orientation = Orientation.Horizontal,
+                        ColumnDefinitions = new ColumnDefinitions("Auto,*"),
                         Margin = new Thickness(0, 1),
                     };
+                    Grid.SetColumn(itemContent, 1);
                     itemPanel.Children.Add(num);
                     itemPanel.Children.Add(itemContent);
                     controls.Add(itemPanel);

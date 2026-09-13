@@ -919,11 +919,12 @@
             </Grid>
             <TextBlock x:Name="UpdateVersionText" Text="" FontSize="11"
                        Foreground="{DynamicResource SubtleText}" />
-            <ScrollViewer x:Name="UpdateNotesScroll" MaxHeight="96"
+            <!-- The notes are GitHub Markdown, so they are built as controls rather than set
+                 as text - see RenderUpdateNotes in AppShell.Update.cs. -->
+            <ScrollViewer x:Name="UpdateNotesScroll" MaxHeight="120"
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
-                <TextBlock x:Name="UpdateNotes" Text="" FontSize="11" TextWrapping="Wrap"
-                           Foreground="{DynamicResource SubtleText}" />
+                <StackPanel x:Name="UpdateNotes" />
             </ScrollViewer>
             <Button x:Name="BtnUpdateNotesLink" Classes="icon-btn" Padding="0,2"
                     HorizontalAlignment="Left" Click="OnUpdateNotesLink">

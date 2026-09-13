@@ -62,12 +62,29 @@ internal partial class AppShell
         UpdateVersionText.Text = string.Format(
             Loc.Get("UpdateVersionFmt"), UpdateService.CurrentVersion, info.Version);
 
-        UpdateNotes.Text = info.ReleaseNotes;
-        UpdateNotesScroll.IsVisible = info.ReleaseNotes.Length > 0;
+        RenderUpdateNotes();
 
         UpdateError.IsVisible = false;
         ResetUpdateBanner();
         UpdateBanner.IsVisible = true;
+    }
+
+    /// <summary>
+    /// Paints the release notes. GitHub writes them in Markdown, and the notice used to show
+    /// that source verbatim - headings as hashes, emphasis as asterisks - so they are rendered
+    /// here instead. The parser resolves its colours once, when the blocks are built, which is
+    /// why a theme switch has to come back through this.
+    /// </summary>
+    private void RenderUpdateNotes()
+    {
+        UpdateNotes.Children.Clear();
+
+        var notes = _update?.ReleaseNotes ?? "";
+        UpdateNotesScroll.IsVisible = notes.Length > 0;
+        if (notes.Length == 0) return;
+
+        foreach (var block in MarkdownParser.Parse(notes, _isDark, baseFontSize: 11))
+            UpdateNotes.Children.Add(block);
     }
 
     /// <summary>Downloads the new executable, then hands over to the swap.</summary>
