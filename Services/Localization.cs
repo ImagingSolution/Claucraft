@@ -531,6 +531,16 @@ public static class Loc
         ["DoubleClickOpens"] = new() { ["English"] = "Double-click to open it.", ["日本語"] = "ダブルクリックで開きます。" },
         ["SubagentDepthFmt"] = new() { ["English"] = "Spawned by another agent (depth {0})", ["日本語"] = "別のエージェントが起動（深さ {0}）" },
 
+        // ── Background Sessions (agent view) ──
+        ["AgentStateWorking"] = new() { ["English"] = "Working", ["日本語"] = "実行中" },
+        ["AgentStateBlocked"] = new() { ["English"] = "Needs input", ["日本語"] = "入力待ち" },
+        ["AgentRename"] = new() { ["English"] = "Rename…", ["日本語"] = "名前の変更…" },
+        ["AgentRenameTitle"] = new() { ["English"] = "Rename background session", ["日本語"] = "背景セッションの名前を変更" },
+        ["AgentDelete"] = new() { ["English"] = "Delete", ["日本語"] = "削除" },
+        ["AgentDeleteConfirmFmt"] = new() { ["English"] = "Delete the background session \"{0}\"? It is stopped first, and its conversation is not kept.", ["日本語"] = "背景セッション「{0}」を削除しますか？ 先に停止され、会話は残りません。" },
+        ["AgentDeleteFailedTitle"] = new() { ["English"] = "Could not delete the session", ["日本語"] = "セッションを削除できませんでした" },
+        ["AgentDeleteNeedsClaude"] = new() { ["English"] = "Deleting needs the Claude CLI, which is not installed.", ["日本語"] = "削除には Claude CLI が必要ですが、インストールされていません。" },
+
         // ── Explorer Editor ──
         ["EditorSaveTooltip"] = new() { ["English"] = "Save (Ctrl+S)", ["日本語"] = "保存 (Ctrl+S)" },
         ["EditorCloseTooltip"] = new() { ["English"] = "Close the editor", ["日本語"] = "エディタを閉じる" },

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
@@ -86,6 +87,13 @@ public class AppSettings
     /// value in appsettings.json is ignored and this default applies.)
     /// </summary>
     public long HandoffBannerTokens { get; set; } = 150_000;
+
+    /// <summary>
+    /// Names given to background sessions in the windows panel, keyed by the short id of
+    /// ~/.claude/jobs/&lt;id&gt;. Local to this app on purpose: a running session's state.json
+    /// belongs to its supervisor, which rewrites it continuously.
+    /// </summary>
+    public Dictionary<string, string> AgentDisplayNames { get; set; } = new();
 
     // ── Updates ──
 

@@ -1213,6 +1213,11 @@ internal partial class AppShell : UserControl, IDockOwner
                     WindowsList.Children.Add(BuildTerminalWindowRow(child));
                     foreach (var run in SubagentMonitor.ReadRunning(ResolveSessionPath(child)))
                         WindowsList.Children.Add(BuildSubagentRow(run));
+                    // Background sessions started from this folder - the CLI's own agent view,
+                    // under the window it belongs to. Sessions outlive windows, so these are
+                    // matched by folder rather than owned by the window.
+                    foreach (var agent in AgentViewMonitor.ReadActive(child.ProjectFolder))
+                        WindowsList.Children.Add(BuildBackgroundAgentRow(agent));
                     break;
 
                 case EditorChildInfo editor:
@@ -1478,6 +1483,204 @@ internal partial class AppShell : UserControl, IDockOwner
         };
     }
 
+    /// <summary>
+    /// One background session, indented under the window whose folder it runs in - the same
+    /// information the CLI's agent view shows, in the panel that already lists everything else
+    /// that is running. Like a subagent row there is nothing to click; the right-click menu is
+    /// the only thing that acts.
+    /// </summary>
+    private Control BuildBackgroundAgentRow(BackgroundAgent agent)
+    {
+        bool blocked = string.Equals(agent.State, "blocked", StringComparison.OrdinalIgnoreCase);
+
+        // Waiting on the user is the same colour a waiting subagent gets; a session that is just
+        // working reads as running, like the window dots above it.
+        var color = blocked ? Color.FromRgb(255, 214, 10) : Color.FromRgb(48, 209, 88);
+        bool twoLine = !string.IsNullOrEmpty(agent.Detail);
+
+        var dot = new Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            // Hollow when the supervisor has no process for it: the conversation is still there
+            // to attach to, but nothing is running right now.
+            Fill = agent.ProcessAlive ? new SolidColorBrush(color) : null,
+            Stroke = agent.ProcessAlive ? null : new SolidColorBrush(color),
+            StrokeThickness = 1,
+            VerticalAlignment = twoLine ? VerticalAlignment.Top : VerticalAlignment.Center,
+            Margin = twoLine ? new Thickness(0, 5, 7, 0) : new Thickness(0, 0, 7, 0),
+        };
+
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock
+        {
+            Text = AgentDisplayName(agent),
+            FontSize = 11,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        if (twoLine)
+            text.Children.Add(new TextBlock
+            {
+                Text = agent.Detail,
+                FontSize = 10,
+                Opacity = 0.5,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+
+        var elapsed = new TextBlock
+        {
+            Text = FormatElapsed(DateTime.Now - agent.Started),
+            FontSize = 10,
+            Opacity = 0.5,
+            Margin = twoLine ? new Thickness(6, 1, 2, 0) : new Thickness(6, 0, 2, 0),
+            VerticalAlignment = twoLine ? VerticalAlignment.Top : VerticalAlignment.Center,
+        };
+
+        var grid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("Auto,*,Auto") };
+        Grid.SetColumn(dot, 0);
+        Grid.SetColumn(text, 1);
+        Grid.SetColumn(elapsed, 2);
+        grid.Children.Add(dot);
+        grid.Children.Add(text);
+        grid.Children.Add(elapsed);
+
+        var tip = AgentDisplayName(agent)
+            + Environment.NewLine + Loc.Get(blocked ? "AgentStateBlocked" : "AgentStateWorking")
+            + "  ·  " + agent.Id;
+        if (!string.IsNullOrEmpty(agent.Detail))
+            tip += Environment.NewLine + agent.Detail;
+        if (!string.IsNullOrEmpty(agent.Intent) && agent.Intent != agent.Name)
+            tip += Environment.NewLine + Environment.NewLine + agent.Intent;
+        if (!string.IsNullOrEmpty(agent.Cwd))
+            tip += Environment.NewLine + Environment.NewLine + agent.Cwd;
+        ToolTip.SetTip(grid, tip);
+
+        return new Border
+        {
+            Child = grid,
+            Padding = new Thickness(6, 3),
+            Margin = new Thickness(14, 0, 4, 0),
+            CornerRadius = new CornerRadius(4),
+            ContextMenu = CreateBackgroundAgentContextMenu(agent),
+        };
+    }
+
+    /// <summary>
+    /// What the row calls a session: the name renaming gave it here, falling back to the one the
+    /// CLI chose. Renaming is local to this app - see <see cref="RenameBackgroundAgent"/>.
+    /// </summary>
+    private string AgentDisplayName(BackgroundAgent agent) =>
+        _settings.AgentDisplayNames.TryGetValue(agent.Id, out var custom)
+            && !string.IsNullOrWhiteSpace(custom)
+                ? custom
+                : agent.Name;
+
+    private ContextMenu CreateBackgroundAgentContextMenu(BackgroundAgent agent)
+    {
+        var renameItem = new MenuItem { Header = Loc.Get("AgentRename") };
+        renameItem.Click += (_, _) => _ = RenameBackgroundAgent(agent);
+
+        var deleteItem = new MenuItem { Header = Loc.Get("AgentDelete") };
+
+        // Deleting means running `claude stop` and `claude rm`, so it needs the claude CLI
+        // specifically - the active provider may well be Codex or Gemini, which have neither.
+        var claude = _cli.Find(CliProviderService.ClaudeId);
+        if (claude?.IsInstalled == true)
+            deleteItem.Click += (_, _) => _ = DeleteBackgroundAgent(agent, claude.ResolvedPath!);
+        else
+        {
+            deleteItem.IsEnabled = false;
+            ToolTip.SetTip(deleteItem, Loc.Get("AgentDeleteNeedsClaude"));
+        }
+
+        var menu = new ContextMenu { Items = { renameItem, deleteItem } };
+
+        // The panel is rebuilt wholesale on a timer, which takes this menu's own row out of the
+        // tree and shuts the menu a moment after it opened. Nothing else in the panel opens a
+        // menu, so nothing else needs to hold the rebuild off.
+        menu.Opened += (_, _) => _windowsMenuOpen = true;
+        menu.Closed += (_, _) => _windowsMenuOpen = false;
+        return menu;
+    }
+
+    /// <summary>Held while a row's context menu is open - see <see cref="RefreshSubagents"/>.</summary>
+    private bool _windowsMenuOpen;
+
+    /// <summary>
+    /// Renames a background session for this app only. The CLI keeps its own name: a running
+    /// session's state.json is rewritten by its supervisor continuously, so anything written
+    /// there would be both lost and a chance to corrupt the CLI's state.
+    /// </summary>
+    private async Task RenameBackgroundAgent(BackgroundAgent agent)
+    {
+        var entered = await ShowTextInputDialog(
+            Loc.Get("AgentRenameTitle"), agent.Name, AgentDisplayName(agent), Loc.Get("OK"));
+        if (entered == null) return;
+
+        var name = entered.Trim();
+        if (name.Length == 0 || name == agent.Name)
+            _settings.AgentDisplayNames.Remove(agent.Id);
+        else
+            _settings.AgentDisplayNames[agent.Id] = name;
+
+        SaveAgentDisplayNames();
+        RefreshWindowsPanel();
+    }
+
+    /// <summary>
+    /// Stops a background session and deletes it, the way the CLI's own agent view does. `rm`
+    /// refuses in cases this app has no business deciding - unpushed commits in a worktree, most
+    /// of all - so its refusal is shown verbatim rather than forced past.
+    /// </summary>
+    private async Task DeleteBackgroundAgent(BackgroundAgent agent, string exe)
+    {
+        var name = AgentDisplayName(agent);
+        if (!await ShowConfirmDialog(
+                Loc.Get("AgentDelete"), string.Format(Loc.Get("AgentDeleteConfirmFmt"), name)))
+            return;
+
+        var folder = !string.IsNullOrEmpty(agent.Cwd) && Directory.Exists(agent.Cwd)
+            ? agent.Cwd!
+            : _projectFolder ?? "";
+
+        // Stopping an already-stopped session is a no-op that reports failure, so only the
+        // removal's outcome is worth acting on.
+        await Task.Run(() => ProcessRunner.Run(exe, folder, null, 30000, null, "stop", agent.Id));
+        var removed = await Task.Run(
+            () => ProcessRunner.Run(exe, folder, null, 30000, null, "rm", agent.Id));
+
+        AgentViewMonitor.Invalidate();
+
+        if (removed.Ok)
+        {
+            _settings.AgentDisplayNames.Remove(agent.Id);
+            SaveAgentDisplayNames();
+        }
+        else
+        {
+            ShowMessageDialog(Loc.Get("AgentDeleteFailedTitle"), removed.Message);
+        }
+
+        RefreshWindowsPanel();
+    }
+
+    /// <summary>
+    /// Saves the renames, dropping the ones whose session is gone. Nothing else prunes them, and
+    /// a session deleted elsewhere would otherwise leave its name behind forever.
+    /// </summary>
+    private void SaveAgentDisplayNames()
+    {
+        if (_settings.AgentDisplayNames.Count > 0)
+        {
+            var stale = new List<string>();
+            foreach (var id in _settings.AgentDisplayNames.Keys)
+                if (!AgentViewMonitor.JobExists(id)) stale.Add(id);
+            foreach (var id in stale) _settings.AgentDisplayNames.Remove(id);
+        }
+
+        _settings.Save();
+    }
+
     private static string FormatElapsed(TimeSpan span)
     {
         if (span < TimeSpan.Zero) span = TimeSpan.Zero;
@@ -1502,7 +1705,7 @@ internal partial class AppShell : UserControl, IDockOwner
     /// </summary>
     private void RefreshSubagents()
     {
-        if (!WindowsPanel.IsVisible) return;
+        if (!WindowsPanel.IsVisible || _windowsMenuOpen) return;
 
         var signature = SubagentSignature();
         bool ticking = signature.Length > 0
@@ -1518,8 +1721,14 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         var parts = new List<string>();
         foreach (var child in _children)
+        {
             foreach (var run in SubagentMonitor.ReadRunning(ResolveSessionPath(child)))
                 parts.Add(run.Id);
+            // The state has to be part of this: a session going from working to blocked keeps
+            // its id, and without the state the panel would never redraw to change the dot.
+            foreach (var agent in AgentViewMonitor.ReadActive(child.ProjectFolder))
+                parts.Add(agent.Id + ":" + agent.State + (agent.ProcessAlive ? "+" : "-"));
+        }
         return string.Join("|", parts);
     }
 
