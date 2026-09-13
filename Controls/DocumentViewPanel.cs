@@ -38,7 +38,7 @@ public class DocumentViewPanel : Panel
         {
             Text = Loc.Get("NoSession", "No session loaded"),
             FontSize = 11,
-            Foreground = new SolidColorBrush(isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(120, 120, 125)),
+            Foreground = new SolidColorBrush(isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(88, 88, 96)),
             Margin = new Thickness(10, 6),
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
@@ -145,7 +145,7 @@ public class DocumentViewPanel : Panel
     public void UpdateTheme(bool isDark)
     {
         _isDark = isDark;
-        _statusLabel.Foreground = new SolidColorBrush(isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(120, 120, 125));
+        _statusLabel.Foreground = new SolidColorBrush(isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(88, 88, 96));
         ReloadSession();
     }
 
@@ -244,7 +244,7 @@ public class DocumentViewPanel : Panel
                 {
                     Text = msg.Timestamp.Value.ToString("HH:mm"),
                     FontSize = 10,
-                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(160, 160, 165)),
+                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(112, 112, 120)),
                     HorizontalAlignment = HorizontalAlignment.Right,
                     Margin = new Thickness(0, 0, 4, 2),
                 });
@@ -274,7 +274,7 @@ public class DocumentViewPanel : Panel
             {
                 Text = $"\u2699 {msg.Text}",
                 FontSize = 11,
-                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(120, 120, 125) : Color.FromRgb(140, 140, 145)),
+                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(120, 120, 125) : Color.FromRgb(100, 100, 108)),
                 FontStyle = FontStyle.Italic,
                 Margin = new Thickness(0, 1),
             };
@@ -301,7 +301,7 @@ public class DocumentViewPanel : Panel
                 Header = Loc.Get("Thinking", "Thinking..."),
                 IsExpanded = false,
                 FontSize = 12,
-                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(120, 120, 125) : Color.FromRgb(140, 140, 145)),
+                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(120, 120, 125) : Color.FromRgb(100, 100, 108)),
                 Margin = new Thickness(0, 2),
             };
 
@@ -310,7 +310,7 @@ public class DocumentViewPanel : Panel
                 Text = msg.Text.Length > 1000 ? msg.Text[..1000] + "..." : msg.Text,
                 FontSize = 12,
                 FontStyle = FontStyle.Italic,
-                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(120, 120, 125) : Color.FromRgb(140, 140, 145)),
+                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(120, 120, 125) : Color.FromRgb(100, 100, 108)),
                 TextWrapping = TextWrapping.Wrap,
             };
             expander.Content = thinkingContent;
@@ -347,7 +347,7 @@ public class DocumentViewPanel : Panel
                 {
                     Text = msg.Timestamp.Value.ToString("HH:mm"),
                     FontSize = 10,
-                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(160, 160, 165)),
+                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(112, 112, 120)),
                     Margin = new Thickness(4, 0, 0, 2),
                 });
             }
@@ -374,7 +374,7 @@ public class DocumentViewPanel : Panel
             {
                 Text = msg.Timestamp.Value.ToString("HH:mm"),
                 FontSize = 10,
-                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(160, 160, 165)),
+                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(112, 112, 120)),
                 Margin = new Thickness(4, 0, 0, 2),
             });
         }
@@ -424,7 +424,7 @@ public class DocumentViewPanel : Panel
         var cardBg = _isDark ? Color.FromRgb(38, 38, 44) : Color.FromRgb(245, 245, 252);
         var selectedBg = _isDark ? Color.FromRgb(30, 50, 70) : Color.FromRgb(225, 238, 255);
         var fg = _isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30);
-        var subtleFg = _isDark ? Color.FromRgb(140, 140, 150) : Color.FromRgb(100, 100, 110);
+        var subtleFg = _isDark ? Color.FromRgb(140, 140, 150) : Color.FromRgb(84, 84, 92);
 
         var contentStack = new StackPanel { Spacing = 6 };
 

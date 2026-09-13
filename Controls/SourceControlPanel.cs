@@ -2385,7 +2385,7 @@ public sealed class SourceControlPanel : UserControl
 
     private Color Divider() => _isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(210, 210, 215);
 
-    private Color DimText() => _isDark ? Color.FromRgb(140, 140, 148) : Color.FromRgb(110, 110, 118);
+    private Color DimText() => _isDark ? Color.FromRgb(140, 140, 148) : Color.FromRgb(84, 84, 92);
 
     private Color WarningBg() =>
         _isDark ? Color.FromRgb(58, 44, 24) : Color.FromRgb(255, 248, 225);

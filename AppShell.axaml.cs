@@ -17,6 +17,7 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using Avalonia.Markup.Xaml.MarkupExtensions;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
@@ -245,6 +246,13 @@ internal partial class AppShell : UserControl, IDockOwner
         public MdiItemKind Kind => MdiItemKind.Terminal;
         public string Title => StripText.Text ?? string.Empty;
         public IDockOwner? Owner { get; set; }
+
+        /// <summary>
+        /// This window's dot in the windows panel, for as long as that panel is showing it.
+        /// The panel is rebuilt wholesale, so every rebuild hands its new dot over here and the
+        /// 700 ms paint keeps all three of a window's dots saying the same thing.
+        /// </summary>
+        public Ellipse? PanelDot { get; set; }
 
         public string? ProjectFolder { get; set; }
         public string? FirstInput { get; set; }
@@ -946,7 +954,7 @@ internal partial class AppShell : UserControl, IDockOwner
     private void ShowMessageDialog(string title, string message)
     {
         var panelBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(240, 240, 245);
-        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(40, 40, 45);
+        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(28, 28, 32);
 
         var text = new TextBlock
         {
@@ -1243,17 +1251,17 @@ internal partial class AppShell : UserControl, IDockOwner
         bool isActive = _activeLayoutItem == null
             ? ReferenceEquals(child, _activeChild)
             : ReferenceEquals(child, _activeLayoutItem);
-        bool isRunning = child.Terminal.IsProcessRunning;
-
         var dot = new Ellipse
         {
             Width = 8, Height = 8,
-            Fill = isRunning
-                ? new SolidColorBrush(Color.FromRgb(48, 209, 88))
-                : new SolidColorBrush(Color.FromRgb(142, 142, 147)),
+            // The same brush the window's tab carries. Running alone is not enough to say:
+            // green here while the tab showed orange had one window reading as idle and
+            // mid-turn at once.
+            Fill = ChildDotBrush(child),
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(0, 5, 0, 0),
         };
+        child.PanelDot = dot;
 
         // The tab is the one name a window has, so this row reads it rather than keeping a
         // second opinion: a rename, or a session renamed with /rename, reaches both at once.
@@ -1278,7 +1286,7 @@ internal partial class AppShell : UserControl, IDockOwner
             FontSize = 12,
             Padding = new Thickness(4, 0),
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+            Foreground = new SolidColorBrush(CloseCrossFg(_isDark)),
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Top,
             CornerRadius = new CornerRadius(4),
@@ -1382,7 +1390,7 @@ internal partial class AppShell : UserControl, IDockOwner
             FontSize = 12,
             Padding = new Thickness(4, 0),
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+            Foreground = new SolidColorBrush(CloseCrossFg(_isDark)),
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Top,
             CornerRadius = new CornerRadius(4),
@@ -1493,9 +1501,10 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         bool blocked = string.Equals(agent.State, "blocked", StringComparison.OrdinalIgnoreCase);
 
-        // Waiting on the user is the same colour a waiting subagent gets; a session that is just
-        // working reads as running, like the window dots above it.
-        var color = blocked ? Color.FromRgb(255, 214, 10) : Color.FromRgb(48, 209, 88);
+        // Same reading as the window dot above it: orange is mid-turn. Green would have said
+        // "waiting at the prompt" here, which is the one thing a working session is not.
+        // Waiting on the user keeps the colour a waiting subagent gets.
+        var color = blocked ? Color.FromRgb(255, 214, 10) : DotBusyBrush.Color;
         bool twoLine = !string.IsNullOrEmpty(agent.Detail);
 
         var dot = new Ellipse
@@ -1881,7 +1890,7 @@ internal partial class AppShell : UserControl, IDockOwner
         {
             Text = System.IO.Path.GetFileName(doc.Path),
             FontSize = 13,
-            Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 215)),
+            Foreground = new SolidColorBrush(MdiTitleFg(_isDark)),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
@@ -1896,7 +1905,7 @@ internal partial class AppShell : UserControl, IDockOwner
             },
             Padding = new Thickness(6, 0),
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)),
+            Foreground = new SolidColorBrush(MdiTitleIconFg(_isDark)),
             BorderThickness = new Thickness(0),
             IsVisible = doc.Editable,
             IsEnabled = false,
@@ -1911,7 +1920,7 @@ internal partial class AppShell : UserControl, IDockOwner
             FontSize = 14,
             Padding = new Thickness(6, 0),
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)),
+            Foreground = new SolidColorBrush(MdiTitleButtonFg(_isDark)),
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Cursor = new Cursor(StandardCursorType.Hand)
@@ -1938,7 +1947,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         var titleBar = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),  // Apple elevated surface
+            Background = new SolidColorBrush(MdiTitleBarBg(_isDark)),
             Padding = new Thickness(0, 6),
             Child = titleGrid,
             Cursor = new Cursor(StandardCursorType.Hand)
@@ -1950,7 +1959,7 @@ internal partial class AppShell : UserControl, IDockOwner
             TextWrapping = TextWrapping.Wrap,
             IsVisible = false,
             Margin = new Thickness(9, 4, 8, 0),
-            Foreground = new SolidColorBrush(Color.FromRgb(152, 152, 157))
+            Foreground = new SolidColorBrush(EditorNoticeFg(_isDark))
         };
 
         var editorBox = new TextBox
@@ -1963,9 +1972,9 @@ internal partial class AppShell : UserControl, IDockOwner
             TextWrapping = TextWrapping.NoWrap,
             IsReadOnly = !doc.Editable,
             BorderThickness = new Thickness(0),
-            Background = new SolidColorBrush(Color.FromRgb(28, 28, 30)),  // Apple systemBackground
-            Foreground = new SolidColorBrush(Color.FromRgb(224, 224, 228)),
-            CaretBrush = new SolidColorBrush(Color.FromRgb(224, 224, 228)),
+            Background = new SolidColorBrush(MdiContainerBg(_isDark)),
+            Foreground = new SolidColorBrush(EditorBodyFg(_isDark)),
+            CaretBrush = new SolidColorBrush(EditorBodyFg(_isDark)),
             Padding = new Thickness(8, 4),
             CaretIndex = 0
         };
@@ -1985,15 +1994,15 @@ internal partial class AppShell : UserControl, IDockOwner
         var container = new Border
         {
             Child = dockPanel,
-            BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+            BorderBrush = new SolidColorBrush(MdiContainerBorder(_isDark)),
             BorderThickness = new Thickness(0.5),
             ClipToBounds = true,
-            Background = new SolidColorBrush(Color.FromRgb(28, 28, 30))
+            Background = new SolidColorBrush(MdiContainerBg(_isDark))
         };
 
         // --- Window strip button, built like a terminal window's so the two read as one set ---
         var (stripButton, _, stripText, _, stripCloseBtn) =
-            BuildStripButton(System.IO.Path.GetFileName(doc.Path), EditorDotColor);
+            BuildStripButton(System.IO.Path.GetFileName(doc.Path), EditorDotColor, _isDark);
         ToolTip.SetTip(stripButton, doc.Path);
 
         var entry = new EditorChildInfo
@@ -2249,7 +2258,7 @@ internal partial class AppShell : UserControl, IDockOwner
     /// cross. All three window kinds show the same tab, so they share one builder; the caller
     /// wires the Click handlers afterwards, once it has an entry to give them.
     /// </summary>
-    private static StripTab BuildStripButton(string title, Color dotColor)
+    private static StripTab BuildStripButton(string title, Color dotColor, bool isDark)
     {
         var dot = new Ellipse
         {
@@ -2271,7 +2280,7 @@ internal partial class AppShell : UserControl, IDockOwner
             FontSize = 12,
             Padding = new Thickness(3, 0),
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)),
+            Foreground = new SolidColorBrush(CloseCrossFg(isDark)),
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             CornerRadius = new CornerRadius(3),
@@ -2547,7 +2556,7 @@ internal partial class AppShell : UserControl, IDockOwner
         {
             Text = panel.GraphTitle,
             FontSize = 13,
-            Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 215)),
+            Foreground = new SolidColorBrush(MdiTitleFg(_isDark)),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
@@ -2559,7 +2568,7 @@ internal partial class AppShell : UserControl, IDockOwner
             FontSize = 14,
             Padding = new Thickness(6, 0),
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)),
+            Foreground = new SolidColorBrush(MdiTitleButtonFg(_isDark)),
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             Cursor = new Cursor(StandardCursorType.Hand)
@@ -2585,7 +2594,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         var titleBar = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),  // Apple elevated surface
+            Background = new SolidColorBrush(MdiTitleBarBg(_isDark)),
             Padding = new Thickness(0, 6),
             Child = titleGrid,
             Cursor = new Cursor(StandardCursorType.Hand)
@@ -2599,14 +2608,14 @@ internal partial class AppShell : UserControl, IDockOwner
         var container = new Border
         {
             Child = dockPanel,
-            BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+            BorderBrush = new SolidColorBrush(MdiContainerBorder(_isDark)),
             BorderThickness = new Thickness(0.5),
             ClipToBounds = true,
-            Background = new SolidColorBrush(Color.FromRgb(28, 28, 30))
+            Background = new SolidColorBrush(MdiContainerBg(_isDark))
         };
 
         // --- Window strip button, built like an editor window's so the two read as one set ---
-        var (stripButton, _, stripText, _, stripCloseBtn) = BuildStripButton(panel.GraphTitle, GraphDotColor);
+        var (stripButton, _, stripText, _, stripCloseBtn) = BuildStripButton(panel.GraphTitle, GraphDotColor, _isDark);
         ToolTip.SetTip(stripButton, repoRoot);
 
         var entry = new GraphChildInfo
@@ -3052,25 +3061,128 @@ internal partial class AppShell : UserControl, IDockOwner
         Broadcast(s => s.AdoptSharedTheme());
     }
 
-    /// <summary>Repaints the terminal windows in this shell for the theme now in force.</summary>
+    // -- MDI window chrome --
+    //
+    // Terminal, editor and history windows are each assembled in their own method but wear one
+    // frame, so its colours live here and every builder asks for them by name. They used to be
+    // written out dark at each site, which only ever looked right because the light theme was
+    // reached by toggling: a window opened while light mode was already on kept a black title
+    // bar until the user switched themes and back.
+
+    private static Color MdiContainerBg(bool isDark) =>
+        isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(255, 255, 255);
+
+    private static Color MdiContainerBorder(bool isDark) =>
+        isDark ? Color.FromArgb(40, 255, 255, 255) : Color.FromArgb(40, 0, 0, 0);
+
+    private static Color MdiTitleBarBg(bool isDark) =>
+        isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(235, 235, 240);
+
+    private static Color MdiTitleFg(bool isDark) =>
+        isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(28, 28, 32);
+
+    /// <summary>A title bar's own buttons, a shade back from the title so they do not compete
+    /// with it - a wash of the theme's contrast colour rather than white on either theme.</summary>
+    private static Color MdiTitleButtonFg(bool isDark) =>
+        isDark ? Color.FromArgb(120, 255, 255, 255) : Color.FromArgb(150, 0, 0, 0);
+
+    /// <summary>As above, for the buttons drawn as a glyph rather than a character: a stroked
+    /// icon needs more of the colour than text does to read at the same weight.</summary>
+    private static Color MdiTitleIconFg(bool isDark) =>
+        isDark ? Color.FromArgb(180, 255, 255, 255) : Color.FromArgb(200, 0, 0, 0);
+
+    /// <summary>A close cross, on a tab or on a row of the windows panel. A wash rather than
+    /// the theme's full contrast colour, so it stays behind the name beside it instead of
+    /// competing with it - but a wash of that colour, not of white, which a pale strip swallowed
+    /// whole.</summary>
+    private static Color CloseCrossFg(bool isDark) =>
+        isDark ? Color.FromArgb(100, 255, 255, 255) : Color.FromArgb(200, 0, 0, 0);
+
+    private static Color EditorBodyFg(bool isDark) =>
+        isDark ? Color.FromRgb(224, 224, 228) : Color.FromRgb(28, 28, 32);
+
+    private static Color EditorNoticeFg(bool isDark) =>
+        isDark ? Color.FromRgb(152, 152, 157) : Color.FromRgb(84, 84, 92);
+
+    /// <summary>Repaints one window's title bar, and whatever is sitting in it, for
+    /// <paramref name="isDark"/>.</summary>
+    private static void ApplyThemeToTitleBar(Border titleBar, bool isDark)
+    {
+        titleBar.Background = new SolidColorBrush(MdiTitleBarBg(isDark));
+
+        var titleFg = new SolidColorBrush(MdiTitleFg(isDark));
+
+        // The three bars hold different pieces - a status dot on a session, a save button on an
+        // editor - so this walks what is in the bar instead of threading a handle to each piece
+        // through three different records. A button's own label is left alone: it inherits the
+        // button's colour, which is the step back the wash above is for.
+        foreach (var control in titleBar.GetLogicalDescendants().OfType<Control>())
+        {
+            if (control is Button button)
+                button.Foreground = new SolidColorBrush(button.Content is PathIcon
+                    ? MdiTitleIconFg(isDark)
+                    : MdiTitleButtonFg(isDark));
+            else if (control is TextBlock text && text.FindLogicalAncestorOfType<Button>() == null)
+                text.Foreground = titleFg;
+        }
+    }
+
+    /// <summary>
+    /// Repaints the close cross on every open tab. A tab keeps no handle to it - the builder
+    /// hands it back only so the caller can wire the click - so this reads it off the tab the
+    /// same way a title bar is read, rather than widening three records for one brush. The rows
+    /// of the windows panel need no such pass: that list is rebuilt from scratch on a refresh.
+    /// </summary>
+    private void ApplyThemeToStripTabs()
+    {
+        var closeFg = new SolidColorBrush(CloseCrossFg(_isDark));
+        foreach (var item in AllLayoutItems())
+            foreach (var close in item.StripButton.GetLogicalDescendants().OfType<Button>())
+                close.Foreground = closeFg;
+    }
+
+    /// <summary>Repaints every window on this shell's canvas for the theme now in force.</summary>
     private void ApplyThemeToChildren()
     {
-        var containerBg = _isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(255, 255, 255);
-        var titleBarBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(235, 235, 240);
-        var titleFg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(40, 40, 45);
+        var containerBg = new SolidColorBrush(MdiContainerBg(_isDark));
 
         foreach (var child in _children)
         {
             child.Terminal.IsDarkTheme = _isDark;
-            child.Container.Background = new SolidColorBrush(containerBg);
-            child.TitleBar.Background = new SolidColorBrush(titleBarBg);
-            child.TitleText.Foreground = new SolidColorBrush(titleFg);
+            child.Container.Background = containerBg;
+            ApplyThemeToTitleBar(child.TitleBar, _isDark);
         }
+
+        foreach (var editor in _editorChildren)
+        {
+            editor.Container.Background = containerBg;
+            ApplyThemeToTitleBar(editor.TitleBar, _isDark);
+            editor.EditorBox.Background = containerBg;
+            editor.EditorBox.Foreground = new SolidColorBrush(EditorBodyFg(_isDark));
+            editor.EditorBox.CaretBrush = new SolidColorBrush(EditorBodyFg(_isDark));
+            editor.NoticeText.Foreground = new SolidColorBrush(EditorNoticeFg(_isDark));
+        }
+
+        // A history window's panel resolves its colours once, at construction, the way the
+        // source-control panel does - so a live switch reaches its frame, and the panel itself
+        // catches up the next time the window is opened.
+        foreach (var graph in _graphChildren)
+        {
+            graph.Container.Background = containerBg;
+            ApplyThemeToTitleBar(graph.TitleBar, _isDark);
+        }
+
+        // The frames themselves are painted by the selection, off a brush shared with the
+        // dragged-out windows, so repainting them means asking it to paint again.
+        UpdateStripSelection();
+        ApplyThemeToStripTabs();
         // DocView theme is updated via terminal.ApplyThemeColors()
     }
 
     private void UpdateThemeResources()
     {
+        InactiveBorder.Color = MdiContainerBorder(_isDark);
+
         var res = Application.Current?.Resources;
         if (res == null) return;
 
@@ -3080,6 +3192,8 @@ internal partial class AppShell : UserControl, IDockOwner
             res["StatusBarBg"] = new SolidColorBrush(Color.FromRgb(28, 28, 30));
             res["SurfaceBg"] = new SolidColorBrush(Color.FromRgb(0, 0, 0));
             res["SubtleText"] = new SolidColorBrush(Color.FromRgb(152, 152, 157));
+            res["AccentText"] = new SolidColorBrush(Color.FromRgb(100, 165, 255));
+            res["DangerText"] = new SolidColorBrush(Color.FromRgb(255, 107, 107));
             res["DividerColor"] = new SolidColorBrush(Color.FromRgb(56, 56, 58));
             res["ActivityBarBg"] = new SolidColorBrush(Color.FromRgb(28, 28, 30));
             res["SidePanelBg"] = new SolidColorBrush(Color.FromRgb(44, 44, 46));
@@ -3089,11 +3203,21 @@ internal partial class AppShell : UserControl, IDockOwner
             res["ToolBarBg"] = new SolidColorBrush(Color.FromRgb(240, 240, 245));
             res["StatusBarBg"] = new SolidColorBrush(Color.FromRgb(232, 232, 237));
             res["SurfaceBg"] = new SolidColorBrush(Color.FromRgb(246, 246, 248));
-            res["SubtleText"] = new SolidColorBrush(Color.FromRgb(100, 100, 110));
+            res["SubtleText"] = new SolidColorBrush(Color.FromRgb(84, 84, 92));
+            res["AccentText"] = new SolidColorBrush(Color.FromRgb(0, 90, 200));
+            res["DangerText"] = new SolidColorBrush(Color.FromRgb(190, 35, 35));
             res["DividerColor"] = new SolidColorBrush(Color.FromRgb(200, 200, 205));
             res["ActivityBarBg"] = new SolidColorBrush(Color.FromRgb(232, 232, 237));
             res["SidePanelBg"] = new SolidColorBrush(Color.FromRgb(240, 240, 245));
         }
+
+        // Both placeholder kinds - the combo box's and the text box's watermark - are drawn at
+        // half opacity inside their templates, where no style of ours can reach them. The one
+        // lever left is the brush they start from, so it goes to the far end of the theme and
+        // the halved result lands as far from the row as the toolkit allows; anything gentler
+        // reads under 3:1 on a near-white toolbar.
+        res["TextControlPlaceholderForeground"] =
+            new SolidColorBrush(_isDark ? Colors.White : Colors.Black);
     }
 
     private void OnApplySettings(object? sender, RoutedEventArgs e)
@@ -3206,7 +3330,7 @@ internal partial class AppShell : UserControl, IDockOwner
         var snFg = _isDark ? Color.FromRgb(255, 255, 255) : Color.FromRgb(28, 28, 30);
         var snBorder = _isDark ? Color.FromRgb(58, 58, 60) : Color.FromRgb(200, 200, 205);
         var snHandleBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(235, 235, 240);
-        var snGripFg = _isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(160, 160, 170);
+        var snGripFg = _isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(118, 118, 128);
 
         var textBox = new TextBox
         {
@@ -4196,20 +4320,27 @@ internal partial class AppShell : UserControl, IDockOwner
     /// <summary>Apple systemGray: the process has exited.</summary>
     private static readonly SolidColorBrush DotExitedBrush = new(Color.FromRgb(142, 142, 147));
 
+    /// <summary>The brush a window's run state calls for, shared by every dot that shows it.</summary>
+    private static SolidColorBrush ChildDotBrush(MdiChildInfo child) =>
+        !child.Terminal.IsProcessRunning ? DotExitedBrush
+        : child.Terminal.IsGenerating ? DotBusyBrush
+        : DotIdleBrush;
+
     /// <summary>
-    /// Colours a window's title-bar and strip dots from its run state. The strip dot is the
-    /// only thing a background window shows of itself, so it has to separate "mid-turn" from
-    /// "waiting at the prompt" - green alone could not say which. Called from the 700 ms poll,
-    /// hence the shared brushes and the reference check: repainting is the rare case.
+    /// Colours a window's title-bar, strip and windows-panel dots from its run state. The strip
+    /// dot is the only thing a background window shows of itself, so it has to separate
+    /// "mid-turn" from "waiting at the prompt" - green alone could not say which. Called from
+    /// the 700 ms poll, hence the shared brushes and the reference check: repainting is the
+    /// rare case. The panel dot is painted here rather than by a panel rebuild because the
+    /// panel only rebuilds when its row set changes, which a run state never does.
     /// </summary>
     private static void PaintChildDots(MdiChildInfo child)
     {
-        var brush = !child.Terminal.IsProcessRunning ? DotExitedBrush
-            : child.Terminal.IsGenerating ? DotBusyBrush
-            : DotIdleBrush;
+        var brush = ChildDotBrush(child);
 
         if (!ReferenceEquals(child.StatusDot.Fill, brush)) child.StatusDot.Fill = brush;
         if (!ReferenceEquals(child.StripDot.Fill, brush)) child.StripDot.Fill = brush;
+        if (child.PanelDot is { } panel && !ReferenceEquals(panel.Fill, brush)) panel.Fill = brush;
     }
 
     /// <summary>How many polls the idle state must hold before the turn counts as over.</summary>
@@ -4393,7 +4524,7 @@ internal partial class AppShell : UserControl, IDockOwner
         if (!show) return;
 
         bool known = mode is not null and not AiMode.Unknown;
-        var color = ModeBadgeColor(mode, modeText);
+        var color = ModeBadgeColor(mode, modeText, _isDark);
         StatusModeText.Text = !string.IsNullOrEmpty(modeText)
             ? modeText
             : known
@@ -4401,7 +4532,14 @@ internal partial class AppShell : UserControl, IDockOwner
                 : Loc.Get("ModeSwitchFallback", "Switch Mode");
         StatusModeText.Foreground = new SolidColorBrush(color);
         StatusModeBadge.BorderBrush = new SolidColorBrush(color);
-        StatusModeBadge.Background = new SolidColorBrush(color, 0.14);
+        // Alpha over a near-white bar darkens the chip, which eats the contrast the colour
+        // was picked for; light mode blends towards white instead so the chip stays a tint.
+        StatusModeBadge.Background = _isDark
+            ? new SolidColorBrush(color, 0.14)
+            : new SolidColorBrush(Color.FromRgb(
+                (byte)(255 - (255 - color.R) * 0.14),
+                (byte)(255 - (255 - color.G) * 0.14),
+                (byte)(255 - (255 - color.B) * 0.14)));
         ToolTip.SetTip(StatusModeBadge, known
             ? TerminalInsight.ModeLabel(mode!.Value) + Environment.NewLine + Loc.Get("ModeBadgeTooltip")
             : Loc.Get("ModeSwitchTooltip", "Switch mode (Shift+Tab)"));
@@ -4416,15 +4554,20 @@ internal partial class AppShell : UserControl, IDockOwner
     /// let edits through the same way - but the CLI colours them apart, so the wording it printed
     /// is what separates them here. Bypass gets no colour of its own on the status line; the red
     /// it has always had stands in.
+    ///
+    /// The CLI's palette is built for a black terminal, so a near-white status bar gets a
+    /// hand-picked darker twin of each entry rather than the terminal's luminance clamp: the
+    /// clamp keeps the hue but walks amber down through olive, and the point of the badge is
+    /// that the colour is recognisable at a glance.
     /// </summary>
-    private static Color ModeBadgeColor(AiMode? mode, string modeText) => mode switch
+    private static Color ModeBadgeColor(AiMode? mode, string modeText, bool isDark) => mode switch
     {
         AiMode.AcceptEdits => modeText.Contains("auto mode", StringComparison.OrdinalIgnoreCase)
-            ? Color.FromRgb(255, 193, 7)
-            : Color.FromRgb(175, 135, 255),
-        AiMode.Plan => Color.FromRgb(72, 150, 140),
-        AiMode.BypassPermissions => Color.FromRgb(255, 69, 58),
-        _ => Color.FromRgb(142, 142, 147),
+            ? isDark ? Color.FromRgb(255, 193, 7) : Color.FromRgb(230, 81, 0)
+            : isDark ? Color.FromRgb(175, 135, 255) : Color.FromRgb(108, 60, 200),
+        AiMode.Plan => isDark ? Color.FromRgb(72, 150, 140) : Color.FromRgb(20, 105, 95),
+        AiMode.BypassPermissions => isDark ? Color.FromRgb(255, 69, 58) : Color.FromRgb(200, 25, 15),
+        _ => isDark ? Color.FromRgb(142, 142, 147) : Color.FromRgb(84, 84, 92),
     };
 
     private void ApplyLiveStatus(TerminalSnapshot snap)
@@ -5869,7 +6012,7 @@ internal partial class AppShell : UserControl, IDockOwner
                 {
                     Text = Loc.Get("ProjectCommands"),
                     FontSize = 9,
-                    Foreground = new SolidColorBrush(Color.FromRgb(100, 165, 255)),
+                    Foreground = new SolidColorBrush(DialogAccent()),
                 });
             }
 
@@ -6002,7 +6145,7 @@ internal partial class AppShell : UserControl, IDockOwner
                     Text = result.FixHint,
                     FontSize = 11,
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground = new SolidColorBrush(Color.FromRgb(100, 165, 255)),
+                    Foreground = new SolidColorBrush(DialogAccent()),
                 });
             }
 
@@ -6102,7 +6245,7 @@ internal partial class AppShell : UserControl, IDockOwner
                 Text = Loc.Get(titleKey),
                 FontSize = 12,
                 FontWeight = FontWeight.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(100, 165, 255)),
+                Foreground = new SolidColorBrush(DialogAccent()),
             });
 
             foreach (var (keys, what) in entries)
@@ -6148,10 +6291,15 @@ internal partial class AppShell : UserControl, IDockOwner
     // ── Shared dialog chrome ──
 
     private Color DialogForeground() =>
-        _isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(40, 40, 45);
+        _isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 32);
 
     private Color DialogSubtle() =>
-        _isDark ? Color.FromRgb(140, 140, 148) : Color.FromRgb(110, 110, 118);
+        _isDark ? Color.FromRgb(140, 140, 148) : Color.FromRgb(84, 84, 92);
+
+    /// <summary>Blue used for text rather than for a filled control, where a light-mode
+    /// page needs a far darker blue than a dark one to stay readable.</summary>
+    private Color DialogAccent() =>
+        _isDark ? Color.FromRgb(100, 165, 255) : Color.FromRgb(0, 90, 200);
 
     private Window CreateToolDialog(string title, double width, double height)
     {
@@ -7391,6 +7539,13 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     private static readonly SolidColorBrush ActiveBorder = new(Color.FromRgb(0, 122, 255));   // Apple Blue
+
+    /// <summary>
+    /// The hairline around an unselected window. The paint is static - it is shared with the
+    /// windows dragged out of this shell - so the theme repaints this one brush in place rather
+    /// than handing a colour to each caller; a white wash would leave no edge at all on a white
+    /// canvas. Kept in step by <see cref="UpdateThemeResources"/>.
+    /// </summary>
     private static readonly SolidColorBrush InactiveBorder = new(Color.FromArgb(40, 255, 255, 255));
 
     private void UpdateStripSelection()
@@ -7502,7 +7657,7 @@ internal partial class AppShell : UserControl, IDockOwner
             Text = initialTitle,
             FontSize = 13,
             FontWeight = FontWeight.Normal,
-            Foreground = new SolidColorBrush(Color.FromRgb(210, 210, 215)),
+            Foreground = new SolidColorBrush(MdiTitleFg(_isDark)),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
@@ -7512,7 +7667,7 @@ internal partial class AppShell : UserControl, IDockOwner
             FontSize = 14,
             Padding = new Thickness(6, 0),
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)),
+            Foreground = new SolidColorBrush(MdiTitleButtonFg(_isDark)),
             BorderThickness = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
             CornerRadius = new CornerRadius(6),
@@ -7537,7 +7692,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         var titleBar = new Border
         {
-            Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),  // Apple elevated surface
+            Background = new SolidColorBrush(MdiTitleBarBg(_isDark)),
             Padding = new Thickness(0, 6),
             Child = titleGrid,
             Cursor = new Cursor(StandardCursorType.Hand),
@@ -7553,16 +7708,16 @@ internal partial class AppShell : UserControl, IDockOwner
         var container = new Border
         {
             Child = dockPanel,
-            BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
+            BorderBrush = new SolidColorBrush(MdiContainerBorder(_isDark)),
             BorderThickness = new Thickness(0.5),
             CornerRadius = new CornerRadius(0),
             ClipToBounds = true,
-            Background = new SolidColorBrush(Color.FromRgb(28, 28, 30))  // Apple systemBackground
+            Background = new SolidColorBrush(MdiContainerBg(_isDark))
         };
 
         // --- Window strip button ---
         var (stripButton, stripContent, stripText, stripDot, stripCloseBtn) =
-            BuildStripButton(initialTitle, TerminalDotColor);
+            BuildStripButton(initialTitle, TerminalDotColor, _isDark);
 
         var entry = new MdiChildInfo(
             container, titleBar, titleText, dot, stripDot, terminal, stripButton, stripText
@@ -7893,10 +8048,10 @@ internal partial class AppShell : UserControl, IDockOwner
 
         // Theme-aware colors
         var titleFg = _isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(30, 30, 35);
-        var headerFg = _isDark ? Color.FromRgb(180, 180, 185) : Color.FromRgb(80, 80, 90);
-        var pathFg = _isDark ? Color.FromArgb(140, 200, 200, 205) : Color.FromArgb(160, 80, 80, 90);
-        var emptyFg = _isDark ? Color.FromArgb(100, 200, 200, 205) : Color.FromArgb(120, 80, 80, 90);
-        var checkFg = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(100, 100, 110);
+        var headerFg = _isDark ? Color.FromRgb(180, 180, 185) : Color.FromRgb(62, 62, 72);
+        var pathFg = _isDark ? Color.FromArgb(140, 200, 200, 205) : Color.FromArgb(215, 70, 70, 80);
+        var emptyFg = _isDark ? Color.FromArgb(100, 200, 200, 205) : Color.FromArgb(200, 70, 70, 80);
+        var checkFg = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(84, 84, 92);
         var pageBg = _isDark ? Color.FromRgb(30, 30, 32) : Color.FromRgb(246, 246, 248);
         var hoverBg = _isDark ? Color.FromArgb(30, 255, 255, 255) : Color.FromArgb(30, 0, 0, 0);
 
@@ -7974,7 +8129,9 @@ internal partial class AppShell : UserControl, IDockOwner
             {
                 Text = folderName,
                 FontSize = 13,
-                Foreground = new SolidColorBrush(Color.FromRgb(75, 156, 255)),
+                Foreground = new SolidColorBrush(_isDark
+                    ? Color.FromRgb(75, 156, 255)
+                    : Color.FromRgb(0, 90, 200)),
                 VerticalAlignment = VerticalAlignment.Center
             };
             var pathText = new TextBlock

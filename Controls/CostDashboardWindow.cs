@@ -176,7 +176,7 @@ public class CostDashboardWindow : Window
     private Color Bg() => _isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(255, 255, 255);
     private Color PanelBg() => _isDark ? Color.FromRgb(38, 38, 41) : Color.FromRgb(245, 245, 248);
     private Color TextColor() => _isDark ? Color.FromRgb(230, 230, 235) : Color.FromRgb(28, 28, 30);
-    private Color SubtleColor() => _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(100, 100, 105);
+    private Color SubtleColor() => _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(84, 84, 92);
     private static readonly Color AccentColor = Color.FromRgb(0, 122, 255); // Apple Blue
 
     private Button CreatePeriodButton(string text, int days)

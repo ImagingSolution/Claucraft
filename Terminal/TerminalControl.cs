@@ -195,11 +195,11 @@ public class TerminalControl : Control, IDisposable
 
     private void ApplyThemeColors()
     {
-        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(85, 87, 83);       // Light: Tango foreground
+        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(38, 40, 44);       // Light: near-black body text
         var bg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 242);      // Light: Tango input bg
         var bgDeep = _isDark ? Color.FromRgb(34, 34, 36) : Color.FromRgb(255, 255, 255);  // Light: white
         var border = _isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200);
-        var subtle = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(100, 100, 105);
+        var subtle = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(85, 85, 93);
 
         _inputTextBox.Foreground = new SolidColorBrush(fg);
         _inputTextBox.Background = new SolidColorBrush(bg);
@@ -207,7 +207,6 @@ public class TerminalControl : Control, IDisposable
 
         _expandButton.Background = new SolidColorBrush(bg);
         _expandButton.Foreground = new SolidColorBrush(subtle);
-        _expandButton.BorderBrush = new SolidColorBrush(border);
 
         // Expanded panel
         _expandedPanel.Background = new SolidColorBrush(bgDeep);
@@ -322,8 +321,11 @@ public class TerminalControl : Control, IDisposable
             FontSize = 10,
             Background = new SolidColorBrush(Color.FromRgb(44, 44, 46)),
             Foreground = new SolidColorBrush(Color.FromRgb(160, 160, 165)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58)),
-            BorderThickness = new Thickness(0, 1, 0, 0),
+            // No rule of its own. It used to carry the input row's top hairline, but a button
+            // takes its content height rather than filling the row, so the line came out part
+            // way down the cell instead of along the top: lost against a dark surface, a stray
+            // stroke across a light one. The text box beside it already draws that edge.
+            BorderThickness = new Thickness(0),
             Padding = new Thickness(6, 0),
             Width = ExpandButtonWidth,
             CornerRadius = new CornerRadius(0),
@@ -338,11 +340,12 @@ public class TerminalControl : Control, IDisposable
         // not always the one the status bar is describing.
         // Stretch rather than a fixed height: the button then fills the arranged row exactly as
         // the expander beside it does, instead of sitting short with a gap above it.
+        // Borderless too, and for a second reason: the hairline it carried was written out
+        // dark and never repainted for the light theme, so a black bar sat across the top of a
+        // pale red button.
         _stopButton = NewStopButton(new Thickness(8, 0));
         _stopButton.VerticalAlignment = VerticalAlignment.Stretch;
         _stopButton.CornerRadius = new CornerRadius(0);
-        _stopButton.BorderThickness = new Thickness(0, 1, 0, 0);
-        _stopButton.BorderBrush = new SolidColorBrush(Color.FromRgb(56, 56, 58));
 
         // Build expanded input panel
         BuildExpandedPanel();
@@ -3481,7 +3484,7 @@ public class TerminalControl : Control, IDisposable
                     FontSize = 11,
                     TextWrapping = TextWrapping.Wrap,
                     TextAlignment = TextAlignment.Center,
-                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(152, 152, 158) : Color.FromRgb(99, 99, 102)),
+                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(152, 152, 158) : Color.FromRgb(85, 85, 93)),
                     Margin = new Thickness(0, 0, 0, 10),
                 });
             }
@@ -4175,7 +4178,7 @@ public class TerminalControl : Control, IDisposable
     public override void Render(DrawingContext context)
     {
         var bgDefault = _isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(255, 255, 255);
-        var fgDefault = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(85, 87, 83);
+        var fgDefault = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(38, 40, 44);
         double termH = TerminalAreaHeight;
 
         // Draw entire control background
@@ -4280,7 +4283,13 @@ public class TerminalControl : Control, IDisposable
                 var bg = ResolveColor(cell.Background, bgDefault, false);
 
                 if (cell.Attributes.HasFlag(CellAttributes.Bold) && cell.Foreground >= 0 && cell.Foreground < 8)
-                    fg = GetAnsiColor(cell.Foreground + 8, true);
+                {
+                    // Straight from the table, so the light-mode clamp ResolveColor applies
+                    // has to be repeated here - bright green and bright cyan are otherwise
+                    // laid down on white at under 2:1.
+                    var boldFg = GetAnsiColor(cell.Foreground + 8, true);
+                    fg = _isDark ? boldFg : ClampFgForLightBg(boldFg);
+                }
 
                 if (cell.Attributes.HasFlag(CellAttributes.Dim))
                     fg = Color.FromArgb(180, fg.R, fg.G, fg.B);
@@ -4775,15 +4784,11 @@ public class TerminalControl : Control, IDisposable
             double brightness = (c.R * 0.299 + c.G * 0.587 + c.B * 0.114) / 255.0;
             if (isFg)
             {
-                // Light mode foreground: darken colors that are too bright to read on white
-                if (brightness > 0.6)
-                {
-                    double factor = 0.45; // darken significantly
-                    c = Color.FromRgb(
-                        (byte)(c.R * factor),
-                        (byte)(c.G * factor),
-                        (byte)(c.B * factor));
-                }
+                // Light mode foreground: pull the colour down until it clears the contrast
+                // floor against the white background. The flat brightness cut this replaces
+                // only fired above 0.6, which left the mid-range Tango entries - green,
+                // cyan, bright blue - sitting on white at 3:1 or less.
+                c = ClampFgForLightBg(c);
             }
             else
             {
@@ -4798,6 +4803,38 @@ public class TerminalControl : Control, IDisposable
             }
         }
         return c;
+    }
+
+    // 1.05 / (L + 0.05) = 5.0 solves to L = 0.16, so a foreground at or below this
+    // relative luminance reads at 5:1 or better against the white light-mode background.
+    private const double LightFgMaxLuminance = 0.16;
+
+    /// <summary>
+    /// Scales a foreground colour down, hue intact, until it clears
+    /// <see cref="LightFgMaxLuminance"/>. Colours already dark enough come back untouched.
+    /// </summary>
+    private static Color ClampFgForLightBg(Color c)
+    {
+        double lum = RelativeLuminance(c);
+        if (lum <= LightFgMaxLuminance) return c;
+
+        // Luminance runs roughly as the 2.4th power of the channel values, so one factor
+        // lands on the target instead of iterating towards it.
+        double f = Math.Pow(LightFgMaxLuminance / lum, 1.0 / 2.4);
+        return Color.FromRgb(
+            (byte)Math.Round(c.R * f),
+            (byte)Math.Round(c.G * f),
+            (byte)Math.Round(c.B * f));
+    }
+
+    /// <summary>WCAG relative luminance, 0 for black through 1 for white.</summary>
+    private static double RelativeLuminance(Color c) =>
+        0.2126 * ToLinear(c.R) + 0.7152 * ToLinear(c.G) + 0.0722 * ToLinear(c.B);
+
+    private static double ToLinear(byte channel)
+    {
+        double v = channel / 255.0;
+        return v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
     }
 
     // Blue and red carry too little luminance to be read on a near-black background at

@@ -27,7 +27,7 @@ public static class MarkdownParser
         var quoteBorder = isDark ? Color.FromRgb(0, 122, 255) : Color.FromRgb(0, 100, 200);
         var linkColor = isDark ? Color.FromRgb(100, 180, 255) : Color.FromRgb(0, 100, 200);
         var headingColor = isDark ? Color.FromRgb(240, 240, 245) : Color.FromRgb(20, 20, 24);
-        var dimColor = isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(120, 120, 125);
+        var dimColor = isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(88, 88, 96);
         var codeFont = codeTypeface ?? new Typeface("Cascadia Mono, Consolas, Courier New");
 
         var lines = markdown.Split('\n');
@@ -366,7 +366,7 @@ public static class MarkdownParser
             {
                 Text = language,
                 FontSize = 11,
-                Foreground = new SolidColorBrush(isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(100, 100, 105)),
+                Foreground = new SolidColorBrush(isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(84, 84, 92)),
                 Margin = new Thickness(10, 4, 0, 0),
             };
             DockPanel.SetDock(langLabel, Avalonia.Controls.Dock.Left);
@@ -379,7 +379,7 @@ public static class MarkdownParser
             FontSize = 10,
             Padding = new Thickness(6, 2),
             Background = Brushes.Transparent,
-            Foreground = new SolidColorBrush(isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(100, 100, 105)),
+            Foreground = new SolidColorBrush(isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(84, 84, 92)),
             BorderThickness = new Thickness(0),
             Cursor = new Cursor(StandardCursorType.Hand),
             HorizontalAlignment = HorizontalAlignment.Right,

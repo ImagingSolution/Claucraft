@@ -132,7 +132,7 @@ public sealed class CommitGraphView : Control
             : Color.FromRgb(0x1C, 0x1C, 0x1E));
         _dimBrush = new SolidColorBrush(isDark
             ? Color.FromRgb(0x8C, 0x8C, 0x94)
-            : Color.FromRgb(0x6E, 0x6E, 0x76));
+            : Color.FromRgb(0x54, 0x54, 0x5C));
         _headChipText = _dotFill;
         _tagBrush = new SolidColorBrush(Color.FromRgb(0xD2, 0x99, 0x22));
         _tagPen = new Pen(_tagBrush, 1);

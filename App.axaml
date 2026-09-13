@@ -166,5 +166,9 @@
         <SolidColorBrush x:Key="DividerColor" Color="#38383A" />
         <SolidColorBrush x:Key="ActivityBarBg" Color="#1C1C1E" />
         <SolidColorBrush x:Key="SidePanelBg" Color="#2C2C2E" />
+        <!-- Coloured text, as opposed to the accent used for filled buttons: these two
+             flip with the theme so a light blue never lands on a light background. -->
+        <SolidColorBrush x:Key="AccentText" Color="#64A5FF" />
+        <SolidColorBrush x:Key="DangerText" Color="#FF6B6B" />
     </Application.Resources>
 </Application>

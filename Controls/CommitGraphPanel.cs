@@ -750,5 +750,5 @@ public class CommitGraphPanel : UserControl
 
     private Color TextColor() => _isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30);
 
-    private Color DimText() => _isDark ? Color.FromRgb(140, 140, 148) : Color.FromRgb(110, 110, 118);
+    private Color DimText() => _isDark ? Color.FromRgb(140, 140, 148) : Color.FromRgb(84, 84, 92);
 }

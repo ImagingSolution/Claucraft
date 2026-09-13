@@ -103,7 +103,7 @@ public class DiagramWindow : Window
         _zoomLabel = new TextBlock
         {
             Text = "100%",
-            Foreground = new SolidColorBrush(isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(100, 100, 105)),
+            Foreground = new SolidColorBrush(isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(84, 84, 92)),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(8, 0),
             FontSize = 12,

@@ -118,7 +118,7 @@
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <Border Background="#18007AFF" CornerRadius="6" Padding="8,3">
                                         <TextBlock Text="{ReflectionBinding Timestamp, StringFormat='{}{0:yyyy/MM/dd HH:mm}'}"
-                                                   FontSize="11" Foreground="#64A5FF"
+                                                   FontSize="11" Foreground="{DynamicResource AccentText}"
                                                    VerticalAlignment="Center" />
                                     </Border>
                                     <TextBlock Text="{ReflectionBinding DisplayTitle}" FontSize="13"
@@ -928,14 +928,14 @@
             <Button x:Name="BtnUpdateNotesLink" Classes="icon-btn" Padding="0,2"
                     HorizontalAlignment="Left" Click="OnUpdateNotesLink">
                 <TextBlock x:Name="LblUpdateNotesLink" Text="View release notes"
-                           FontSize="11" Foreground="#0A84FF" />
+                           FontSize="11" Foreground="{DynamicResource AccentText}" />
             </Button>
             <ProgressBar x:Name="UpdateProgress" IsVisible="False" Height="4"
                          Minimum="0" Maximum="100" Margin="0,2,0,0" />
             <TextBlock x:Name="UpdateProgressText" IsVisible="False" Text="" FontSize="11"
                        Foreground="{DynamicResource SubtleText}" />
             <TextBlock x:Name="UpdateError" IsVisible="False" Text="" FontSize="11"
-                       TextWrapping="Wrap" Foreground="#FF6B6B" />
+                       TextWrapping="Wrap" Foreground="{DynamicResource DangerText}" />
             <StackPanel Orientation="Horizontal" Spacing="8"
                         HorizontalAlignment="Right" Margin="0,4,0,0">
                 <Button x:Name="BtnUpdateCancel" Padding="12,5" Click="OnUpdateCancel">

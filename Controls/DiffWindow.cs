@@ -510,7 +510,7 @@ public class DiffWindow : Window
     {
         if (line.StartsWith("diff ") || line.StartsWith("index ") ||
             line.StartsWith("---") || line.StartsWith("+++"))
-            return _isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(150, 150, 155);
+            return _isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(108, 108, 116);
 
         if (line.StartsWith("@@"))
             return _isDark ? Color.FromRgb(100, 180, 255) : Color.FromRgb(0, 110, 220);
