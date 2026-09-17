@@ -260,12 +260,20 @@ public sealed class MemoryNoteView : UserControl
     /// <summary>
     /// Follows an <c>http(s)</c> link. A note that cites an address is citing something to look at,
     /// and nothing in the app can show it, so it goes to whatever the system opens links with.
+    ///
+    /// The scheme is checked again here, although the parser only offers web addresses. This hands a
+    /// string to the shell, which would just as happily run a <c>file:</c>, UNC or registered-handler
+    /// target, and a note's body is written by Claude out of whatever it has read. A guard that lives
+    /// in another file is one refactor away from being gone, so the check sits where the risk is.
     /// </summary>
     private static void OpenUrl(string url)
     {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return;
+
         try
         {
-            Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
+            Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
         }
         catch
         {
