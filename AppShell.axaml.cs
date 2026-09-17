@@ -37,7 +37,7 @@ internal partial class AppShell : UserControl, IDockOwner
     /// what actually places the windows, and pressing one of these rebuilds it.
     /// </summary>
     private enum MdiLayout { Maximize, Tile, TileHorizontal, TileVertical }
-    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, SourceControl, Slash, Extensions }
+    private enum SidebarPanel { None, Explorer, Snippets, Settings, Windows, SourceControl, Slash, Extensions, Memory }
 
     /// <summary>
     /// Every shell alive in the process, in creation order. The first is the application's own;
@@ -209,6 +209,9 @@ internal partial class AppShell : UserControl, IDockOwner
     /// when to reload.
     /// </summary>
     private Controls.SourceControlPanel? _sourceControl;
+
+    /// <summary>Reads Claude Code's own memory notes for whichever project is active.</summary>
+    private Controls.MemoryPanel? _memory;
 
     /// <summary>Plan ids in the order the settings combo lists them.</summary>
     private static readonly string[] PlanTierIds = { "Pro", "Max5x", "Max20x" };
@@ -413,6 +416,7 @@ internal partial class AppShell : UserControl, IDockOwner
         // Built after the theme is settled: the panel bakes its colours in at construction,
         // so OnDarkModeChanged rebuilds it rather than restyling it.
         CreateSourceControlPanel();
+        CreateMemoryPanel();
 
         RefreshGitInfo();
         RefreshSessionList();
@@ -1145,6 +1149,7 @@ internal partial class AppShell : UserControl, IDockOwner
         SourceControlHost.IsVisible = panel == SidebarPanel.SourceControl;
         SlashPanel.IsVisible = panel == SidebarPanel.Slash;
         ExtensionsPanel.IsVisible = panel == SidebarPanel.Extensions;
+        MemoryHost.IsVisible = panel == SidebarPanel.Memory;
         SidePanelTitle.Text = panel switch
         {
             SidebarPanel.Explorer => Loc.Get("EXPLORER"),
@@ -1154,6 +1159,7 @@ internal partial class AppShell : UserControl, IDockOwner
             SidebarPanel.SourceControl => Loc.Get("SOURCE_CONTROL"),
             SidebarPanel.Slash => Loc.Get("SLASH"),
             SidebarPanel.Extensions => Loc.Get("EXTENSIONS"),
+            SidebarPanel.Memory => Loc.Get("MEMORY"),
             _ => ""
         };
         BtnBrowseFolder.IsVisible = panel == SidebarPanel.Explorer;
@@ -1177,6 +1183,10 @@ internal partial class AppShell : UserControl, IDockOwner
             RefreshSlashPanel();
         if (panel == SidebarPanel.Extensions)
             RefreshExtensionsPanel();
+        // Claude writes these files behind the app's back, so they are re-read on every showing
+        // rather than watched.
+        if (panel == SidebarPanel.Memory)
+            _memory?.Reload();
     }
 
     private void UpdateActivityBarHighlight()
@@ -1188,6 +1198,7 @@ internal partial class AppShell : UserControl, IDockOwner
         SetActivityButtonActive(BtnActivitySourceControl, _activeSidePanel == SidebarPanel.SourceControl);
         SetActivityButtonActive(BtnActivitySlash, _activeSidePanel == SidebarPanel.Slash);
         SetActivityButtonActive(BtnActivityExtensions, _activeSidePanel == SidebarPanel.Extensions);
+        SetActivityButtonActive(BtnActivityMemory, _activeSidePanel == SidebarPanel.Memory);
         // DocView button state is managed by OnActivityDocView, not side panel
     }
 
@@ -1234,6 +1245,10 @@ internal partial class AppShell : UserControl, IDockOwner
 
                 case GraphChildInfo graph:
                     WindowsList.Children.Add(BuildGraphWindowRow(graph));
+                    break;
+
+                case MemoryChildInfo memory:
+                    WindowsList.Children.Add(BuildMemoryWindowRow(memory));
                     break;
             }
         }
@@ -1359,6 +1374,10 @@ internal partial class AppShell : UserControl, IDockOwner
     /// <summary>The commit history, listed the same way an open file is.</summary>
     private Control BuildGraphWindowRow(GraphChildInfo graph) =>
         BuildLayoutWindowRow(graph, graph.RepoRoot, GraphDotColor);
+
+    /// <summary>A memory note, listed the same way an open file is.</summary>
+    private Control BuildMemoryWindowRow(MemoryChildInfo memory) =>
+        BuildLayoutWindowRow(memory, memory.View.Note.FilePath, MemoryDotColor);
 
     /// <summary>
     /// One non-terminal MDI window as a row in the windows panel: a coloured dot naming what
@@ -2002,7 +2021,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         // --- Window strip button, built like a terminal window's so the two read as one set ---
         var (stripButton, _, stripText, _, stripCloseBtn) =
-            BuildStripButton(System.IO.Path.GetFileName(doc.Path), EditorDotColor, _isDark);
+            BuildStripButton(System.IO.Path.GetFileName(doc.Path), EditorDotColor, _isDark, EditorTabIcon);
         ToolTip.SetTip(stripButton, doc.Path);
 
         var entry = new EditorChildInfo
@@ -2136,6 +2155,11 @@ internal partial class AppShell : UserControl, IDockOwner
                 SetActiveLayoutItem(graph);
                 graph.Panel.Focus();
                 break;
+
+            case MemoryChildInfo memory:
+                SetActiveLayoutItem(memory);
+                memory.View.Focus();
+                break;
         }
     }
 
@@ -2144,6 +2168,7 @@ internal partial class AppShell : UserControl, IDockOwner
         if (item is MdiChildInfo child) CloseChild(child);
         else if (item is EditorChildInfo editor) _ = CloseEditorWindowAsync(editor);
         else if (item is GraphChildInfo graph) CloseGraphWindow(graph);
+        else if (item is MemoryChildInfo memory) CloseMemoryNoteWindow(memory);
     }
 
     /// <summary>
@@ -2155,6 +2180,7 @@ internal partial class AppShell : UserControl, IDockOwner
         if (item is MdiChildInfo child) return CloseChildAsync(child);
         if (item is EditorChildInfo editor) return CloseEditorWindowAsync(editor);
         if (item is GraphChildInfo graph) CloseGraphWindow(graph);
+        if (item is MemoryChildInfo memory) CloseMemoryNoteWindow(memory);
         return Task.CompletedTask;
     }
 
@@ -2241,8 +2267,33 @@ internal partial class AppShell : UserControl, IDockOwner
     /// <summary>Apple Blue: an open file.</summary>
     private static readonly Color EditorDotColor = Color.FromRgb(0, 122, 255);
 
+    /// <summary>
+    /// The activity bar's explorer glyph, for the tab of a file opened from it.
+    /// Kept in step with <c>BtnActivityExplorer</c>.
+    /// </summary>
+    private static readonly Geometry EditorTabIcon = Geometry.Parse(
+        "M17.5 0H8.5L7 1.5V6H2.5L1 7.5V22.57L2.5 24H13.5L15 22.57V18H19.5L21 16.5V3.5L17.5 0ZM13.5 22.57H2.5V7.5H7V16.5L8.5 18H13.5V22.57ZM19.5 16.5H8.5V1.5H14.5V5.5H19.5V16.5ZM15.5 1.5L19.5 4.5H15.5V1.5Z");
+
     /// <summary>Apple Purple: a repository's history, so it reads apart from files at a glance.</summary>
     private static readonly Color GraphDotColor = Color.FromRgb(191, 90, 242);
+
+    /// <summary>Apple Teal: a memory note, which is read rather than edited.</summary>
+    private static readonly Color MemoryDotColor = Color.FromRgb(64, 200, 224);
+
+    /// <summary>
+    /// The activity bar's memory glyph, reused as the marker on a memory window's tab. A dot would
+    /// leave the kind to be told from a terminal's by hue alone, which is a distinction the eye has
+    /// to work at; the shape says it outright. Kept in step with <c>BtnActivityMemory</c>.
+    /// </summary>
+    private static readonly Geometry MemoryTabIcon = Geometry.Parse(
+        "M15 9H9V15H15V9M13 11V13H11V11H13M21 11V9H19V7A2 2 0 0 0 17 5H15V3H13V5H11V3H9V5H7A2 2 0 0 0 5 7V9H3V11H5V13H3V15H5V17A2 2 0 0 0 7 19H9V21H11V19H13V21H15V19H17A2 2 0 0 0 19 17V15H21V13H19V11H21M17 17H7V7H17V17Z");
+
+    /// <summary>
+    /// The same idea for a commit graph's tab, using the glyph of the panel it is opened from.
+    /// Kept in step with <c>BtnActivitySourceControl</c>.
+    /// </summary>
+    private static readonly Geometry GraphTabIcon = Geometry.Parse(
+        "M21.007 8.222A3.738 3.738 0 0 0 15.045 5.2a3.737 3.737 0 0 0 1.156 6.583 2.988 2.988 0 0 1-2.668 1.67h-2.99a4.456 4.456 0 0 0-2.989 1.165V7.4a3.737 3.737 0 1 0-1.494 0v9.117a3.776 3.776 0 1 0 1.816.099 2.99 2.99 0 0 1 2.668-1.667h2.99a4.484 4.484 0 0 0 4.223-3.039 3.736 3.736 0 0 0 3.25-3.687zM4.565 3.738a2.242 2.242 0 1 1 4.484 0 2.242 2.242 0 0 1-4.484 0zm4.484 16.441a2.242 2.242 0 1 1-4.484 0 2.242 2.242 0 0 1 4.484 0zm8.221-9.715a2.242 2.242 0 1 1 0-4.485 2.242 2.242 0 0 1 0 4.485z");
 
     /// <summary>
     /// Apple Green: a live session. Only the starting colour - PaintChildDots moves a terminal's
@@ -2250,20 +2301,31 @@ internal partial class AppShell : UserControl, IDockOwner
     /// </summary>
     private static readonly Color TerminalDotColor = Color.FromRgb(48, 209, 88);
 
-    /// <summary>The parts of one window-strip tab, handed back so the caller can wire them up.</summary>
-    private readonly record struct StripTab(Button Button, StackPanel Content, TextBlock Text, Ellipse Dot, Button CloseButton);
+    /// <summary>
+    /// The parts of one window-strip tab, handed back so the caller can wire them up. <c>Dot</c> is
+    /// null on a tab that carries an icon instead, which only a terminal's changing status needs.
+    /// </summary>
+    private readonly record struct StripTab(Button Button, StackPanel Content, TextBlock Text, Ellipse? Dot, Button CloseButton);
 
     /// <summary>
-    /// Builds one tab for the window strip: a kind-coloured dot, an ellipsised title and a close
-    /// cross. All three window kinds show the same tab, so they share one builder; the caller
-    /// wires the Click handlers afterwards, once it has an entry to give them.
+    /// Builds one tab for the window strip: a kind-coloured marker, an ellipsised title and a close
+    /// cross. All window kinds show the same tab, so they share one builder; the caller wires the
+    /// Click handlers afterwards, once it has an entry to give them. The marker is a dot unless
+    /// <paramref name="icon"/> names a glyph to draw in its place.
     /// </summary>
-    private static StripTab BuildStripButton(string title, Color dotColor, bool isDark)
+    private static StripTab BuildStripButton(string title, Color dotColor, bool isDark, Geometry? icon = null)
     {
-        var dot = new Ellipse
+        var dot = icon != null ? null : new Ellipse
         {
             Width = 7, Height = 7,
             Fill = new SolidColorBrush(dotColor),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Control marker = dot ?? (Control)new PathIcon
+        {
+            Data = icon,
+            Width = 13, Height = 13,
+            Foreground = new SolidColorBrush(dotColor),
             VerticalAlignment = VerticalAlignment.Center
         };
         var text = new TextBlock
@@ -2288,7 +2350,7 @@ internal partial class AppShell : UserControl, IDockOwner
         };
 
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        content.Children.Add(dot);
+        content.Children.Add(marker);
         content.Children.Add(text);
         content.Children.Add(closeButton);
 
@@ -2615,7 +2677,8 @@ internal partial class AppShell : UserControl, IDockOwner
         };
 
         // --- Window strip button, built like an editor window's so the two read as one set ---
-        var (stripButton, _, stripText, _, stripCloseBtn) = BuildStripButton(panel.GraphTitle, GraphDotColor, _isDark);
+        var (stripButton, _, stripText, _, stripCloseBtn) =
+            BuildStripButton(panel.GraphTitle, GraphDotColor, _isDark, GraphTabIcon);
         ToolTip.SetTip(stripButton, repoRoot);
 
         var entry = new GraphChildInfo
@@ -2659,6 +2722,157 @@ internal partial class AppShell : UserControl, IDockOwner
         _graphChildren.Remove(entry);
         entry.Owner?.Release(entry);
         GraphWindowsChanged();
+    }
+
+
+    // ── Memory notes (floating MDI windows) ──
+
+    /// <summary>
+    /// One memory note open for reading. Built like <see cref="GraphChildInfo"/>: nothing to save,
+    /// no session behind it, just a rendered file that wants to sit beside the terminal it is about.
+    /// </summary>
+    private sealed class MemoryChildInfo : IMdiLayoutItem
+    {
+        public required Border Container { get; init; }
+        public required Border TitleBar { get; init; }
+        public required TextBlock TitleText { get; init; }
+        public required Controls.MemoryNoteView View { get; init; }
+        public required Button StripButton { get; init; }
+        public required TextBlock StripText { get; init; }
+
+        public MdiItemKind Kind => MdiItemKind.Memory;
+        public string Title => StripText.Text ?? string.Empty;
+        public IDockOwner? Owner { get; set; }
+    }
+
+    private readonly List<MemoryChildInfo> _memoryChildren = new();
+
+    /// <summary>
+    /// Opens a memory note in its own window, or brings forward the window already showing that
+    /// note. Identity is the file on screen rather than the window: following a wikilink moves a
+    /// window to another note, and asking for that note afterwards should find it there.
+    /// </summary>
+    private void OpenMemoryNoteWindow(Controls.MemoryNoteView view)
+    {
+        var existing = _memoryChildren.FirstOrDefault(m =>
+            string.Equals(m.View.Note.FilePath, view.Note.FilePath, StringComparison.OrdinalIgnoreCase));
+        if (existing != null) { ActivateLayoutItem(existing); return; }
+
+        var titleText = new TextBlock
+        {
+            Text = view.Title,
+            FontSize = 13,
+            Foreground = new SolidColorBrush(MdiTitleFg(_isDark)),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+        ToolTip.SetTip(titleText, view.Note.FilePath);
+
+        var closeButton = new Button
+        {
+            Content = "×",
+            FontSize = 14,
+            Padding = new Thickness(6, 0),
+            Background = Brushes.Transparent,
+            Foreground = new SolidColorBrush(MdiTitleButtonFg(_isDark)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        var titleLeft = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Margin = new Thickness(8, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        titleLeft.Children.Add(titleText);
+
+        var titleRight = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        titleRight.Children.Add(closeButton);
+
+        var titleGrid = new Grid { ColumnDefinitions = ColumnDefinitions.Parse("*,Auto") };
+        Grid.SetColumn(titleLeft, 0);
+        Grid.SetColumn(titleRight, 1);
+        titleGrid.Children.Add(titleLeft);
+        titleGrid.Children.Add(titleRight);
+
+        var titleBar = new Border
+        {
+            Background = new SolidColorBrush(MdiTitleBarBg(_isDark)),
+            Padding = new Thickness(0, 6),
+            Child = titleGrid,
+            Cursor = new Cursor(StandardCursorType.Hand)
+        };
+
+        var dockPanel = new DockPanel();
+        DockPanel.SetDock(titleBar, Dock.Top);
+        dockPanel.Children.Add(titleBar);
+        dockPanel.Children.Add(view);
+
+        var container = new Border
+        {
+            Child = dockPanel,
+            BorderBrush = new SolidColorBrush(MdiContainerBorder(_isDark)),
+            BorderThickness = new Thickness(0.5),
+            ClipToBounds = true,
+            Background = new SolidColorBrush(MdiContainerBg(_isDark))
+        };
+
+        var (stripButton, _, stripText, _, stripCloseBtn) =
+            BuildStripButton(view.Title, MemoryDotColor, _isDark, MemoryTabIcon);
+        ToolTip.SetTip(stripButton, view.Note.FilePath);
+
+        var entry = new MemoryChildInfo
+        {
+            Container = container,
+            TitleBar = titleBar,
+            TitleText = titleText,
+            View = view,
+            StripButton = stripButton,
+            StripText = stripText
+        };
+
+        // Following a wikilink changes which note the window holds, so the tab and the title bar
+        // are renamed with it rather than keeping the name the window was opened under.
+        view.TitleChanged += title =>
+        {
+            titleText.Text = title;
+            stripText.Text = title;
+            ToolTip.SetTip(titleText, entry.View.Note.FilePath);
+            ToolTip.SetTip(stripButton, entry.View.Note.FilePath);
+            RefreshWindowsPanel();
+        };
+
+        stripButton.Click += (_, _) => ActivateLayoutItem(entry);
+        stripCloseBtn.Click += (_, e) => { CloseMemoryNoteWindow(entry); e.Handled = true; };
+        closeButton.Click += (_, _) => CloseMemoryNoteWindow(entry);
+
+        // Links inside the note mark PointerPressed handled, so a bubbling handler would never
+        // see them. Tunnel runs first, which is what makes clicking anywhere select the window.
+        container.AddHandler(InputElement.PointerPressedEvent,
+            (_, _) => SetActiveLayoutItem(entry), RoutingStrategies.Tunnel);
+
+        _memoryChildren.Add(entry);
+        entry.Owner = this;
+        TabDrag.Hook(entry);
+        WindowStrip.Children.Add(stripButton);
+        _activeLayoutItem = entry;
+        ArrangeChildren();
+        Dispatcher.UIThread.Post(() => view.Focus());
+    }
+
+    private void CloseMemoryNoteWindow(MemoryChildInfo entry)
+    {
+        if (OwnerOf(entry) is { } holder && !ReferenceEquals(holder, this))
+        {
+            holder.CloseMemoryNoteWindow(entry);
+            return;
+        }
+
+        _memoryChildren.Remove(entry);
+        entry.Owner?.Release(entry);
     }
 
 
@@ -3056,6 +3270,7 @@ internal partial class AppShell : UserControl, IDockOwner
         // The source-control panel resolves its colours once, at construction, so the only
         // way to re-theme it is to build it again.
         CreateSourceControlPanel();
+        CreateMemoryPanel();
 
         // The theme is the application's, not this window's.
         Broadcast(s => s.AdoptSharedTheme());
@@ -3172,6 +3387,15 @@ internal partial class AppShell : UserControl, IDockOwner
             ApplyThemeToTitleBar(graph.TitleBar, _isDark);
         }
 
+        // A note window resolves its colours once too, so the frame follows the theme now and the
+        // rendered Markdown follows it the next time the note is opened.
+        foreach (var memory in _memoryChildren)
+        {
+            memory.Container.Background = containerBg;
+            ApplyThemeToTitleBar(memory.TitleBar, _isDark);
+            memory.TitleText.Foreground = new SolidColorBrush(MdiTitleFg(_isDark));
+        }
+
         // The frames themselves are painted by the selection, off a brush shared with the
         // dragged-out windows, so repainting them means asking it to paint again.
         UpdateStripSelection();
@@ -3254,6 +3478,7 @@ internal partial class AppShell : UserControl, IDockOwner
         // its own controls in code and reads every string once, when it is constructed. Same
         // reason the theme flip has to build it again.
         CreateSourceControlPanel();
+        CreateMemoryPanel();
 
         foreach (var child in _children)
         {
@@ -3691,6 +3916,41 @@ internal partial class AppShell : UserControl, IDockOwner
         if (_activeSidePanel == SidebarPanel.SourceControl) panel.OnPanelShown();
     }
 
+    /// <summary>
+    /// Builds the memory panel and hands it to the host in the sidebar. Rebuilt alongside the
+    /// source-control panel for the same reason: it resolves its colours and its strings once,
+    /// when it is constructed.
+    /// </summary>
+    private void CreateMemoryPanel()
+    {
+        var typeface = new Typeface(_settings.FontFamily + ", Consolas, Courier New");
+        var host = new Controls.MemoryHost(
+            OpenFileEditorWindow,
+            RevealInExplorer,
+            ShowMessageDialog,
+            OpenMemoryNoteWindow);
+
+        var panel = new Controls.MemoryPanel(_isDark, typeface, host);
+        _memory = panel;
+        MemoryHost.Content = panel;
+        panel.SetProject(_projectFolder);
+    }
+
+    /// <summary>Opens the containing folder with the file selected.</summary>
+    private static void RevealInExplorer(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{path}\"",
+                UseShellExecute = true
+            });
+        }
+        catch { }
+    }
+
     /// <summary>Opens the source-control panel, where the commit graph now lives.</summary>
     private void OnBranchNameDoubleTapped(object? sender, TappedEventArgs e)
     {
@@ -3705,6 +3965,8 @@ internal partial class AppShell : UserControl, IDockOwner
         // Set before the early return: a folder that is not a repository still has to reach
         // the panel, or it keeps showing the previous project's branch.
         _sourceControl?.SetRepository(_projectFolder);
+        // Every project switch comes through here, and the memory notes are per project.
+        _memory?.SetProject(_projectFolder);
 
         StatusRepoName.Text = "";
         StatusBranchName.Text = "";
@@ -4174,6 +4436,13 @@ internal partial class AppShell : UserControl, IDockOwner
         if (e.Key == Key.G && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift))
         {
             ToggleSidePanel(SidebarPanel.SourceControl);
+            e.Handled = true;
+            return;
+        }
+        // Ctrl+Shift+M: Toggle memory
+        if (e.Key == Key.M && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift))
+        {
+            ToggleSidePanel(SidebarPanel.Memory);
             e.Handled = true;
             return;
         }
@@ -5101,6 +5370,11 @@ internal partial class AppShell : UserControl, IDockOwner
         ToggleSidePanel(SidebarPanel.Extensions);
     }
 
+    private void OnActivityMemory(object? sender, RoutedEventArgs e)
+    {
+        ToggleSidePanel(SidebarPanel.Memory);
+    }
+
     private void OnRefreshExtensions(object? sender, RoutedEventArgs e)
     {
         _extensions = null;
@@ -5624,6 +5898,7 @@ internal partial class AppShell : UserControl, IDockOwner
         {
             ("NewSession", "New Session", "Ctrl+N", () => LaunchClaudeWithInitialPrompt()),
             ("PaletteSourceControl", "Source Control", "Ctrl+Shift+G", () => ToggleSidePanel(SidebarPanel.SourceControl)),
+            ("PaletteMemory", "Memory", "Ctrl+Shift+M", () => ToggleSidePanel(SidebarPanel.Memory)),
             ("CostDashboard", "Tokens & Cost", "", () => new Controls.CostDashboardWindow(_isDark, _projectFolder).Show(HostWindow)),
             ("PaletteCloseTab", "Close Tab", "Ctrl+W", CloseActiveWindow),
             ("PaletteNextTab", "Next Tab", "Ctrl+Tab", () => CycleWindows(1)),
@@ -6222,6 +6497,7 @@ internal partial class AppShell : UserControl, IDockOwner
             {
                 ("Ctrl+Shift+E", Loc.Get("EXPLORER")),
                 ("Ctrl+Shift+G", Loc.Get("SOURCE_CONTROL")),
+                ("Ctrl+Shift+M", Loc.Get("MEMORY")),
                 ("Ctrl+Shift+P", Loc.Get("CommandPalette")),
                 ("Ctrl+/", Loc.Get("SlashCommands")),
                 ("F1", Loc.Get("Shortcuts")),
@@ -7272,10 +7548,12 @@ internal partial class AppShell : UserControl, IDockOwner
     /// </summary>
     private List<IMdiLayoutItem> AllLayoutItems()
     {
-        var list = new List<IMdiLayoutItem>(_children.Count + _editorChildren.Count + _graphChildren.Count);
+        var list = new List<IMdiLayoutItem>(
+            _children.Count + _editorChildren.Count + _graphChildren.Count + _memoryChildren.Count);
         list.AddRange(_children);
         list.AddRange(_editorChildren);
         list.AddRange(_graphChildren);
+        list.AddRange(_memoryChildren);
         return list;
     }
 
@@ -7307,6 +7585,9 @@ internal partial class AppShell : UserControl, IDockOwner
             case GraphChildInfo graph when !_graphChildren.Contains(graph):
                 _graphChildren.Add(graph);
                 break;
+            case MemoryChildInfo memory when !_memoryChildren.Contains(memory):
+                _memoryChildren.Add(memory);
+                break;
         }
     }
 
@@ -7318,6 +7599,7 @@ internal partial class AppShell : UserControl, IDockOwner
             case MdiChildInfo child: _children.Remove(child); break;
             case EditorChildInfo editor: _editorChildren.Remove(editor); break;
             case GraphChildInfo graph: _graphChildren.Remove(graph); break;
+            case MemoryChildInfo memory: _memoryChildren.Remove(memory); break;
         }
 
         if (ReferenceEquals(_activeChild, item)) _activeChild = _children.LastOrDefault();
@@ -7352,6 +7634,7 @@ internal partial class AppShell : UserControl, IDockOwner
             UpdateThemeResources();
             ApplyThemeToChildren();
             CreateSourceControlPanel();
+            CreateMemoryPanel();
         }
         finally { _followingShared = false; }
     }
@@ -7361,6 +7644,7 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         ApplyLocalization();
         CreateSourceControlPanel();
+        CreateMemoryPanel();
         foreach (var child in _children)
             child.Terminal.SetFont(_settings.FontFamily, _settings.FontSize);
     }
@@ -7722,8 +8006,10 @@ internal partial class AppShell : UserControl, IDockOwner
         var (stripButton, stripContent, stripText, stripDot, stripCloseBtn) =
             BuildStripButton(initialTitle, TerminalDotColor, _isDark);
 
+        // stripDot is never null here: a terminal asks for no icon, because its dot is what
+        // PaintChildDots recolours as the session works, waits and exits.
         var entry = new MdiChildInfo(
-            container, titleBar, titleText, dot, stripDot, terminal, stripButton, stripText
+            container, titleBar, titleText, dot, stripDot!, terminal, stripButton, stripText
         )
         {
             ProjectFolder = workFolder,

@@ -11,12 +11,32 @@ using Avalonia.Media;
 namespace Claucraft.Services;
 
 /// <summary>
+/// Turns the links in a note from inert text into something the reader can follow: both
+/// <c>[[wikilink]]</c> and the ordinary <c>[title](slug.md)</c> form that MEMORY.md writes its index
+/// with. Passed only by callers that render a linked set of notes; everything else leaves it null
+/// and gets the old behaviour, where a link is coloured text and nothing more.
+/// </summary>
+/// <param name="Navigate">Called with the link target when the reader clicks it.</param>
+/// <param name="Exists">
+/// Whether that target resolves to anything. A link that does not is still drawn and still
+/// clickable - it is marked in a different colour rather than hidden, because in Claude's memory
+/// format a link to a note that does not exist yet is a deliberate note-to-self.
+/// </param>
+/// <param name="OpenUrl">
+/// Called with an <c>http(s)</c> address the reader clicks. A caller with nowhere to send one
+/// leaves it null, and those links stay inert.
+/// </param>
+public sealed record WikiLinkOptions(Action<string> Navigate, Func<string, bool> Exists,
+    Action<string>? OpenUrl = null);
+
+/// <summary>
 /// Lightweight Markdown to Avalonia controls parser.
 /// Handles the subset of Markdown that Claude commonly uses in responses.
 /// </summary>
 public static class MarkdownParser
 {
-    public static List<Control> Parse(string markdown, bool isDark, Typeface? codeTypeface = null, double baseFontSize = 13)
+    public static List<Control> Parse(string markdown, bool isDark, Typeface? codeTypeface = null,
+        double baseFontSize = 13, WikiLinkOptions? wiki = null)
     {
         var controls = new List<Control>();
         if (string.IsNullOrEmpty(markdown)) return controls;
@@ -26,6 +46,8 @@ public static class MarkdownParser
         var codeFg = isDark ? Color.FromRgb(190, 220, 255) : Color.FromRgb(30, 60, 120);
         var quoteBorder = isDark ? Color.FromRgb(0, 122, 255) : Color.FromRgb(0, 100, 200);
         var linkColor = isDark ? Color.FromRgb(100, 180, 255) : Color.FromRgb(0, 100, 200);
+        // A wikilink pointing at a note that has not been written yet.
+        var brokenLinkColor = isDark ? Color.FromRgb(230, 150, 110) : Color.FromRgb(175, 85, 20);
         var headingColor = isDark ? Color.FromRgb(240, 240, 245) : Color.FromRgb(20, 20, 24);
         var dimColor = isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(88, 88, 96);
         var codeFont = codeTypeface ?? new Typeface("Cascadia Mono, Consolas, Courier New");
@@ -61,7 +83,7 @@ public static class MarkdownParser
                     TextWrapping = TextWrapping.Wrap,
                     Margin = new Thickness(0, level <= 2 ? 10 : 6, 0, 4),
                 };
-                SetInlineText(tb, headingMatch.Groups[2].Value.Trim(), fg, codeBg, codeFg, linkColor, codeFont);
+                SetInlineText(tb, headingMatch.Groups[2].Value.Trim(), fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki);
                 controls.Add(tb);
                 i++;
                 continue;
@@ -106,7 +128,7 @@ public static class MarkdownParser
                     TextWrapping = TextWrapping.Wrap,
                     Margin = new Thickness(8, 4),
                 };
-                SetInlineText(quoteContent, quoteText, dimColor, codeBg, codeFg, linkColor, codeFont);
+                SetInlineText(quoteContent, quoteText, dimColor, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki);
 
                 var quoteBorderCtrl = new Border
                 {
@@ -157,7 +179,7 @@ public static class MarkdownParser
                         TextWrapping = TextWrapping.Wrap,
                         VerticalAlignment = VerticalAlignment.Top,
                     };
-                    SetInlineText(itemContent, itemText, fg, codeBg, codeFg, linkColor, codeFont);
+                    SetInlineText(itemContent, itemText, fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki);
 
                     // A horizontal StackPanel measures its children with unbounded width, so a
                     // wrapping item would run off the edge. The grid gives the text a real width.
@@ -200,7 +222,7 @@ public static class MarkdownParser
                         TextWrapping = TextWrapping.Wrap,
                         VerticalAlignment = VerticalAlignment.Top,
                     };
-                    SetInlineText(itemContent, match.Groups[2].Value, fg, codeBg, codeFg, linkColor, codeFont);
+                    SetInlineText(itemContent, match.Groups[2].Value, fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki);
 
                     var itemPanel = new Grid
                     {
@@ -225,7 +247,7 @@ public static class MarkdownParser
                     tableRows.Add(lines[i]);
                     i++;
                 }
-                var table = CreateTable(tableRows, isDark, fg, codeBg, codeFg, linkColor, codeFont, baseFontSize);
+                var table = CreateTable(tableRows, isDark, fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki, baseFontSize);
                 if (table != null)
                     controls.Add(table);
                 continue;
@@ -256,7 +278,7 @@ public static class MarkdownParser
                     Margin = new Thickness(0, 2),
                     LineHeight = 20,
                 };
-                SetInlineText(tb, paraText, fg, codeBg, codeFg, linkColor, codeFont);
+                SetInlineText(tb, paraText, fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki);
                 controls.Add(tb);
             }
         }
@@ -267,7 +289,8 @@ public static class MarkdownParser
     /// <summary>
     /// Parse inline Markdown formatting (bold, italic, code, links) into TextBlock.Inlines.
     /// </summary>
-    private static void SetInlineText(TextBlock tb, string text, Color fg, Color codeBg, Color codeFg, Color linkColor, Typeface codeFont)
+    private static void SetInlineText(TextBlock tb, string text, Color fg, Color codeBg, Color codeFg,
+        Color linkColor, Color brokenLinkColor, Typeface codeFont, WikiLinkOptions? wiki)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -277,7 +300,12 @@ public static class MarkdownParser
 
         // Simple approach: use regex to find inline patterns and split
         // Patterns: **bold**, *italic*, `code`, [text](url)
-        var pattern = @"(\*\*.*?\*\*)|(\*.*?\*)|(`[^`]+`)|(\[.*?\]\(.*?\))";
+        // The wikilink alternative is added only for a caller that can follow one, and it comes
+        // first so [[a]] is never mistaken for the [text](url) form. Without it the pattern is
+        // character-for-character what it always was, so those callers split exactly as before.
+        var pattern = wiki != null
+            ? @"(\[\[[^\[\]]+\]\])|(\*\*.*?\*\*)|(\*.*?\*)|(`[^`]+`)|(\[.*?\]\(.*?\))"
+            : @"(\*\*.*?\*\*)|(\*.*?\*)|(`[^`]+`)|(\[.*?\]\(.*?\))";
         var parts = Regex.Split(text, pattern);
 
         bool hasInlines = false;
@@ -285,7 +313,29 @@ public static class MarkdownParser
         {
             if (string.IsNullOrEmpty(part)) continue;
 
-            if (Regex.IsMatch(part, @"^\*\*.*\*\*$"))
+            if (wiki != null && part.Length > 4 &&
+                part.StartsWith("[[", StringComparison.Ordinal) && part.EndsWith("]]", StringComparison.Ordinal))
+            {
+                // Wikilink [[target]] or [[target|shown text]]
+                var inner = part[2..^2];
+                int bar = inner.IndexOf('|');
+                var target = (bar >= 0 ? inner[..bar] : inner).Trim();
+                var shown = (bar >= 0 ? inner[(bar + 1)..] : inner).Trim();
+                if (target.Length == 0)
+                {
+                    tb.Inlines!.Add(new Avalonia.Controls.Documents.Run(part) { Foreground = new SolidColorBrush(fg) });
+                    hasInlines = true;
+                    continue;
+                }
+
+                bool resolves = wiki.Exists(target);
+                var navigate = wiki.Navigate;
+                AddLink(tb, shown, resolves ? linkColor : brokenLinkColor,
+                    resolves ? target : $"{target} — {Loc.Get("MemoryNoteMissing")}",
+                    () => navigate(target));
+                hasInlines = true;
+            }
+            else if (Regex.IsMatch(part, @"^\*\*.*\*\*$"))
             {
                 // Bold
                 var content = part[2..^2];
@@ -325,11 +375,34 @@ public static class MarkdownParser
                 var linkMatch = Regex.Match(part, @"^\[(.*?)\]\((.*?)\)$");
                 if (linkMatch.Success)
                 {
-                    tb.Inlines!.Add(new Avalonia.Controls.Documents.Run(linkMatch.Groups[1].Value)
+                    var shown = linkMatch.Groups[1].Value;
+                    var target = linkMatch.Groups[2].Value.Trim();
+                    var slug = wiki != null && shown.Length > 0 ? NoteTargetOf(target) : null;
+
+                    if (slug != null)
                     {
-                        Foreground = new SolidColorBrush(linkColor),
-                        TextDecorations = TextDecorations.Underline,
-                    });
+                        // A note beside this one, written as an ordinary link rather than a
+                        // wikilink. It follows the same way, and is marked the same way when the
+                        // note it names has not been written.
+                        bool resolves = wiki!.Exists(slug);
+                        var navigate = wiki.Navigate;
+                        AddLink(tb, shown, resolves ? linkColor : brokenLinkColor,
+                            resolves ? target : $"{target} — {Loc.Get("MemoryNoteMissing")}",
+                            () => navigate(slug));
+                    }
+                    else if (shown.Length > 0 && wiki?.OpenUrl != null && IsWebUrl(target))
+                    {
+                        var open = wiki.OpenUrl;
+                        AddLink(tb, shown, linkColor, target, () => open(target));
+                    }
+                    else
+                    {
+                        tb.Inlines!.Add(new Avalonia.Controls.Documents.Run(shown)
+                        {
+                            Foreground = new SolidColorBrush(linkColor),
+                            TextDecorations = TextDecorations.Underline,
+                        });
+                    }
                     hasInlines = true;
                 }
             }
@@ -355,6 +428,56 @@ public static class MarkdownParser
         if (!hasInlines)
             tb.Text = text;
     }
+
+    /// <summary>
+    /// Adds a clickable link to a paragraph. An <c>Inline</c> cannot take pointer events, so the
+    /// clickable part is a control the text flows around rather than a Run.
+    /// </summary>
+    private static void AddLink(TextBlock tb, string shown, Color color, string? tip, Action onClick)
+    {
+        var link = new TextBlock
+        {
+            Text = shown,
+            Foreground = new SolidColorBrush(color),
+            TextDecorations = TextDecorations.Underline,
+            FontSize = tb.FontSize,
+            FontWeight = tb.FontWeight,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (tip != null) ToolTip.SetTip(link, tip);
+
+        link.PointerPressed += (_, e) =>
+        {
+            onClick();
+            e.Handled = true;
+        };
+
+        tb.Inlines!.Add(new Avalonia.Controls.Documents.InlineUIContainer(link));
+    }
+
+    /// <summary>
+    /// The note a Markdown link names, or null if it points anywhere else. MEMORY.md writes its
+    /// index as <c>[title](slug.md)</c> rather than as wikilinks, so those rows have to reach the
+    /// note beside them the same way. A target carrying a directory, a scheme or another extension
+    /// leads out of the memory folder and is left as plain coloured text.
+    /// </summary>
+    private static string? NoteTargetOf(string target)
+    {
+        var t = target;
+        int hash = t.IndexOf('#');
+        if (hash >= 0) t = t[..hash];
+        if (t.StartsWith("./", StringComparison.Ordinal)) t = t[2..];
+        if (t.Length == 0 || t.IndexOfAny(Pathish) >= 0) return null;
+        return t.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ? t[..^3] : null;
+    }
+
+    /// <summary>Characters that mean a link target is a path or a URL, not a note beside this one.</summary>
+    private static readonly char[] Pathish = { '/', '\\', ':' };
+
+    private static bool IsWebUrl(string target) =>
+        target.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+        target.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 
     private static Border CreateCodeBlock(string code, string language, bool isDark,
         Color codeBg, Color codeFg, Typeface codeFont, double baseFontSize = 13)
@@ -426,7 +549,7 @@ public static class MarkdownParser
         };
     }
 
-    private static Control? CreateTable(List<string> rows, bool isDark, Color fg, Color codeBg, Color codeFg, Color linkColor, Typeface codeFont, double baseFontSize = 13)
+    private static Control? CreateTable(List<string> rows, bool isDark, Color fg, Color codeBg, Color codeFg, Color linkColor, Color brokenLinkColor, Typeface codeFont, WikiLinkOptions? wiki, double baseFontSize = 13)
     {
         if (rows.Count < 2) return null;
 
@@ -475,7 +598,7 @@ public static class MarkdownParser
                     Foreground = new SolidColorBrush(fg),
                     TextWrapping = TextWrapping.Wrap,
                 };
-                SetInlineText(cellText, parsedRows[r][c], fg, codeBg, codeFg, linkColor, codeFont);
+                SetInlineText(cellText, parsedRows[r][c], fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki);
                 cellBorder.Child = cellText;
                 Grid.SetRow(cellBorder, r);
                 Grid.SetColumn(cellBorder, c);

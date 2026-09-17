@@ -16,12 +16,15 @@
             <!-- Hidden while one window is in here: with nothing to switch between, the strip
                  is a bar of wasted height. The pane header is the drag handle in that case. -->
             <Border x:Name="WindowStripBar" DockPanel.Dock="Top" IsVisible="False"
-                    Background="{DynamicResource ToolBarBg}" Padding="6,4"
+                    Background="{DynamicResource ToolBarBg}" Padding="6,4,6,0"
                     BorderBrush="{DynamicResource DividerColor}" BorderThickness="0,0,0,0.5">
+                <!-- The 8px below the tabs is the lane the horizontal scrollbar is drawn in;
+                     Avalonia puts it over the content, so it would cover them otherwise. -->
                 <ScrollViewer x:Name="WindowStripScroll"
                               HorizontalScrollBarVisibility="Auto"
                               VerticalScrollBarVisibility="Disabled">
-                    <StackPanel x:Name="WindowStrip" Orientation="Horizontal" Spacing="4" />
+                    <StackPanel x:Name="WindowStrip" Orientation="Horizontal" Spacing="4"
+                                Margin="0,0,0,8" />
                 </ScrollViewer>
             </Border>
 

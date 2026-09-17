@@ -153,6 +153,22 @@
         <Style Selector="ScrollBar:vertical:pointerover /template/ Thumb">
             <Setter Property="Width" Value="6" />
         </Style>
+        <!-- Same for the horizontal bar. Avalonia draws scrollbars over the content rather than
+             beside it, so a full-height one sits on top of the window strip's tabs; 8px leaves
+             the tabs readable, and the strips reserve that much below them. -->
+        <Style Selector="ScrollBar:horizontal">
+            <Setter Property="Height" Value="8" />
+            <Setter Property="MinHeight" Value="8" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="ScrollBar:horizontal /template/ Thumb">
+            <Setter Property="MinHeight" Value="4" />
+            <Setter Property="Height" Value="4" />
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="ScrollBar:horizontal:pointerover /template/ Thumb">
+            <Setter Property="Height" Value="6" />
+        </Style>
     </Application.Styles>
 
     <Application.Resources>

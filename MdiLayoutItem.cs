@@ -6,7 +6,7 @@ using Claucraft.Controls;
 namespace Claucraft;
 
 /// <summary>What an MDI window holds, for the places that have to tell the kinds apart.</summary>
-internal enum MdiItemKind { Terminal, Editor, Graph }
+internal enum MdiItemKind { Terminal, Editor, Graph, Memory }
 
 /// <summary>
 /// The part of an MDI window the layout cares about. Terminals, editors and commit graphs each

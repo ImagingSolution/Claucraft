@@ -383,6 +383,7 @@ public static class Loc
         ["SOURCE_CONTROL"] = new() { ["English"] = "SOURCE CONTROL", ["日本語"] = "ソース管理" },
         ["SourceControlTooltip"] = new() { ["English"] = "Source control (Ctrl+Shift+G)", ["日本語"] = "ソース管理 (Ctrl+Shift+G)" },
         ["PaletteSourceControl"] = new() { ["English"] = "Source Control", ["日本語"] = "ソース管理" },
+        ["PaletteMemory"] = new() { ["English"] = "Memory", ["日本語"] = "メモリ" },
 
         // Toolbar. The buttons are named for what they do, not for the git verb.
         ["FetchAction"] = new() { ["English"] = "Fetch", ["日本語"] = "取得" },
@@ -735,6 +736,28 @@ public static class Loc
         ["SwitchBranchConfirmFmt"] = new() { ["English"] = "Switch the working tree to {0}?", ["日本語"] = "作業ツリーを {0} に切り替えますか？" },
         ["NothingToPush"] = new() { ["English"] = "Nothing to push.", ["日本語"] = "プッシュするコミットがありません。" },
         ["BranchAheadFmt"] = new() { ["English"] = "{0} ahead", ["日本語"] = "{0} 件先行" },
+
+        // ── Memory Panel ──
+        ["MEMORY"] = new() { ["English"] = "MEMORY", ["日本語"] = "メモリ" },
+        ["MemoryTooltip"] = new() { ["English"] = "What Claude remembers about this project", ["日本語"] = "Claude がこのプロジェクトについて覚えていること" },
+        ["MemorySearch"] = new() { ["English"] = "Search notes...", ["日本語"] = "ノートを検索..." },
+        ["MemoryNoNotes"] = new() { ["English"] = "Nothing remembered for this project yet.", ["日本語"] = "このプロジェクトについて記憶されているものはまだありません。" },
+        ["MemoryNoNotesHint"] = new() { ["English"] = "Claude writes a note here when it learns something worth keeping across sessions.", ["日本語"] = "セッションをまたいで残す価値のあることを学んだとき、Claude がここにノートを書きます。" },
+        ["MemoryNoProject"] = new() { ["English"] = "No project has memory yet.", ["日本語"] = "メモリを持つプロジェクトがまだありません。" },
+        ["MemoryIndex"] = new() { ["English"] = "Index (MEMORY.md)", ["日本語"] = "目次 (MEMORY.md)" },
+        ["MemoryIndexHint"] = new() { ["English"] = "The one file Claude reads every session.", ["日本語"] = "Claude が毎セッション読み込む唯一のファイルです。" },
+        ["MemoryBacklinks"] = new() { ["English"] = "Linked from", ["日本語"] = "被リンク" },
+        ["MemoryDangling"] = new() { ["English"] = "Not written yet", ["日本語"] = "未作成のリンク" },
+        ["MemoryDanglingHint"] = new() { ["English"] = "Links to notes that do not exist - facts Claude flagged as worth writing.", ["日本語"] = "存在しないノートへのリンクです。Claude が「後で書く価値がある」と印を付けた事実です。" },
+        ["MemoryNoteMissing"] = new() { ["English"] = "not written yet", ["日本語"] = "未作成" },
+        ["MemoryTypeUser"] = new() { ["English"] = "About you", ["日本語"] = "ユーザーについて" },
+        ["MemoryTypeFeedback"] = new() { ["English"] = "How to work", ["日本語"] = "進め方の指示" },
+        ["MemoryTypeProject"] = new() { ["English"] = "This project", ["日本語"] = "このプロジェクト" },
+        ["MemoryTypeReference"] = new() { ["English"] = "References", ["日本語"] = "参照先" },
+        ["MemoryTypeOther"] = new() { ["English"] = "Other", ["日本語"] = "その他" },
+        ["MemoryCountFmt"] = new() { ["English"] = "{0} notes", ["日本語"] = "{0} 件" },
+        ["MemoryOpenFile"] = new() { ["English"] = "Open the file", ["日本語"] = "ファイルを開く" },
+        ["MemoryModifiedFmt"] = new() { ["English"] = "Updated {0}", ["日本語"] = "更新 {0}" },
     };
 
     public static string Get(string key)
