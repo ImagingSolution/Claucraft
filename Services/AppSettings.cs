@@ -34,8 +34,19 @@ public class AppSettings
     /// <summary>
     /// Which shell a new session's CLI is launched inside: "cmd" or "powershell". Open tabs keep
     /// the shell they were started in, so a change here reaches the next new session only.
+    /// PowerShell is the default because it is what every CLI here is documented and installed
+    /// against; a CLI that cannot survive in it pins "cmd" in providers.json and overrides this,
+    /// and a machine without PowerShell falls back to cmd.exe in <see cref="ShellHost.For"/>.
     /// </summary>
-    public string TerminalShell { get; set; } = ShellHost.CmdId;
+    public string TerminalShell { get; set; } = ShellHost.PowerShellId;
+
+    /// <summary>
+    /// True once <see cref="TerminalShell"/> has been through the move to the PowerShell default.
+    /// cmd.exe was the original default, so an install written before the change holds "cmd"
+    /// whether or not anyone picked it; the flag is absent from those files and present in every
+    /// one written since, which is what keeps the move to a single occasion.
+    /// </summary>
+    public bool TerminalShellDefaulted { get; set; }
 
     // ── Task completion notification ──
 
@@ -119,11 +130,25 @@ public class AppSettings
             if (File.Exists(SettingsFile))
             {
                 var json = File.ReadAllText(SettingsFile);
-                return JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+                var loaded = JsonSerializer.Deserialize<AppSettings>(json);
+                if (loaded != null)
+                {
+                    // A file written before PowerShell became the default carries the old one,
+                    // and nobody chose it - it was simply what shipped. Move it once and record
+                    // that, so a later switch back to cmd.exe is a preference and stays put.
+                    if (!loaded.TerminalShellDefaulted)
+                    {
+                        loaded.TerminalShell = ShellHost.PowerShellId;
+                        loaded.TerminalShellDefaulted = true;
+                        loaded.Save();
+                    }
+                    return loaded;
+                }
             }
         }
         catch { }
-        return new AppSettings();
+        // A fresh install starts on the current default, so there is nothing to move later.
+        return new AppSettings { TerminalShellDefaulted = true };
     }
 
     public void Save()
