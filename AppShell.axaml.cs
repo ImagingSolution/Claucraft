@@ -7733,10 +7733,12 @@ internal partial class AppShell : UserControl, IDockOwner
                     for (int c = 0; c < cols; c++)
                     {
                         int i = r * cols + c;
-                        if (i >= count) break;
-                        row.Add(DockLeafNode.Of(tiled[i]));
+                        // A short last row still gets every column, as an empty pane, so its
+                        // windows come out the same size as the rows above instead of stretching
+                        // to fill the gap.
+                        row.Add(i < count ? DockLeafNode.Of(tiled[i]) : new DockLeafNode());
                     }
-                    if (row.Children.Count > 0) stack.Add(Simplify(row));
+                    stack.Add(Simplify(row));
                 }
                 return Simplify(stack);
             }

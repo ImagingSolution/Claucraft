@@ -34,6 +34,10 @@ internal sealed class DockSplitNode : DockNode
     {
         child.Parent = this;
         Children.Add(child);
+
+        // Ratios already sum to 1, so appending a raw 1 would hand the new child roughly as much
+        // space as the whole rest of the split combined. Reset everyone to an equal weight first.
+        for (int i = 0; i < Ratios.Count; i++) Ratios[i] = 1;
         Ratios.Add(1);
         NormalizeRatios();
     }
