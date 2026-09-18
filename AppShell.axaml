@@ -59,37 +59,7 @@
                     </Button>
                     </Grid>
 
-                    <!-- Launch profile: bounds how much context a new session accumulates.
-                         Kept in its own column so the button column is sized by New Session alone. -->
-                    <ComboBox x:Name="CmbLaunchProfile" Grid.Row="0" Grid.Column="2"
-                              Classes="modern"
-                              MinWidth="104"
-                              IsVisible="False"
-                              VerticalAlignment="Center"
-                              Margin="0,0,6,0"
-                              SelectionChanged="OnLaunchProfileChanged" />
-
-                    <!-- Gives the next session its own checkout. Off by default: it changes
-                         where the session's files live, which is not something to inherit
-                         without asking for it. -->
-                    <!-- The left margin is the launch profile's own border plus padding (1 + 10),
-                         so this label starts where that combo's text starts rather than where its
-                         box does. FlowDirection puts the check after the label; the label carries
-                         its own so its text is not mirrored with it. -->
-                    <CheckBox x:Name="ChkIsolate" Grid.Row="1" Grid.Column="2"
-                              IsVisible="False"
-                              VerticalAlignment="Center"
-                              HorizontalAlignment="Left"
-                              Margin="11,3,6,0"
-                              FontSize="11"
-                              FlowDirection="RightToLeft"
-                              IsCheckedChanged="OnIsolateChanged">
-                        <TextBlock x:Name="LblIsolate" Text="Isolate"
-                                   FlowDirection="LeftToRight"
-                                   VerticalAlignment="Center" />
-                    </CheckBox>
-
-                    <Button x:Name="BtnNewClaude" Grid.Row="0" Grid.Column="3"
+                    <Button x:Name="BtnNewClaude" Grid.Row="0" Grid.Column="2"
                             Classes="primary"
                             ToolTip.Tip="Open a new session"
                             Click="OnNewClaude"
@@ -98,6 +68,21 @@
                         <TextBlock x:Name="LblNewClaude" Text="New Session"
                                    VerticalAlignment="Center" HorizontalAlignment="Center" />
                     </Button>
+
+                    <!-- Gives the new session its own checkout. Off by default: it changes
+                         where the session's files live, which is not something to inherit
+                         without asking for it. It sits beside New Session, the one button it
+                         acts on - Resume ignores it and opens where the session was recorded. -->
+                    <CheckBox x:Name="ChkIsolate" Grid.Row="0" Grid.Column="3"
+                              IsVisible="False"
+                              VerticalAlignment="Center"
+                              HorizontalAlignment="Left"
+                              Margin="10,0,0,0"
+                              FontSize="11"
+                              IsCheckedChanged="OnIsolateChanged">
+                        <TextBlock x:Name="LblIsolate" Text="Isolate"
+                                   VerticalAlignment="Center" />
+                    </CheckBox>
 
                     <!-- Row 1: Session -->
                     <TextBlock x:Name="LblSession" Grid.Row="1" Grid.Column="0"
@@ -140,7 +125,7 @@
                     </Button>
                     </Grid>
 
-                    <Button x:Name="BtnResumeSession" Grid.Row="1" Grid.Column="3"
+                    <Button x:Name="BtnResumeSession" Grid.Row="1" Grid.Column="2"
                             Classes="primary"
                             ToolTip.Tip="Resume selected session"
                             Click="OnResumeSession"
@@ -154,6 +139,18 @@
                             <TextBlock x:Name="LblResume" Text="Resume" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
+
+                    <!-- Bounds how much context a session starts with. Under Isolate rather than
+                         beside the session combo: both are launch options, not part of picking a
+                         session, and this column is sized by whichever of the two is wider. -->
+                    <ComboBox x:Name="CmbLaunchProfile" Grid.Row="1" Grid.Column="3"
+                              Classes="modern"
+                              MinWidth="104"
+                              IsVisible="False"
+                              VerticalAlignment="Center"
+                              HorizontalAlignment="Left"
+                              Margin="10,3,0,0"
+                              SelectionChanged="OnLaunchProfileChanged" />
                 </Grid>
             </StackPanel>
         </Border>

@@ -713,7 +713,8 @@ public static class Loc
         // -- Isolated sessions (git worktree) --
         ["AttachFiles"] = new() { ["English"] = "Attach files", ["日本語"] = "ファイルを添付" },
         ["IsolateSession"] = new() { ["English"] = "Isolate", ["日本語"] = "隔離" },
-        ["IsolateTooltip"] = new() { ["English"] = "Open the next session in its own git worktree, so two windows cannot edit the same files", ["日本語"] = "次のセッションを専用の git worktree で開きます。複数ウィンドウが同じファイルを編集しなくなります" },
+        ["IsolateTooltip"] = new() { ["English"] = "Start New Session in its own git worktree, so two windows cannot edit the same files. Resume always opens in the project folder, where the session's history lives.", ["日本語"] = "[New Session] を専用の git worktree で開き、複数ウィンドウが同じファイルを編集しないようにします。[Resume] はセッション履歴のあるプロジェクトフォルダで開きます。" },
+        ["ResumeIsolateNote"] = new() { ["English"] = "Resume opens the session in the project folder - Isolate only applies to New Session.", ["日本語"] = "セッションはプロジェクトフォルダで開きます（隔離は [New Session] のみ）。" },
         ["WorktreeFailedTitle"] = new() { ["English"] = "The isolated checkout could not be created", ["日本語"] = "隔離チェックアウトを作成できませんでした" },
         ["WorktreeDirtyTitle"] = new() { ["English"] = "Close this isolated session?", ["日本語"] = "この隔離セッションを閉じますか？" },
         ["WorktreeDirtyFmt"] = new() { ["English"] = "{0} still has uncommitted changes. Closing removes its checkout and those changes are lost.", ["日本語"] = "{0} に未コミットの変更が残っています。閉じるとチェックアウトごと削除され、その変更は失われます。" },

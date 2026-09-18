@@ -744,15 +744,14 @@ internal partial class AppShell : UserControl, IDockOwner
         if (features.SessionList)
         {
             LblResume.Text = Loc.Get("Resume");
-            ToolTip.SetTip(BtnResumeSession, Loc.Get("Resume"));
             BtnResumeSession.IsEnabled = CmbSessions.SelectedItem is SessionInfo;
         }
         else
         {
             LblResume.Text = Loc.Get("ContinueSession");
-            ToolTip.SetTip(BtnResumeSession, Loc.Get("ContinueSessionTooltip"));
             BtnResumeSession.IsEnabled = !string.IsNullOrWhiteSpace(provider.ContinueArgs);
         }
+        UpdateResumeTooltip();
 
         // Activity bar — hide what this CLI does not implement
         BtnActivityDocView.IsVisible = features.ChatView;
@@ -5259,6 +5258,25 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         // Deliberately not persisted: it decides where the next session's files live, which is
         // not a preference to inherit silently on the next launch.
+        UpdateResumeTooltip();
+    }
+
+    /// <summary>
+    /// The Resume button's tip, which gains a line while Isolate is on. The checkbox acts on
+    /// New Session alone: a resumed session has to open where its transcript was recorded, so
+    /// Resume stays in the project folder however the toggle is set.
+    /// </summary>
+    private void UpdateResumeTooltip()
+    {
+        // Runs while the toolbar is still being built, when the checkbox exists and the button
+        // it describes does not.
+        if (BtnResumeSession is null) return;
+
+        string tip = _cli.Features.SessionList ? Loc.Get("Resume") : Loc.Get("ContinueSessionTooltip");
+        if (ChkIsolate.IsChecked == true)
+            tip += Environment.NewLine + Loc.Get("ResumeIsolateNote");
+
+        ToolTip.SetTip(BtnResumeSession, tip);
     }
 
     // ── Git write: the status bar's branch switcher ──
