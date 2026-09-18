@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -33,9 +34,22 @@ public sealed record MemoryHost(
 /// </summary>
 public sealed class MemoryPanel : UserControl
 {
-    private sealed record ProjectEntry(string Dir, string Display)
+    /// <summary>
+    /// One project the combo can switch to. <see cref="FullPath"/> is the readable path recovered
+    /// for the tooltip; <see cref="Display"/> is just its leaf folder name, since two different
+    /// projects can share that name and the full path is what disambiguates them.
+    /// </summary>
+    private sealed record ProjectEntry(string Dir, string FullPath)
     {
+        public string Display => LeafName(FullPath);
         public override string ToString() => Display;
+
+        private static string LeafName(string fullPath)
+        {
+            var trimmed = (fullPath ?? "").TrimEnd('\\', '/');
+            var cut = Math.Max(trimmed.LastIndexOf('\\'), trimmed.LastIndexOf('/'));
+            return cut >= 0 && cut < trimmed.Length - 1 ? trimmed[(cut + 1)..] : trimmed;
+        }
     }
 
     private readonly bool _isDark;
@@ -71,6 +85,12 @@ public sealed class MemoryPanel : UserControl
             HorizontalAlignment = HorizontalAlignment.Stretch,
             FontSize = 11.5,
             MinHeight = 26,
+            ItemTemplate = new FuncDataTemplate<ProjectEntry>((entry, _) =>
+            {
+                var text = new TextBlock { Text = entry?.Display ?? "", VerticalAlignment = VerticalAlignment.Center };
+                if (entry != null) ToolTip.SetTip(text, entry.FullPath);
+                return text;
+            }),
         };
         _projectCombo.SelectionChanged += (_, _) =>
         {

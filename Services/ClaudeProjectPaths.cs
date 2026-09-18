@@ -160,8 +160,25 @@ public static class ClaudeProjectPaths
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
 
+        if (ReferenceEquals(result, name)) result = TrailingSegment(name);
+
         _displayPaths[projectDir] = result;
         return result;
+    }
+
+    /// <summary>
+    /// The real path could not be recovered, so <paramref name="mangled"/> is the literal
+    /// dash-for-every-character directory name - mostly noise (drive letter, home directory,
+    /// OneDrive's own dashes) with the one useful part, the leaf folder name, at the very end.
+    /// Trims everything up to the last run of dashes and keeps that tail; falls back to the full
+    /// mangled name if the tail is empty (a leaf name that was itself all non-ASCII).
+    /// </summary>
+    private static string TrailingSegment(string mangled)
+    {
+        int i = mangled.Length;
+        while (i > 0 && char.IsLetterOrDigit(mangled[i - 1])) i--;
+        var tail = mangled.Substring(i);
+        return tail.Length > 0 ? tail : mangled;
     }
 
     /// <summary>Recovered paths, kept for the session: a transcript's first line never changes.</summary>
