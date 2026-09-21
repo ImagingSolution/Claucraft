@@ -29,7 +29,7 @@
                 BorderThickness="0,0,0,0.5">
             <StackPanel Spacing="10">
                 <!-- Row 1: Project + Row 2: Session -->
-                <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="56,*,Auto,Auto">
+                <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="56,*,Auto">
                     <!-- Row 0: Project -->
                     <TextBlock x:Name="LblProject" Grid.Row="0" Grid.Column="0"
                                Text="Project" VerticalAlignment="Center"
@@ -67,22 +67,13 @@
                             HorizontalContentAlignment="Center">
                         <TextBlock x:Name="LblNewClaude" Text="New Session"
                                    VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        <Button.ContextMenu>
+                            <ContextMenu x:Name="MenuNewClaude" Opening="OnNewClaudeContextMenuOpening">
+                                <MenuItem x:Name="MenuNewClaudeIsolateToggle" Header="New Session (Isolated)"
+                                          Click="OnNewClaudeIsolateToggle" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
                     </Button>
-
-                    <!-- Gives the new session its own checkout. Off by default: it changes
-                         where the session's files live, which is not something to inherit
-                         without asking for it. It sits beside New Session, the one button it
-                         acts on - Resume ignores it and opens where the session was recorded. -->
-                    <CheckBox x:Name="ChkIsolate" Grid.Row="0" Grid.Column="3"
-                              IsVisible="False"
-                              VerticalAlignment="Center"
-                              HorizontalAlignment="Left"
-                              Margin="10,0,0,0"
-                              FontSize="11"
-                              IsCheckedChanged="OnIsolateChanged">
-                        <TextBlock x:Name="LblIsolate" Text="Isolate"
-                                   VerticalAlignment="Center" />
-                    </CheckBox>
 
                     <!-- Row 1: Session -->
                     <TextBlock x:Name="LblSession" Grid.Row="1" Grid.Column="0"
@@ -139,18 +130,6 @@
                             <TextBlock x:Name="LblResume" Text="Resume" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
-
-                    <!-- Bounds how much context a session starts with. Under Isolate rather than
-                         beside the session combo: both are launch options, not part of picking a
-                         session, and this column is sized by whichever of the two is wider. -->
-                    <ComboBox x:Name="CmbLaunchProfile" Grid.Row="1" Grid.Column="3"
-                              Classes="modern"
-                              MinWidth="104"
-                              IsVisible="False"
-                              VerticalAlignment="Center"
-                              HorizontalAlignment="Left"
-                              Margin="10,3,0,0"
-                              SelectionChanged="OnLaunchProfileChanged" />
                 </Grid>
             </StackPanel>
         </Border>
@@ -511,11 +490,9 @@
                                       HorizontalScrollBarVisibility="Disabled"
                                       VerticalScrollBarVisibility="Auto">
                             <StackPanel Spacing="20" Margin="14,16">
-                                <Border BorderBrush="{DynamicResource SubtleText}" BorderThickness="1"
-                                        CornerRadius="6" Padding="10,8">
+                                <Border Classes="settings-group">
                                     <StackPanel Spacing="14">
-                                        <TextBlock x:Name="LblConsoleSettings" Text="Console Settings" FontSize="15" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource SubtleText}" />
+                                        <TextBlock x:Name="LblConsoleSettings" Text="Console Settings" Classes="settings-group-header" />
                                         <StackPanel Spacing="6">
                                             <TextBlock x:Name="LblLanguage" Text="Language" FontSize="13"
                                                        Foreground="{DynamicResource SubtleText}" />
@@ -559,133 +536,180 @@
                                         </Button>
                                     </StackPanel>
                                 </Border>
-                                <CheckBox x:Name="ChkEnableCharts" Content="Render diagrams in the terminal"
-                                          Margin="0,12,0,0"
-                                          Foreground="{DynamicResource SubtleText}"
-                                          IsCheckedChanged="OnEnableChartsChanged" />
-                                <StackPanel Spacing="6" Margin="0,16,0,0">
-                                    <TextBlock x:Name="LblInitialPrompt" Text="Initial Prompt" FontSize="13"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <TextBox x:Name="TxtInitialPrompt"
-                                             HorizontalAlignment="Stretch" />
-                                </StackPanel>
-                                <Button x:Name="BtnOpenClaudeFolder" Classes="primary"
-                                        HorizontalAlignment="Stretch"
-                                        Click="OnOpenClaudeFolder"
-                                        Margin="0,16,0,0">
-                                    <StackPanel Orientation="Horizontal" Spacing="6"
-                                                HorizontalAlignment="Center">
-                                        <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
-                                                  Width="12" Height="12" Foreground="White" />
-                                        <TextBlock x:Name="LblOpenClaudeFolder" Text="Open .claude Folder" VerticalAlignment="Center" />
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="12">
+                                        <TextBlock x:Name="LblGeneralSettings" Text="General" Classes="settings-group-header" />
+                                        <CheckBox x:Name="ChkShowWelcomePage" Content="Show Welcome Page"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnShowWelcomePageChanged" />
+                                        <CheckBox x:Name="ChkEnableCharts" Content="Render diagrams in the terminal"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnEnableChartsChanged" />
+                                        <!-- Shell icons are on by default and the switch is kept out of the
+                                             panel; set IsVisible="True" to offer it again. -->
+                                        <CheckBox x:Name="ChkUseShellIcons" Content="Use Windows Explorer icons in the file tree"
+                                                  IsVisible="False"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnUseShellIconsChanged" />
                                     </StackPanel>
-                                </Button>
-                                <Grid ColumnDefinitions="*,8,*" Margin="0,16,0,0">
-                                    <Button x:Name="BtnSetupDoctor" Grid.Column="0"
-                                            HorizontalAlignment="Stretch"
-                                            HorizontalContentAlignment="Center"
-                                            ToolTip.Tip="Check that everything is installed and signed in"
-                                            Click="OnSetupDoctor">
-                                        <TextBlock x:Name="LblSetupDoctor" Text="Setup Check" FontSize="12" />
-                                    </Button>
-                                    <Button x:Name="BtnShortcuts" Grid.Column="2"
-                                            HorizontalAlignment="Stretch"
-                                            HorizontalContentAlignment="Center"
-                                            ToolTip.Tip="Keyboard shortcuts (F1)"
-                                            Click="OnShowShortcuts">
-                                        <TextBlock x:Name="LblShortcuts" Text="Keyboard Shortcuts" FontSize="12" />
-                                    </Button>
-                                </Grid>
-                                <StackPanel Spacing="4" Margin="0,16,0,0">
-                                    <TextBlock x:Name="LblNotifications" Text="Notifications" FontSize="13"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <CheckBox x:Name="ChkNotifyOnComplete" Content="Notify when a task finishes"
-                                              Foreground="{DynamicResource SubtleText}"
-                                              IsCheckedChanged="OnNotifySettingChanged" />
-                                    <CheckBox x:Name="ChkNotifySound" Content="Play a sound"
-                                              Foreground="{DynamicResource SubtleText}"
-                                              IsCheckedChanged="OnNotifySettingChanged" />
-                                </StackPanel>
-                                <StackPanel Spacing="4" Margin="0,12,0,0">
-                                    <TextBlock x:Name="LblUpdates" Text="Updates" FontSize="13"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <CheckBox x:Name="ChkCheckUpdate" Content="Check for updates at startup"
-                                              Foreground="{DynamicResource SubtleText}"
-                                              IsCheckedChanged="OnCheckUpdateSettingChanged" />
-                                </StackPanel>
-                                <StackPanel Spacing="4" Margin="0,12,0,0">
-                                    <TextBlock x:Name="LblCheckpoints" Text="Checkpoints" FontSize="13"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <CheckBox x:Name="ChkEnableCheckpoints" Content="Snapshot the project before each prompt"
-                                              Foreground="{DynamicResource SubtleText}"
-                                              IsCheckedChanged="OnEnableCheckpointsChanged" />
-                                    <Button x:Name="BtnOpenCheckpoints" HorizontalAlignment="Stretch"
-                                            HorizontalContentAlignment="Center" Margin="0,4,0,0"
-                                            Click="OnShowCheckpoints">
-                                        <TextBlock x:Name="LblOpenCheckpoints" Text="Checkpoints" FontSize="12" />
-                                    </Button>
-                                </StackPanel>
-                                <StackPanel Spacing="4" Margin="0,12,0,0">
-                                    <TextBlock x:Name="LblLiveStatus" Text="Live status" FontSize="13"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <CheckBox x:Name="ChkEnableLiveStatus" Content="Show mode, activity and context left"
-                                              Foreground="{DynamicResource SubtleText}"
-                                              IsCheckedChanged="OnLiveStatusSettingChanged" />
-                                    <CheckBox x:Name="ChkEnableErrorBanner" Content="Explain errors in a banner"
-                                              Foreground="{DynamicResource SubtleText}"
-                                              IsCheckedChanged="OnLiveStatusSettingChanged" />
-                                </StackPanel>
-                                <StackPanel Spacing="4" Margin="0,12,0,0">
-                                    <TextBlock x:Name="LblSourceControlSettings" Text="Source control" FontSize="13"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <TextBlock x:Name="LblCommitLanguage" Text="Commit message language" FontSize="12"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <ComboBox x:Name="CmbCommitLanguage" HorizontalAlignment="Stretch"
-                                              SelectionChanged="OnCommitLanguageChanged" />
-                                    <CheckBox x:Name="ChkGitAutoFetch" Content="Fetch from the remote every 5 minutes"
-                                              Foreground="{DynamicResource SubtleText}"
-                                              IsCheckedChanged="OnGitAutoFetchChanged" />
-                                </StackPanel>
-                                <StackPanel Spacing="4" Margin="0,12,0,0">
-                                    <TextBlock x:Name="LblPlanTier" Text="Plan" FontSize="13"
-                                               Foreground="{DynamicResource SubtleText}" />
-                                    <ComboBox x:Name="CmbPlanTier" HorizontalAlignment="Stretch"
-                                              SelectionChanged="OnPlanTierChanged" />
-                                    <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0">
-                                        <Button x:Name="BtnOpenCostDashboard" Grid.Column="0"
-                                                HorizontalAlignment="Stretch"
-                                                HorizontalContentAlignment="Center"
-                                                Click="OnActivityCost">
-                                            <TextBlock x:Name="LblOpenCostDashboard" Text="Tokens &amp; cost" FontSize="12" />
+                                </Border>
+                                <!-- Isolate and the context profile picker used to sit in the top
+                                     toolbar; they moved here so the toolbar stays focused on
+                                     picking a project/session. -->
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="12">
+                                        <TextBlock x:Name="LblSessionLaunch" Text="Session Launch" Classes="settings-group-header" />
+                                        <CheckBox x:Name="ChkIsolate" IsVisible="False"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnIsolateChanged">
+                                            <TextBlock x:Name="LblIsolate" Text="Isolate"
+                                                       VerticalAlignment="Center" />
+                                        </CheckBox>
+                                        <StackPanel x:Name="LaunchProfileRow" Spacing="6"
+                                                    IsVisible="False">
+                                            <TextBlock x:Name="LblLaunchProfile" Text="Profile" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <ComboBox x:Name="CmbLaunchProfile" Classes="modern"
+                                                      HorizontalAlignment="Stretch"
+                                                      SelectionChanged="OnLaunchProfileChanged" />
+                                        </StackPanel>
+                                        <StackPanel x:Name="ModelEffortOverrideRow" Spacing="6"
+                                                    IsVisible="False">
+                                            <TextBlock x:Name="LblPreferredModel" Text="Model" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <ComboBox x:Name="CmbPreferredModel" Classes="modern"
+                                                      HorizontalAlignment="Stretch"
+                                                      SelectionChanged="OnPreferredModelChanged" />
+                                            <TextBlock x:Name="LblPreferredEffort" Text="Effort" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <ComboBox x:Name="CmbPreferredEffort" Classes="modern"
+                                                      HorizontalAlignment="Stretch"
+                                                      SelectionChanged="OnPreferredEffortChanged" />
+                                        </StackPanel>
+                                        <StackPanel Spacing="6">
+                                            <TextBlock x:Name="LblInitialPrompt" Text="Initial Prompt" FontSize="13"
+                                                       Foreground="{DynamicResource SubtleText}" />
+                                            <TextBox x:Name="TxtInitialPrompt"
+                                                     HorizontalAlignment="Stretch" />
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="12">
+                                        <TextBlock x:Name="LblHelpAndDiagnostics" Text="Help &amp; Diagnostics" Classes="settings-group-header" />
+                                        <Grid ColumnDefinitions="*,8,*">
+                                            <Button x:Name="BtnSetupDoctor" Grid.Column="0"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Center"
+                                                    ToolTip.Tip="Check that everything is installed and signed in"
+                                                    Click="OnSetupDoctor">
+                                                <TextBlock x:Name="LblSetupDoctor" Text="Setup Check" FontSize="12" />
+                                            </Button>
+                                            <Button x:Name="BtnShortcuts" Grid.Column="2"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Center"
+                                                    ToolTip.Tip="Keyboard shortcuts (F1)"
+                                                    Click="OnShowShortcuts">
+                                                <TextBlock x:Name="LblShortcuts" Text="Keyboard Shortcuts" FontSize="12" />
+                                            </Button>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock x:Name="LblNotifications" Text="Notifications" Classes="settings-group-header" />
+                                        <CheckBox x:Name="ChkNotifyOnComplete" Content="Notify when a task finishes"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnNotifySettingChanged" />
+                                        <CheckBox x:Name="ChkNotifySound" Content="Play a sound"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnNotifySettingChanged" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock x:Name="LblUpdates" Text="Updates" Classes="settings-group-header" />
+                                        <CheckBox x:Name="ChkCheckUpdate" Content="Check for updates at startup"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnCheckUpdateSettingChanged" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock x:Name="LblCheckpoints" Text="Checkpoints" Classes="settings-group-header" />
+                                        <CheckBox x:Name="ChkEnableCheckpoints" Content="Snapshot the project before each prompt"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnEnableCheckpointsChanged" />
+                                        <Button x:Name="BtnOpenCheckpoints" HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Center" Margin="0,4,0,0"
+                                                Click="OnShowCheckpoints">
+                                            <TextBlock x:Name="LblOpenCheckpoints" Text="Checkpoints" FontSize="12" />
                                         </Button>
-                                        <Button x:Name="BtnOpenUsageChart" Grid.Column="2"
-                                                HorizontalAlignment="Stretch"
-                                                HorizontalContentAlignment="Center"
-                                                Click="OnShowUsageChart">
-                                            <TextBlock x:Name="LblOpenUsageChart" Text="Usage Chart" FontSize="12" />
-                                        </Button>
-                                    </Grid>
-                                </StackPanel>
-                                <CheckBox x:Name="ChkShowWelcomePage" Content="Show Welcome Page"
-                                          Margin="0,16,0,0"
-                                          Foreground="{DynamicResource SubtleText}"
-                                          IsCheckedChanged="OnShowWelcomePageChanged" />
-
-                                <!-- Shell icons are on by default and the switch is kept out of the
-                                     panel; set IsVisible="True" to offer it again. -->
-                                <CheckBox x:Name="ChkUseShellIcons" Content="Use Windows Explorer icons in the file tree"
-                                          IsVisible="False"
-                                          Margin="0,4,0,0"
-                                          Foreground="{DynamicResource SubtleText}"
-                                          IsCheckedChanged="OnUseShellIconsChanged" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock x:Name="LblLiveStatus" Text="Live status" Classes="settings-group-header" />
+                                        <CheckBox x:Name="ChkEnableLiveStatus" Content="Show mode, activity and context left"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnLiveStatusSettingChanged" />
+                                        <CheckBox x:Name="ChkEnableErrorBanner" Content="Explain errors in a banner"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnLiveStatusSettingChanged" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock x:Name="LblSourceControlSettings" Text="Source control" Classes="settings-group-header" />
+                                        <TextBlock x:Name="LblCommitLanguage" Text="Commit message language" FontSize="12"
+                                                   Foreground="{DynamicResource SubtleText}" />
+                                        <ComboBox x:Name="CmbCommitLanguage" HorizontalAlignment="Stretch"
+                                                  SelectionChanged="OnCommitLanguageChanged" />
+                                        <CheckBox x:Name="ChkGitAutoFetch" Content="Fetch from the remote every 5 minutes"
+                                                  Foreground="{DynamicResource SubtleText}"
+                                                  IsCheckedChanged="OnGitAutoFetchChanged" />
+                                    </StackPanel>
+                                </Border>
+                                <Border Classes="settings-group">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock x:Name="LblPlanTier" Text="Plan" Classes="settings-group-header" />
+                                        <ComboBox x:Name="CmbPlanTier" HorizontalAlignment="Stretch"
+                                                  SelectionChanged="OnPlanTierChanged" />
+                                        <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0">
+                                            <Button x:Name="BtnOpenCostDashboard" Grid.Column="0"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Center"
+                                                    Click="OnActivityCost">
+                                                <TextBlock x:Name="LblOpenCostDashboard" Text="Tokens &amp; cost" FontSize="12" />
+                                            </Button>
+                                            <Button x:Name="BtnOpenUsageChart" Grid.Column="2"
+                                                    HorizontalAlignment="Stretch"
+                                                    HorizontalContentAlignment="Center"
+                                                    Click="OnShowUsageChart">
+                                                <TextBlock x:Name="LblOpenUsageChart" Text="Usage Chart" FontSize="12" />
+                                            </Button>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
 
                                 <!-- AI Provider -->
-                                <Border BorderBrush="{DynamicResource SubtleText}" BorderThickness="1"
-                                        CornerRadius="6" Padding="10,8">
+                                <Border Classes="settings-group">
                                     <StackPanel Spacing="12">
-                                        <TextBlock x:Name="LblAiProvider" Text="AI Provider" FontSize="15" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource SubtleText}" />
+                                        <TextBlock x:Name="LblAiProvider" Text="AI Provider" Classes="settings-group-header" />
                                         <StackPanel x:Name="PnlProviderRadios" Spacing="2" />
+                                        <!-- Opens the active provider's own config directory (e.g. Claude
+                                             Code's .claude folder) - distinct from Open Config Folder
+                                             below, which opens Claucraft's provider-definition folder. -->
+                                        <Button x:Name="BtnOpenClaudeFolder" Classes="primary"
+                                                HorizontalAlignment="Stretch"
+                                                Click="OnOpenClaudeFolder">
+                                            <StackPanel Orientation="Horizontal" Spacing="6"
+                                                        HorizontalAlignment="Center">
+                                                <PathIcon Data="M2 6C2 4.89543 2.89543 4 4 4H9L11 6H18C19.1046 6 20 6.89543 20 8V16C20 17.1046 19.1046 18 18 18H4C2.89543 18 2 17.1046 2 16V6Z"
+                                                          Width="12" Height="12" Foreground="White" />
+                                                <TextBlock x:Name="LblOpenClaudeFolder" Text="Open .claude Folder" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
                                         <StackPanel Spacing="6">
                                             <TextBlock x:Name="LblProviderExe" Text="Executable" FontSize="13"
                                                        Foreground="{DynamicResource SubtleText}" />

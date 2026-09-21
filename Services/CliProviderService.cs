@@ -101,6 +101,14 @@ public class CliProviderService
 
     public CliFeatures Features => Active.Features;
 
+    /// <summary>
+    /// Model/effort to pin on every launch of a CLI that supports it, chosen once at session
+    /// start rather than switched mid-conversation - a mid-session switch invalidates the
+    /// prompt cache for everything said before it. Null means the profile's own flags decide.
+    /// </summary>
+    public string? PreferredModel { get; set; }
+    public string? PreferredEffort { get; set; }
+
     public CliProvider? Find(string id) => _providers.FirstOrDefault(p => p.Id == id);
 
     /// <summary>Launch profiles the active CLI offers. Empty means the picker stays hidden.</summary>
@@ -144,7 +152,7 @@ public class CliProviderService
         var shell = ShellHost.For(p);
         var exe = QuoteExe(p.Exe, shell);
         var prompt = SanitizePrompt(initialPrompt);
-        var extra = SanitizePrompt(profile?.ExtraArgs);
+        var extra = AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs));
 
         if (string.IsNullOrEmpty(prompt))
             return string.IsNullOrEmpty(extra) ? exe : $"{exe} {extra}";
@@ -173,7 +181,7 @@ public class CliProviderService
     {
         var p = Active;
         var exe = QuoteExe(p.Exe, ShellHost.For(p));
-        var extra = SanitizePrompt(profile?.ExtraArgs);
+        var extra = AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs));
         var args = string.IsNullOrWhiteSpace(p.ContinueArgs) ? "" : p.ContinueArgs.Trim();
         return JoinCommand(exe, extra, args);
     }
@@ -186,9 +194,26 @@ public class CliProviderService
             return BuildContinueCommand(profile);
 
         var exe = QuoteExe(p.Exe, ShellHost.For(p));
-        var extra = SanitizePrompt(profile?.ExtraArgs);
+        var extra = AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs));
         var args = p.ResumeArgs.Replace("{sessionId}", sessionId).Trim();
         return JoinCommand(exe, extra, args);
+    }
+
+    /// <summary>
+    /// Appends the user's pinned --model/--effort after the profile flags, so it is the last
+    /// word the CLI reads and wins over whatever the profile itself set (e.g. Deep's own
+    /// --model opus --effort high). No-op for a CLI that does not understand these flags.
+    /// </summary>
+    private string AppendModelEffortOverride(string extra)
+    {
+        if (!Active.Features.SupportsModelEffortOverride) return extra;
+
+        var sb = new System.Text.StringBuilder(extra);
+        if (!string.IsNullOrWhiteSpace(PreferredModel))
+            sb.Append(sb.Length > 0 ? " " : "").Append("--model ").Append(PreferredModel);
+        if (!string.IsNullOrWhiteSpace(PreferredEffort))
+            sb.Append(sb.Length > 0 ? " " : "").Append("--effort ").Append(PreferredEffort);
+        return sb.ToString();
     }
 
     /// <summary>Profile flags lead, provider args follow - the same order BuildNewCommand uses.</summary>
@@ -554,6 +579,19 @@ public class CliProviderService
                 }
             }
 
+            // Same story for the model/effort override flag: an entry written before it existed
+            // deserializes with the field at its bool default (false), permanently hiding the
+            // Settings picker even though the preset now supports it.
+            if (!stale.Features.SupportsModelEffortOverride)
+            {
+                var match = presets.FirstOrDefault(p => p.Id == stale.Id);
+                if (match != null && match.Features.SupportsModelEffortOverride)
+                {
+                    stale.Features.SupportsModelEffortOverride = true;
+                    changed = true;
+                }
+            }
+
             result.Add(stale);
         }
 
@@ -598,6 +636,7 @@ public class CliProviderService
                 CompactButton = true,
                 ModeSwitchButton = true,
                 DiagramViewer = true,
+                SupportsModelEffortOverride = true,
                 ExitCommand = "/exit\r",
             },
             // Re-reading the conversation prefix (cache_read) is the bulk of a session's cost,

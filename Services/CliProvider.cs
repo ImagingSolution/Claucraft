@@ -18,6 +18,9 @@ public class CliFeatures
     public bool ModeSwitchButton { get; set; }
     public bool DiagramViewer { get; set; }
 
+    /// <summary>Whether this CLI takes --model/--effort flags Claucraft can pin at launch.</summary>
+    public bool SupportsModelEffortOverride { get; set; }
+
     /// <summary>Command sent to the PTY on shutdown. Empty means kill the process directly.</summary>
     public string ExitCommand { get; set; } = "";
 
@@ -30,6 +33,7 @@ public class CliFeatures
         CompactButton = CompactButton,
         ModeSwitchButton = ModeSwitchButton,
         DiagramViewer = DiagramViewer,
+        SupportsModelEffortOverride = SupportsModelEffortOverride,
         ExitCommand = ExitCommand,
     };
 }

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -126,6 +127,7 @@ internal partial class AppShell : UserControl, IDockOwner
     private string? _pendingModelLabel;
     private List<LaunchProfile> _profiles = new();
     private bool _suppressProfileChange;
+    private bool _suppressModelEffortOverrideChange;
     private bool _costRefreshInFlight;
 
     /// <summary>Turn-end tracking for the frame blink. See NoteRunState.</summary>
@@ -309,6 +311,13 @@ internal partial class AppShell : UserControl, IDockOwner
         public int BusyPolls { get; set; }
 
         /// <summary>
+        /// UTC time this window last finished a turn. Used to warn before the prompt cache
+        /// (TTL ~1 hour on a subscription plan) expires from being left idle, wiping out the
+        /// discount on the whole conversation re-read on the next message.
+        /// </summary>
+        public DateTime? LastTurnEndUtc { get; set; }
+
+        /// <summary>
         /// Claucraft's own jobs for this window that have not come back yet, by name. The CLI
         /// can hand the prompt back while the app is still finishing what the turn started -
         /// snapshotting the tree for a checkpoint, say - and a window that calls itself done
@@ -360,7 +369,12 @@ internal partial class AppShell : UserControl, IDockOwner
         _notifications.EnableToast = _settings.NotifyOnComplete;
         _notifications.EnableSound = _settings.NotifySound;
 
-        _cli = new CliProviderService { ActiveId = _settings.CliProviderId };
+        _cli = new CliProviderService
+        {
+            ActiveId = _settings.CliProviderId,
+            PreferredModel = _settings.PreferredModel,
+            PreferredEffort = _settings.PreferredEffort,
+        };
         // A retired CLI (e.g. gemini -> antigravity) is remapped on assignment; persist it
         // so the old id does not sit in appsettings.json forever.
         if (_settings.CliProviderId != _cli.ActiveId)
@@ -439,7 +453,7 @@ internal partial class AppShell : UserControl, IDockOwner
         }
         else if (!string.IsNullOrEmpty(_projectFolder) && Directory.Exists(_projectFolder))
         {
-            Dispatcher.UIThread.Post(LaunchClaudeWithInitialPrompt, DispatcherPriority.Background);
+            Dispatcher.UIThread.Post(() => LaunchClaudeWithInitialPrompt(), DispatcherPriority.Background);
         }
 
         // First run: surface a missing CLI or sign-in before the user hits a wall in the
@@ -506,6 +520,12 @@ internal partial class AppShell : UserControl, IDockOwner
         if (_activeSidePanel != SidebarPanel.None)
             ShowPanelContent(_activeSidePanel);
 
+        // New Session context menu - the label reflects the toggle it will apply, refreshed
+        // again in OnNewClaudeContextMenuOpening since the Isolate checkbox can change afterward.
+        MenuNewClaudeIsolateToggle.Header = Loc.Get(ChkIsolate.IsChecked == true
+            ? "NewSessionNotIsolated"
+            : "NewSessionIsolated");
+
         // Explorer context menu
         MenuTreeOpen.Header = Loc.Get("Open");
         MenuTreeOpenWith.Header = Loc.Get("OpenWith");
@@ -525,6 +545,8 @@ internal partial class AppShell : UserControl, IDockOwner
         ChkShowWelcomePage.Content = Loc.Get("ShowWelcomePage");
         ChkEnableCharts.Content = Loc.Get("EnableCharts");
         ChkUseShellIcons.Content = Loc.Get("UseShellIcons");
+        LblGeneralSettings.Text = Loc.Get("GeneralSettings");
+        LblSessionLaunch.Text = Loc.Get("SessionLaunch");
 
         // AI provider panel (LblOpenClaudeFolder is provider-dependent — ApplyProviderUi)
         LblAiProvider.Text = Loc.Get("AiProvider");
@@ -558,6 +580,7 @@ internal partial class AppShell : UserControl, IDockOwner
         if (SlashPanel.IsVisible) RefreshSlashPanel();
 
         // Setup check, shortcuts, notifications, checkpoints
+        LblHelpAndDiagnostics.Text = Loc.Get("HelpAndDiagnostics");
         LblSetupDoctor.Text = Loc.Get("SetupDoctor");
         ToolTip.SetTip(BtnSetupDoctor, Loc.Get("SetupDoctorTooltip"));
         LblShortcuts.Text = Loc.Get("Shortcuts");
@@ -581,6 +604,9 @@ internal partial class AppShell : UserControl, IDockOwner
         ToolTip.SetTip(BtnBranchSwitch, Loc.Get("BranchSwitchTooltip"));
         LblIsolate.Text = Loc.Get("IsolateSession");
         ToolTip.SetTip(ChkIsolate, Loc.Get("IsolateTooltip"));
+        LblLaunchProfile.Text = Loc.Get("LaunchProfile");
+        LblPreferredModel.Text = Loc.Get("PreferredModelLabel");
+        LblPreferredEffort.Text = Loc.Get("PreferredEffortLabel");
         LblSourceControlSettings.Text = Loc.Get("SOURCE_CONTROL");
         LblCommitLanguage.Text = Loc.Get("CommitLanguage");
         ChkGitAutoFetch.Content = Loc.Get("GitAutoFetch");
@@ -765,7 +791,7 @@ internal partial class AppShell : UserControl, IDockOwner
         _profiles = _cli.ActiveProfiles.ToList();
         _suppressProfileChange = true;
         CmbLaunchProfile.ItemsSource = _profiles.Select(p => p.Name).ToList();
-        CmbLaunchProfile.IsVisible = _profiles.Count > 0;
+        LaunchProfileRow.IsVisible = _profiles.Count > 0;
         if (_profiles.Count > 0)
         {
             var activeProfile = _cli.FindProfile(_settings.ActiveProfileId);
@@ -774,6 +800,21 @@ internal partial class AppShell : UserControl, IDockOwner
             UpdateProfileTooltip();
         }
         _suppressProfileChange = false;
+
+        // Model/effort override is Claude-only; pinning it at launch and never touching it
+        // mid-session is what keeps the prompt cache from being invalidated (see [[claucraft-token-reduction-features]]).
+        ModelEffortOverrideRow.IsVisible = features.SupportsModelEffortOverride;
+        if (features.SupportsModelEffortOverride)
+        {
+            _suppressModelEffortOverrideChange = true;
+            CmbPreferredModel.ItemsSource = ModelOverrideChoices.Select(c => c.Label).ToList();
+            CmbPreferredEffort.ItemsSource = EffortOverrideChoices.Select(c => c.Label).ToList();
+            CmbPreferredModel.SelectedIndex = Math.Max(0,
+                ModelOverrideChoices.ToList().FindIndex(c => c.Alias == _settings.PreferredModel));
+            CmbPreferredEffort.SelectedIndex = Math.Max(0,
+                EffortOverrideChoices.ToList().FindIndex(c => c.Alias == _settings.PreferredEffort));
+            _suppressModelEffortOverrideChange = false;
+        }
 
         // Both readouts are Claude-account specific: the tracker reads Claude Code's own
         // transcripts, the rate limits belong to the signed-in Claude plan.
@@ -4366,6 +4407,22 @@ internal partial class AppShell : UserControl, IDockOwner
         LaunchClaudeWithInitialPrompt();
     }
 
+    /// <summary>
+    /// The menu offers the opposite of whatever the Isolate checkbox is currently set to, so its
+    /// label has to be refreshed each time it opens rather than once at startup.
+    /// </summary>
+    private void OnNewClaudeContextMenuOpening(object? sender, CancelEventArgs e)
+    {
+        MenuNewClaudeIsolateToggle.Header = Loc.Get(ChkIsolate.IsChecked == true
+            ? "NewSessionNotIsolated"
+            : "NewSessionIsolated");
+    }
+
+    private void OnNewClaudeIsolateToggle(object? sender, RoutedEventArgs e)
+    {
+        LaunchClaudeWithInitialPrompt(forceIsolate: ChkIsolate.IsChecked != true);
+    }
+
     private void OnCloseTab(object? sender, RoutedEventArgs e) => CloseActiveWindow();
 
     /// <summary>Closes whichever window holds the front - a session or an open file.</summary>
@@ -4663,6 +4720,7 @@ internal partial class AppShell : UserControl, IDockOwner
         entry.SawWorking = false;
         entry.IdlePolls = 0;
         entry.BusyPolls = 0;
+        entry.LastTurnEndUtc = DateTime.UtcNow;
         _ = SyncTitleFromSessionAsync(entry);
         NotifyTurnEnd(entry, busyPolls);
     }
@@ -4973,6 +5031,23 @@ internal partial class AppShell : UserControl, IDockOwner
                 accent = Color.FromRgb(255, 214, 10);
                 autoHideSeconds = AdviceBannerAutoHideSeconds;
             }
+            // A session left idle long enough loses its prompt cache (TTL ~1 hour on a
+            // subscription plan) - the next message then re-reads the whole conversation
+            // at full price instead of the cached rate. Only worth flagging once there is
+            // enough context that the re-read would actually cost something.
+            else if (cost.HasData && cost.ContextTokens >= CacheTtlWarningMinTokens
+                     && _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+                     && _children[_activeChildIndex].LastTurnEndUtc is DateTime lastTurnEnd
+                     && DateTime.UtcNow - lastTurnEnd >= TimeSpan.FromMinutes(CacheTtlWarningMinutes))
+            {
+                key = "cache-ttl";
+                title = Loc.Get("CacheTtlTitle");
+                detail = Loc.Get("CacheTtlDetail");
+                actionLabel = Loc.Get("CompactNowAction");
+                actionCommand = "/compact";
+                accent = Color.FromRgb(255, 214, 10);
+                autoHideSeconds = AdviceBannerAutoHideSeconds;
+            }
         }
 
         if (key == null)
@@ -4998,6 +5073,16 @@ internal partial class AppShell : UserControl, IDockOwner
     /// they describe something still broken, so they wait to be dismissed.
     /// </summary>
     private const int AdviceBannerAutoHideSeconds = 30;
+
+    /// <summary>
+    /// Idle time after which the cache-expiry banner fires. Anthropic's cache TTL is ~1 hour on
+    /// a subscription plan (shorter on API-key billing, which Claucraft has no setting to tell
+    /// apart from a subscription plan today); this stays a safety margin under that.
+    /// </summary>
+    private const int CacheTtlWarningMinutes = 50;
+
+    /// <summary>Below this the re-read the banner is warning about would be too cheap to matter.</summary>
+    private const int CacheTtlWarningMinTokens = 5000;
 
     /// <summary>
     /// A usage-limit banner is only useful if it says when the allowance comes back. The CLI names
@@ -5165,10 +5250,13 @@ internal partial class AppShell : UserControl, IDockOwner
     /// Creates the checkout the next session will work in, when the user has asked for one.
     /// Returns null for every other case - the toggle off, no repository, or git refusing -
     /// and the session then opens in the project folder as it always has.
+    /// <paramref name="forceIsolate"/> overrides the Isolate checkbox for a single launch, as the
+    /// New Session context menu's opposite-of-the-checkbox item does.
     /// </summary>
-    private async Task<WorktreeLease?> PrepareWorktreeAsync()
+    private async Task<WorktreeLease?> PrepareWorktreeAsync(bool? forceIsolate = null)
     {
-        if (ChkIsolate.IsChecked != true) return null;
+        bool isolate = forceIsolate ?? ChkIsolate.IsChecked == true;
+        if (!isolate) return null;
 
         var repo = _projectFolder;
         if (string.IsNullOrEmpty(repo)) return null;
@@ -6830,6 +6918,28 @@ internal partial class AppShell : UserControl, IDockOwner
     /// through the same table the status bar reads with, which keeps the displayed names in
     /// one place: when a line ships a new version, ModelDisplayName is the only edit.
     /// </summary>
+    private void OnPreferredModelChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressModelEffortOverrideChange) return;
+        int index = CmbPreferredModel.SelectedIndex;
+        if (index < 0 || index >= ModelOverrideChoices.Length) return;
+
+        _settings.PreferredModel = ModelOverrideChoices[index].Alias;
+        _cli.PreferredModel = _settings.PreferredModel;
+        _settings.Save();
+    }
+
+    private void OnPreferredEffortChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressModelEffortOverrideChange) return;
+        int index = CmbPreferredEffort.SelectedIndex;
+        if (index < 0 || index >= EffortOverrideChoices.Length) return;
+
+        _settings.PreferredEffort = EffortOverrideChoices[index].Alias;
+        _cli.PreferredEffort = _settings.PreferredEffort;
+        _settings.Save();
+    }
+
     private static readonly (string Alias, string ModelId)[] SwitchableModels =
     {
         ("fable", "claude-fable-5-1"),
@@ -6875,14 +6985,53 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
 
-        _children[_activeChildIndex].Terminal.SendText(
-            alias == null ? "/model\r" : "/model " + alias + "\r");
+        var child = _children[_activeChildIndex];
+        _ = SwitchModelOrEffortAsync(child, () => child.Terminal.SendText(
+            alias == null ? "/model\r" : "/model " + alias + "\r"));
 
         if (label == null) return;
 
         _pendingModelLabel = label;
         StatusModelText.Text = label;
         StatusModelName.IsVisible = true;
+    }
+
+    /// <summary>Below this, a mid-session switch has too little cached context to be worth saving.</summary>
+    private const int ModelEffortSwitchCompactThresholdTokens = 20_000;
+
+    /// <summary>Longest this waits for /compact before sending the switch anyway.</summary>
+    private const int ModelEffortSwitchCompactTimeoutSeconds = 60;
+
+    /// <summary>
+    /// Wraps a model/effort switch with an auto-/compact when there is enough context sitting in
+    /// the prefix to be worth shrinking first. The switch itself already invalidates the prompt
+    /// cache (see [[claucraft-token-reduction-features]]), so the next turn was going to re-read
+    /// the whole prefix at full price regardless - compacting first just makes that prefix smaller.
+    /// </summary>
+    private async Task SwitchModelOrEffortAsync(MdiChildInfo child, Action sendSwitch)
+    {
+        var cost = child.Cost.Current;
+        if (!cost.HasData || cost.ContextTokens < ModelEffortSwitchCompactThresholdTokens)
+        {
+            sendSwitch();
+            return;
+        }
+
+        StatusActivityText.Text = Loc.Get("CompactingBeforeSwitch");
+        child.Terminal.SendText("/compact\r");
+
+        var deadline = DateTime.UtcNow.AddSeconds(ModelEffortSwitchCompactTimeoutSeconds);
+        bool sawBusy = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(700);
+            if (child.IsClosing) break;
+            bool busy = IsChildBusy(child, TerminalInsight.IsWorking(child.Terminal.GetScreenText(0)));
+            if (busy) sawBusy = true;
+            else if (sawBusy) break;
+        }
+
+        sendSwitch();
     }
 
     /// <summary>
@@ -6898,6 +7047,21 @@ internal partial class AppShell : UserControl, IDockOwner
         ("xhigh", "XHigh"),
         ("max", "Max"),
     };
+
+    /// <summary>
+    /// Choices for the launch-time model/effort override combo boxes. "Auto" (null alias) means
+    /// the launch profile's own flags decide; reuses the same alias tables the mid-session
+    /// switch flyouts use, so the two pickers never drift apart.
+    /// </summary>
+    private static readonly (string? Alias, string Label)[] ModelOverrideChoices =
+        new (string? Alias, string Label)[] { (null, Loc.Get("EffortAuto")) }
+            .Concat(SwitchableModels.Select(m => ((string?)m.Alias, SessionCostMonitor.ModelDisplayName(m.ModelId))))
+            .ToArray();
+
+    private static readonly (string? Alias, string Label)[] EffortOverrideChoices =
+        new (string? Alias, string Label)[] { (null, Loc.Get("EffortAuto")) }
+            .Concat(SwitchableEfforts.Select(e => ((string?)e.Level, e.Label)))
+            .ToArray();
 
     /// <summary>
     /// Fills the effort dropdown. Built once: the levels are fixed, and which one is running is
@@ -6932,8 +7096,9 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
 
-        _children[_activeChildIndex].Terminal.SendText("/effort " + level + "\r");
-        _children[_activeChildIndex].Effort = level;
+        var child = _children[_activeChildIndex];
+        _ = SwitchModelOrEffortAsync(child, () => child.Terminal.SendText("/effort " + level + "\r"));
+        child.Effort = level;
         ApplyEffortReadout();
     }
 
@@ -8675,9 +8840,9 @@ internal partial class AppShell : UserControl, IDockOwner
         }
     }
 
-    private async void LaunchClaudeWithInitialPrompt()
+    private async void LaunchClaudeWithInitialPrompt(bool? forceIsolate = null)
     {
-        var worktree = await PrepareWorktreeAsync();
+        var worktree = await PrepareWorktreeAsync(forceIsolate);
         CreateNewChild(
             _cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()),
             _cli.Active.Name,

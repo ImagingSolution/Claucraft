@@ -169,6 +169,19 @@
         <Style Selector="ScrollBar:horizontal:pointerover /template/ Thumb">
             <Setter Property="Height" Value="6" />
         </Style>
+
+        <!-- Settings panel group boxes (AppShell.axaml SettingsPanel) -->
+        <Style Selector="Border.settings-group">
+            <Setter Property="BorderBrush" Value="{DynamicResource SubtleText}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="10,8" />
+        </Style>
+        <Style Selector="TextBlock.settings-group-header">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource SubtleText}" />
+        </Style>
     </Application.Styles>
 
     <Application.Resources>

@@ -78,6 +78,14 @@ public class AppSettings
     /// <summary>Launch profile applied to new sessions, matched against CliProvider.Profiles.</summary>
     public string ActiveProfileId { get; set; } = CliProviderService.StandardProfileId;
 
+    /// <summary>
+    /// Model/effort pinned at launch for a CLI that supports it. Null means unset - the
+    /// profile's own flags decide. Fixing these at the start of a session and never
+    /// switching mid-conversation keeps the prompt cache from being invalidated.
+    /// </summary>
+    public string? PreferredModel { get; set; }
+    public string? PreferredEffort { get; set; }
+
     // ── Source control ──
 
     /// <summary>

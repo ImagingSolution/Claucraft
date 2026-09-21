@@ -13,6 +13,8 @@ public static class Loc
         ["SelectProjectFolder"] = new() { ["English"] = "Select project folder...", ["日本語"] = "プロジェクトフォルダを選択..." },
         ["OpenInExplorer"] = new() { ["English"] = "Open in Explorer", ["日本語"] = "エクスプローラーで開く" },
         ["NewSession"] = new() { ["English"] = "New Session", ["日本語"] = "新規セッション" },
+        ["NewSessionIsolated"] = new() { ["English"] = "New Session (Isolated)", ["日本語"] = "新規セッション（隔離）" },
+        ["NewSessionNotIsolated"] = new() { ["English"] = "New Session (Not Isolated)", ["日本語"] = "新規セッション（隔離しない）" },
         ["Session"] = new() { ["English"] = "Session", ["日本語"] = "セッション" },
         ["SelectSession"] = new() { ["English"] = "Select a session to resume...", ["日本語"] = "再開するセッションを選択..." },
         ["Resume"] = new() { ["English"] = "Resume", ["日本語"] = "再開" },
@@ -99,6 +101,9 @@ public static class Loc
         ["ShowWelcomeOnStartup"] = new() { ["English"] = "Show Welcome Page on Startup", ["日本語"] = "起動時にウェルカムページを表示" },
         ["ShowWelcomePage"] = new() { ["English"] = "Show Welcome Page", ["日本語"] = "ウェルカムページを表示" },
         ["UseShellIcons"] = new() { ["English"] = "Use Windows Explorer icons in the file tree", ["日本語"] = "ファイルツリーに Windows エクスプローラーのアイコンを使う" },
+        ["GeneralSettings"] = new() { ["English"] = "General", ["日本語"] = "一般" },
+        ["SessionLaunch"] = new() { ["English"] = "Session Launch", ["日本語"] = "セッション起動" },
+        ["HelpAndDiagnostics"] = new() { ["English"] = "Help & Diagnostics", ["日本語"] = "ヘルプと診断" },
 
         // ── Tab Context Menu ──
         ["Close"] = new() { ["English"] = "Close", ["日本語"] = "閉じる" },
@@ -324,6 +329,10 @@ public static class Loc
         ["ContextLabel"] = new() { ["English"] = "Context", ["日本語"] = "コンテキスト" },
         ["ContextLowTitle"] = new() { ["English"] = "Context is running low", ["日本語"] = "コンテキストが残り少なくなっています" },
         ["ContextLowDetail"] = new() { ["English"] = "About {0}% left. Running /compact now summarises the conversation and frees room.", ["日本語"] = "残り約 {0}% です。いま /compact を実行すると会話が要約され、余裕ができます。" },
+        ["CacheTtlTitle"] = new() { ["English"] = "Cache is about to expire", ["日本語"] = "キャッシュがまもなく失効します" },
+        ["CacheTtlDetail"] = new() { ["English"] = "This session has been idle a while. The next message will re-read the whole conversation at full price unless you compact now.", ["日本語"] = "このセッションはしばらく操作されていません。いま /compact しないと、次のメッセージで会話全体を通常料金で読み直すことになります。" },
+        ["CompactNowAction"] = new() { ["English"] = "Compact now", ["日本語"] = "今すぐ /compact" },
+        ["CompactingBeforeSwitch"] = new() { ["English"] = "Compacting context before switching…", ["日本語"] = "コンテキストを圧縮してから切り替えます…" },
         ["RunCompact"] = new() { ["English"] = "Run /compact", ["日本語"] = "/compact を実行" },
         ["ModelTooltip"] = new() { ["English"] = "Model answering in this session. Switching also changes the default for new sessions.", ["日本語"] = "このセッションで応答しているモデル。切り替えると新規セッションの既定も変わります。" },
         ["ModelOther"] = new() { ["English"] = "Other...", ["日本語"] = "その他..." },
@@ -341,6 +350,8 @@ public static class Loc
         ["ProfileLightDesc"] = new() { ["English"] = "Sonnet, low effort, context capped at 100k, MCP and skills off. For lookups and single fixes.", ["日本語"] = "Sonnet・低 effort・コンテキスト上限 100k・MCP とスキルを無効。調査や単発修正向け。" },
         ["ProfileStandardDesc"] = new() { ["English"] = "Context capped at 200k with better cache reuse. Everyday work.", ["日本語"] = "コンテキスト上限 200k、キャッシュ再利用を改善。通常作業向け。" },
         ["ProfileDeepDesc"] = new() { ["English"] = "Opus at high effort, nothing restricted. Design and review.", ["日本語"] = "Opus・高 effort・制限なし。設計やレビュー向け。" },
+        ["PreferredModelLabel"] = new() { ["English"] = "Model", ["日本語"] = "モデル" },
+        ["PreferredEffortLabel"] = new() { ["English"] = "Effort", ["日本語"] = "エフォート" },
 
         // ── Hand-off ──
         ["HandoffAction"] = new() { ["English"] = "Hand off to a new session", ["日本語"] = "引き継いで新規セッション" },
