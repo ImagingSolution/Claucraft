@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -92,6 +93,9 @@ public sealed class SourceControlPanel : UserControl
 
     /// <summary>A reload started later owns the view; earlier ones drop their results.</summary>
     private int _refreshGeneration;
+
+    /// <summary>A SetRepository call started later owns the view; earlier ones drop their results.</summary>
+    private int _setRepoGeneration;
 
     private bool _panelShown;
 
@@ -428,6 +432,7 @@ public sealed class SourceControlPanel : UserControl
 
         _graph = new CommitGraphView(_isDark) { CompactColumns = true };
         _graph.RowActivated += (_, _) => OpenGraphWindow();
+        _graph.CreateTagRequested += (_, commit) => _ = CreateTagAsync(commit);
 
         var graphScroller = new ScrollViewer
         {
@@ -522,11 +527,27 @@ public sealed class SourceControlPanel : UserControl
     public async void SetRepository(string? projectFolder)
     {
         var next = projectFolder ?? "";
-        if (string.Equals(next, _folder, StringComparison.OrdinalIgnoreCase)) return;
+        int generation = ++_setRepoGeneration;
+
+        // Resolved before touching any state: the folder itself can be unchanged while its
+        // repository status changed underneath it - "Create Repository..." and "git init" from
+        // outside the app both run git init in the already-active project folder, and a clone
+        // command run externally can do the same. Comparing only the folder path here used to
+        // skip the reload entirely in that case, leaving the panel showing "not a repository"
+        // (blank changes, blank history) even after the folder became one.
+        var root = next.Length > 0 ? await Task.Run(() => GitCli.FindRepoRoot(next)) : null;
+        var nextRepo = root ?? "";
+
+        // A later call already owns the view.
+        if (generation != _setRepoGeneration) return;
+
+        if (string.Equals(next, _folder, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(nextRepo, _repo, StringComparison.OrdinalIgnoreCase))
+            return;
 
         _scanCts?.Cancel();
         _folder = next;
-        _repo = "";
+        _repo = nextRepo;
         _changes = new List<GitChange>();
         _branch = BranchState.None;
         _operation = RepoOperation.None;
@@ -540,15 +561,6 @@ public sealed class SourceControlPanel : UserControl
         _graph.SetGraph(CommitGraphLayout.Build(new List<GitCommit>()), false);
         _txtMessage.Text = "";
         ApplyState();
-
-        if (next.Length > 0)
-        {
-            var root = await Task.Run(() => GitCli.FindRepoRoot(next));
-
-            // The project may have changed again while git was answering.
-            if (!string.Equals(next, _folder, StringComparison.OrdinalIgnoreCase)) return;
-            _repo = root ?? "";
-        }
 
         if (_panelShown) await RefreshAsync();
         else ApplyState();
@@ -1084,6 +1096,14 @@ public sealed class SourceControlPanel : UserControl
             return;
         }
 
+        // A brand-new repository (e.g. just `git init`'d) has no remote at all yet - offer to
+        // create one on GitHub instead of letting a plain push fail with "no origin".
+        if (!state.HasUpstream && !await GitWriteService.HasAnyRemoteAsync(_repo))
+        {
+            await CreateGitHubRepoAndPush();
+            return;
+        }
+
         // Publishing is outward-facing and awkward to walk back, so it is always confirmed.
         var detail = state.HasUpstream
             ? string.Format(Loc.Get("PushConfirmFmt"),
@@ -1094,6 +1114,142 @@ public sealed class SourceControlPanel : UserControl
 
         await RunAsync(Loc.Get("PushingStatus", "Pushing..."),
             () => GitWriteService.PushAsync(_repo, state));
+    }
+
+    /// <summary>Creates a repository on GitHub for a local repo that has no remote yet, then pushes it.</summary>
+    private async Task CreateGitHubRepoAndPush()
+    {
+        if (!await GitHubCli.IsReadyAsync())
+        {
+            _host.ShowMessage(Loc.Get("PushAction"), Loc.Get("GhNotReadyForCreate",
+                "GitHub CLI (gh) is not installed or not signed in. Run 'gh auth login' first."));
+            return;
+        }
+
+        // `gh repo create --push` fails with a cryptic "no commits found" when HEAD is still
+        // unborn (fresh `git init`, nothing committed yet) - catch it here with a clear message
+        // instead of letting that raw gh error reach the user.
+        if (!await GitWriteService.HasAnyCommitAsync(_repo))
+        {
+            _host.ShowMessage(Loc.Get("PushAction"), Loc.Get("NoCommitsToPush",
+                "There are no commits yet. Commit your changes before pushing."));
+            return;
+        }
+
+        var owners = await GitHubCli.GetOwnersAsync();
+        var suggested = Path.GetFileName(_repo.TrimEnd(Path.DirectorySeparatorChar));
+        var input = await ShowCreateGitHubRepoDialogAsync(suggested, owners);
+        if (input is null) return;
+
+        await RunAsync(Loc.Get("CreateGitHubRepoStatus", "Creating on GitHub..."),
+            () => GitHubCli.CreateAndPushAsync(_repo, input.Value.Owner, input.Value.Name,
+                input.Value.Description, input.Value.IsPrivate));
+    }
+
+    /// <summary>Owner, name, description, and visibility for a new GitHub repo, or null when cancelled.</summary>
+    private Task<(string Owner, string Name, string Description, bool IsPrivate)?> ShowCreateGitHubRepoDialogAsync(
+        string suggestedName, IReadOnlyList<string> owners)
+    {
+        var source = new TaskCompletionSource<(string, string, string, bool)?>();
+        var owner = TopLevel.GetTopLevel(this) as Window;
+        if (owner == null)
+        {
+            source.SetResult(null);
+            return source.Task;
+        }
+
+        var ownerBox = new ComboBox
+        {
+            ItemsSource = owners,
+            SelectedIndex = owners.Count > 0 ? 0 : -1,
+            IsVisible = owners.Count > 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        var nameBox = new TextBox
+        {
+            Text = suggestedName,
+            FontSize = 13,
+            Padding = new Thickness(8, 6),
+            PlaceholderText = Loc.Get("CreateGitHubRepoNameWatermark", "Repository name"),
+        };
+        var descriptionBox = new TextBox
+        {
+            FontSize = 13,
+            Padding = new Thickness(8, 6),
+            PlaceholderText = Loc.Get("CreateGitHubRepoDescriptionWatermark", "(optional)"),
+        };
+        var privateBox = new CheckBox
+        {
+            Content = Loc.Get("CreateGitHubRepoPrivateCheckbox", "Private repository"),
+            IsChecked = true,
+        };
+
+        var ok = new Button
+        {
+            Content = Loc.Get("Create", "Create"),
+            MinWidth = 88,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var cancel = new Button
+        {
+            Content = Loc.Get("Cancel"),
+            MinWidth = 88,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(ok);
+
+        var panel = new StackPanel { Spacing = 10, Margin = new Thickness(22, 20) };
+        if (owners.Count > 0)
+        {
+            panel.Children.Add(FieldLabel(Loc.Get("CreateGitHubRepoOwnerLabel", "Owner")));
+            panel.Children.Add(ownerBox);
+        }
+        panel.Children.Add(FieldLabel(Loc.Get("CreateGitHubRepoNameLabel", "Repository name")));
+        panel.Children.Add(nameBox);
+        panel.Children.Add(FieldLabel(Loc.Get("CreateGitHubRepoDescriptionLabel", "Description")));
+        panel.Children.Add(descriptionBox);
+        panel.Children.Add(privateBox);
+        panel.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = Loc.Get("CreateGitHubRepoTitle", "Create Repository on GitHub"),
+            Width = 420,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(_isDark
+                ? Color.FromRgb(30, 30, 32)
+                : Color.FromRgb(246, 246, 250)),
+            Content = panel,
+        };
+
+        bool answered = false;
+        ok.Click += (_, _) =>
+        {
+            var name = (nameBox.Text ?? "").Trim();
+            if (name.Length == 0) { nameBox.Focus(); return; }
+
+            var selectedOwner = ownerBox.IsVisible ? (ownerBox.SelectedItem as string ?? "") : "";
+            answered = true;
+            source.TrySetResult((selectedOwner, name, (descriptionBox.Text ?? "").Trim(),
+                privateBox.IsChecked == true));
+            dialog.Close();
+        };
+        cancel.Click += (_, _) => { answered = true; source.TrySetResult(null); dialog.Close(); };
+        dialog.Closed += (_, _) => { if (!answered) source.TrySetResult(null); };
+
+        _ = dialog.ShowDialog(owner);
+        Dispatcher.UIThread.Post(() => { nameBox.Focus(); nameBox.SelectAll(); });
+        return source.Task;
     }
 
     // ── Branches ───────────────────────────────────────────────────────
@@ -1169,6 +1325,18 @@ public sealed class SourceControlPanel : UserControl
 
         await RunAsync(Loc.Get("SwitchingStatus", "Switching..."),
             () => GitWriteService.CreateBranchAsync(_repo, name.Trim()));
+    }
+
+    private async Task CreateTagAsync(GitCommit commit)
+    {
+        if (_repo.Length == 0 || _busy) return;
+
+        var name = await _host.TextInput(Loc.Get("CreateTagAction", "Create Tag..."),
+            Loc.Get("CreateTagPrompt", "Tag name"), "");
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        await RunAsync(Loc.Get("CreatingTagStatus", "Creating tag..."),
+            () => GitWriteService.CreateTagAsync(_repo, name.Trim(), commit.Hash));
     }
 
     private async void DeleteBranch(string branch)
@@ -1925,6 +2093,16 @@ public sealed class SourceControlPanel : UserControl
     private async void OnCreatePullRequest()
     {
         if (_repo.Length == 0 || _busy || _ghReady != true || !_onGitHub) return;
+
+        // `gh pr create` refuses outright when the current branch has never been pushed
+        // ("aborted: you must first push the current branch to a remote") - catch it here with
+        // a clear message instead of letting that raw gh error reach the user.
+        if (!_branch.HasUpstream)
+        {
+            _host.ShowMessage(Loc.Get("CreatePrAction", "Pull request"),
+                Loc.Get("PrNeedsPushFirst", "Push the current branch before creating a pull request."));
+            return;
+        }
 
         var repo = _repo;
         var subjectTask = GitWriteService.GetLastSubjectAsync(repo);

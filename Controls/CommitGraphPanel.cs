@@ -58,6 +58,9 @@ public class CommitGraphPanel : UserControl
     /// <summary>Asks before publishing. Null means this window cannot push at all.</summary>
     private readonly Func<string, string, Task<bool>>? _confirm;
 
+    /// <summary>Prompts for a tag name. Null means "Create Tag..." does nothing when picked.</summary>
+    private readonly Func<string, string, string, Task<string?>>? _textInput;
+
     /// <summary>Set while one of the three remote actions is in flight.</summary>
     private bool _gitBusy;
 
@@ -119,7 +122,8 @@ public class CommitGraphPanel : UserControl
     public CommitGraphPanel(string repoRoot, string repoLabel, bool isDark, Typeface mono,
         Action<string>? sendComment = null,
         Action<string, string>? showMessage = null,
-        Func<string, string, Task<bool>>? confirm = null)
+        Func<string, string, Task<bool>>? confirm = null,
+        Func<string, string, string, Task<string?>>? textInput = null)
     {
         _repoRoot = repoRoot;
         _isDark = isDark;
@@ -127,6 +131,7 @@ public class CommitGraphPanel : UserControl
         _sendComment = sendComment;
         _showMessage = showMessage;
         _confirm = confirm;
+        _textInput = textInput;
 
         GraphTitle = string.IsNullOrEmpty(repoLabel)
             ? Loc.Get("CommitGraphTitle", "Commit Graph")
@@ -215,6 +220,7 @@ public class CommitGraphPanel : UserControl
         _view = new CommitGraphView(_isDark);
         _view.SelectionChanged += (_, _) => ShowSelection();
         _view.RowActivated += (_, _) => OpenSelectedFileDiff();
+        _view.CreateTagRequested += (_, commit) => _ = CreateTagAsync(commit);
 
         _scroller = new ScrollViewer
         {
@@ -430,6 +436,18 @@ public class CommitGraphPanel : UserControl
 
         await RunGitAsync(Loc.Get("PushingStatus", "Pushing..."),
             () => GitWriteService.PushAsync(_repoRoot, state));
+    }
+
+    private async Task CreateTagAsync(GitCommit commit)
+    {
+        if (_textInput == null) return;
+
+        var name = await _textInput(Loc.Get("CreateTagAction", "Create Tag..."),
+            Loc.Get("CreateTagPrompt", "Tag name"), "");
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        await RunGitAsync(Loc.Get("CreatingTagStatus", "Creating tag..."),
+            () => GitWriteService.CreateTagAsync(_repoRoot, name.Trim(), commit.Hash));
     }
 
     /// <summary>

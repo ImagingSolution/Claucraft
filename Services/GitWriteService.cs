@@ -41,6 +41,123 @@ public static class GitWriteService
         ["GIT_TERMINAL_PROMPT"] = "0",
     };
 
+    /// <summary>
+    /// Where a repository name typed at "Create Repository..." is remembered when it differs
+    /// from the folder name. Git has no such concept on its own; this is local config only, so
+    /// it never leaks into a push and disappears if the repository is ever re-cloned.
+    /// </summary>
+    public const string RepoNameConfigKey = "claucraft.repo-name";
+
+    /// <summary>Turns an existing, ordinary folder into a new git repository.</summary>
+    /// <param name="repoName">
+    /// The name the user chose in the dialog. When it differs from the folder's own name, it is
+    /// saved to local git config so the status bar (and later, GitHub repo creation) can show it
+    /// instead of the folder name - the folder itself is never renamed.
+    /// </param>
+    public static Task<GitResult> InitAsync(string folder, string? repoName = null)
+    {
+        return Task.Run(() =>
+        {
+            if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+                return GitResult.Failed("folder not found");
+            // Without -b, the initial branch name follows the user's global git config (or
+            // git's own default, "master", on older installs) - pin it to "main" instead.
+            var result = GitCli.Execute(folder, null, "init", "-b", "main");
+            if (!result.Ok) return result;
+
+            var folderName = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar));
+            if (!string.IsNullOrWhiteSpace(repoName) &&
+                !string.Equals(repoName, folderName, StringComparison.Ordinal) &&
+                !repoName.StartsWith("-", StringComparison.Ordinal))
+            {
+                // "--" stops option parsing so a value git config would otherwise read as a
+                // flag (even past the leading-'-' check above, e.g. embedded via some other
+                // path) is always taken as the literal value.
+                GitCli.Execute(folder, null, "config", "--local", "--", RepoNameConfigKey, repoName);
+            }
+            return result;
+        });
+    }
+
+    /// <summary>Clones <paramref name="url"/> into a new subfolder of <paramref name="parentFolder"/>.</summary>
+    public static Task<GitResult> CloneAsync(string parentFolder, string url, string folderName)
+    {
+        return Task.Run(() =>
+        {
+            if (string.IsNullOrEmpty(parentFolder) || !Directory.Exists(parentFolder))
+                return GitResult.Failed("folder not found");
+            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(folderName))
+                return GitResult.Failed("missing url or folder name");
+            // A leading '-' would let the url or folder name be parsed as a git option instead
+            // of a positional argument; "--" below stops option parsing as a second guard.
+            if (url.StartsWith("-", StringComparison.Ordinal) || folderName.StartsWith("-", StringComparison.Ordinal))
+                return GitResult.Failed("invalid url or folder name");
+
+            // null env, not NoPromptEnv: this is a user-initiated clone and should be allowed
+            // to prompt for credentials via the credential manager, same as an interactive push.
+            return GitCli.ExecuteRemote(parentFolder, null, "clone", "--", url, folderName);
+        });
+    }
+
+    /// <summary>Whether the repository has any remote configured at all, not just a tracked upstream.</summary>
+    public static Task<bool> HasAnyRemoteAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return false;
+            return GitCli.Run(repoRoot, "remote").Trim().Length > 0;
+        });
+    }
+
+    /// <summary>
+    /// Whether HEAD points at a real commit. False right after `git init`, before the first
+    /// commit - there is nothing to push yet, and `gh repo create --push` fails with a cryptic
+    /// "no commits found" rather than explaining that.
+    /// </summary>
+    public static Task<bool> HasAnyCommitAsync(string repoRoot)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return false;
+            return GitCli.Execute(repoRoot, null, "rev-parse", "--verify", "-q", "HEAD").Ok;
+        });
+    }
+
+    /// <summary>
+    /// Creates a lightweight tag on the given commit. The name is free text - it can be Japanese,
+    /// unlike the GitHub-facing identifiers elsewhere in this class - so it is checked against
+    /// git's own ref-name rules (a blocklist) rather than an allowlist regex.
+    /// </summary>
+    public static Task<GitResult> CreateTagAsync(string repoRoot, string tagName, string commitHash)
+    {
+        return Task.Run(() =>
+        {
+            if (!Usable(repoRoot)) return GitResult.Failed("not a repository");
+            if (!IsValidTagName(tagName)) return GitResult.Failed("invalid tag name");
+            if (string.IsNullOrWhiteSpace(commitHash) || commitHash.StartsWith("-", StringComparison.Ordinal))
+                return GitResult.Failed("invalid commit");
+
+            return GitCli.Execute(repoRoot, null, "tag", "--", tagName, commitHash);
+        });
+    }
+
+    /// <summary>Mirrors git's check-ref-format rules for a single-component ref name.</summary>
+    private static bool IsValidTagName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 200) return false;
+        if (name.StartsWith("-", StringComparison.Ordinal)) return false;
+        if (name.StartsWith(".", StringComparison.Ordinal) || name.EndsWith(".", StringComparison.Ordinal)) return false;
+        if (name.EndsWith(".lock", StringComparison.OrdinalIgnoreCase)) return false;
+        if (name.Contains("..") || name.Contains("//") || name.Contains("@{") || name == "@") return false;
+
+        foreach (var c in name)
+        {
+            if (char.IsWhiteSpace(c) || char.IsControl(c)) return false;
+            if ("~^:?*[\\".IndexOf(c) >= 0) return false;
+        }
+        return true;
+    }
+
     /// <summary>Stages the given repository-relative paths. Untracked files included.</summary>
     public static Task<GitResult> StageAsync(string repoRoot, IReadOnlyList<string> paths)
         => RunOnPaths(repoRoot, paths, new[] { "add", "--" });
@@ -88,7 +205,7 @@ public static class GitWriteService
                 if (name.Length > 0) branches.Add(name);
             }
 
-            current = GitCli.Run(repoRoot, "rev-parse", "--abbrev-ref", "HEAD").Trim();
+            current = GitCli.Run(repoRoot, "branch", "--show-current").Trim();
             return (branches, current);
         });
     }
@@ -146,8 +263,8 @@ public static class GitWriteService
         {
             if (!Usable(repoRoot)) return BranchState.None;
 
-            var current = GitCli.Run(repoRoot, "rev-parse", "--abbrev-ref", "HEAD").Trim();
-            if (current.Length == 0 || current == "HEAD") return BranchState.None;
+            var current = GitCli.Run(repoRoot, "branch", "--show-current").Trim();
+            if (current.Length == 0) return BranchState.None;
 
             var upstream = GitCli.Execute(repoRoot, null,
                 "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}");

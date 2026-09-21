@@ -103,6 +103,7 @@ public sealed class CommitGraphView : Control
     private bool _showUncommitted;
     private int _selected = -1;
     private ScrollViewer? _scroller;
+    private readonly ContextMenu _rowContextMenu;
 
     /// <summary>Lane pitch in use, narrowed from <see cref="LaneWidth"/> when lanes are many.</summary>
     private double _laneWidth = LaneWidth;
@@ -140,6 +141,13 @@ public sealed class CommitGraphView : Control
 
         Focusable = true;
         ClipToBounds = true;
+
+        var createTag = new MenuItem { Header = Loc.Get("CreateTagAction", "Create Tag...") };
+        createTag.Click += (_, _) =>
+        {
+            if (SelectedCommit is { } commit) CreateTagRequested?.Invoke(this, commit);
+        };
+        _rowContextMenu = new ContextMenu { ItemsSource = new object[] { createTag } };
     }
 
     private static IBrush[] MakeBrushes()
@@ -163,6 +171,9 @@ public sealed class CommitGraphView : Control
 
     /// <summary>Raised when a row is double-clicked or Enter is pressed on it.</summary>
     public event EventHandler? RowActivated;
+
+    /// <summary>Raised when "Create Tag..." is picked from a commit row's right-click menu.</summary>
+    public event EventHandler<GitCommit>? CreateTagRequested;
 
     /// <summary>True when the selected row is the working tree rather than a commit.</summary>
     public bool IsUncommittedSelected => _showUncommitted && _selected == 0;
@@ -251,6 +262,11 @@ public sealed class CommitGraphView : Control
 
         int row = (int)(e.GetPosition(this).Y / RowHeight);
         if (row >= 0 && row < DisplayCount) Select(row, scrollIntoView: false);
+
+        // The context menu is only offered over a real commit - not blank space below the last
+        // row, and not the synthetic "Uncommitted Changes" row, which has nothing to tag.
+        if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
+            ContextMenu = SelectedCommit != null ? _rowContextMenu : null;
     }
 
     protected override void OnDoubleTapped(TappedEventArgs e)

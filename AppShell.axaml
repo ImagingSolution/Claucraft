@@ -152,6 +152,16 @@
                                Foreground="{DynamicResource SubtleText}" FontSize="11"
                                VerticalAlignment="Center" Cursor="Hand"
                                DoubleTapped="OnRepoNameDoubleTapped" />
+                    <!-- Shown only when the project folder is not a git repository yet - lets
+                         the user create or clone one right from the status bar. -->
+                    <Button x:Name="BtnRepoActions" IsVisible="False"
+                            Background="Transparent" BorderThickness="0"
+                            Padding="0" Cursor="Hand" VerticalAlignment="Center"
+                            ToolTip.Tip="Create or clone a repository"
+                            Click="OnRepoActions">
+                        <PathIcon Data="M7 10L12 15L17 10Z" Width="8" Height="8"
+                                  Foreground="{DynamicResource SubtleText}" />
+                    </Button>
                 </StackPanel>
                 <!-- Git branch icon + name -->
                 <StackPanel Orientation="Horizontal" Spacing="5">

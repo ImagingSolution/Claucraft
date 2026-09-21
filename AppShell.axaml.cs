@@ -2651,7 +2651,8 @@ internal partial class AppShell : UserControl, IDockOwner
         var panel = new Controls.CommitGraphPanel(
             repoRoot, repoLabel, _isDark,
             new Typeface(_settings.FontFamily + ", Consolas, Courier New"),
-            SendToActiveTerminal, ShowMessageDialog, ShowConfirmDialog);
+            SendToActiveTerminal, ShowMessageDialog, ShowConfirmDialog,
+            (title, watermark, initial) => ShowTextInputDialog(title, watermark, initial));
         panel.GitChanged += (_, _) => RefreshGitInfo();
 
         var titleText = new TextBlock
@@ -3924,6 +3925,98 @@ internal partial class AppShell : UserControl, IDockOwner
         e.Handled = true;
     }
 
+    /// <summary>Shown only while the project folder is not a git repository yet.</summary>
+    private void OnRepoActions(object? sender, RoutedEventArgs e)
+    {
+        var flyout = new MenuFlyout { Placement = PlacementMode.Bottom };
+
+        var create = new MenuItem { Header = Loc.Get("CreateRepositoryMenuItem", "Create Repository...") };
+        create.Click += (_, _) => OnCreateRepository();
+        flyout.Items.Add(create);
+
+        var clone = new MenuItem { Header = Loc.Get("CloneRepositoryMenuItem", "Clone Repository...") };
+        clone.Click += (_, _) => OnCloneRepository();
+        flyout.Items.Add(clone);
+
+        flyout.ShowAt(BtnRepoActions);
+    }
+
+    /// <summary>Turns the current project folder into a new git repository.</summary>
+    private async void OnCreateRepository()
+    {
+        if (string.IsNullOrEmpty(_projectFolder) || !Directory.Exists(_projectFolder)) return;
+
+        var folderName = System.IO.Path.GetFileName(_projectFolder.TrimEnd(System.IO.Path.DirectorySeparatorChar));
+        var repoName = await ShowTextInputDialog(Loc.Get("GitInitConfirmTitle", "Create Repository"),
+            Loc.Get("GitInitNameWatermark", "Repository name"), folderName, Loc.Get("Create", "Create"));
+        if (string.IsNullOrWhiteSpace(repoName)) return;
+        repoName = repoName.Trim();
+
+        var result = await GitWriteService.InitAsync(_projectFolder, repoName);
+        if (!result.Ok)
+        {
+            ShowMessageDialog(Loc.Get("GitInitFailedTitle", "Could Not Create Repository"), result.Message);
+            return;
+        }
+
+        RefreshGitInfo();
+        if (_activeSidePanel != SidebarPanel.SourceControl) ToggleSidePanel(SidebarPanel.SourceControl);
+    }
+
+    /// <summary>Clones a remote repository into a brand-new sibling folder and switches to it.</summary>
+    private async void OnCloneRepository()
+    {
+        var url = await ShowTextInputDialog(Loc.Get("CloneRepoTitle", "Clone Repository"),
+            Loc.Get("CloneRepoUrlWatermark", "Repository URL"), "", Loc.Get("Next", "Next"));
+        if (string.IsNullOrWhiteSpace(url)) return;
+        url = url.Trim();
+
+        var folders = await HostWindow.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = Loc.Get("CloneRepoParentFolderTitle", "Select Destination Folder"),
+            AllowMultiple = false
+        });
+        if (folders.Count == 0) return;
+        var parentFolder = folders[0].Path.LocalPath;
+
+        var name = await ShowTextInputDialog(Loc.Get("CloneRepoFolderNameTitle", "Folder Name"),
+            Loc.Get("CloneRepoFolderNameWatermark", "New folder name"), SuggestRepoFolderName(url),
+            Loc.Get("Clone", "Clone"));
+        if (string.IsNullOrWhiteSpace(name)) return;
+        name = name.Trim();
+
+        var target = System.IO.Path.Combine(parentFolder, name);
+        if (Directory.Exists(target))
+        {
+            ShowMessageDialog(Loc.Get("CloneRepoFailedTitle", "Could Not Clone"),
+                Loc.Get("CloneRepoFolderExists", "That folder already exists."));
+            return;
+        }
+
+        BtnRepoActions.IsEnabled = false;
+        var result = await GitWriteService.CloneAsync(parentFolder, url, name);
+        BtnRepoActions.IsEnabled = true;
+
+        if (!result.Ok)
+        {
+            ShowMessageDialog(Loc.Get("CloneRepoFailedTitle", "Could Not Clone"), result.Message);
+            return;
+        }
+
+        SetProjectFolder(target);
+        LoadRecentProjectFolders();
+        if (_activeSidePanel != SidebarPanel.SourceControl) ToggleSidePanel(SidebarPanel.SourceControl);
+    }
+
+    /// <summary>Guesses a folder name from a clone URL, e.g. ".../owner/repo.git" -> "repo".</summary>
+    private static string SuggestRepoFolderName(string url)
+    {
+        var trimmed = url.TrimEnd('/');
+        if (trimmed.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) trimmed = trimmed[..^4];
+        var idx = trimmed.LastIndexOfAny(new[] { '/', ':' });
+        return idx >= 0 && idx < trimmed.Length - 1 ? trimmed[(idx + 1)..] : "repo";
+    }
+
     /// <summary>
     /// Builds the source-control panel and hands it to the host in the sidebar. Called once at
     /// startup and again whenever the theme or the language changes, since the panel resolves
@@ -4014,7 +4107,12 @@ internal partial class AppShell : UserControl, IDockOwner
         _gitRepoUrl = null;
 
         if (string.IsNullOrEmpty(_projectFolder) || !Directory.Exists(_projectFolder))
+        {
+            BtnRepoActions.IsVisible = false;
             return;
+        }
+
+        BtnRepoActions.IsVisible = GitCli.FindRepoRoot(_projectFolder) is null;
 
         try
         {
@@ -4049,9 +4147,24 @@ internal partial class AppShell : UserControl, IDockOwner
                 }
                 StatusRepoName.Text = repoName;
             }
+            else if (!BtnRepoActions.IsVisible)
+            {
+                // A repository with no remote yet (e.g. right after "Create Repository...") -
+                // fall back to the name typed in that dialog if it differs from the folder
+                // name (saved to local git config), otherwise the folder name itself.
+                var configuredName = GitCli.Run(_projectFolder, "config", "--local", "--get",
+                    GitWriteService.RepoNameConfigKey).Trim();
+                StatusRepoName.Text = !string.IsNullOrEmpty(configuredName)
+                    ? configuredName
+                    : System.IO.Path.GetFileName(_projectFolder.TrimEnd(System.IO.Path.DirectorySeparatorChar));
+            }
 
             // Get current branch name
-            var branch = GitCli.Run(_projectFolder, "rev-parse", "--abbrev-ref", "HEAD").Trim();
+            // "branch --show-current", not "rev-parse --abbrev-ref HEAD": the latter prints the
+            // literal string "HEAD" (and exits non-zero) for a brand-new repository with no
+            // commit yet, which showed up in the status bar as the branch name "HEAD" instead
+            // of "main" right after "Create Repository...".
+            var branch = GitCli.Run(_projectFolder, "branch", "--show-current").Trim();
 
             if (!string.IsNullOrEmpty(branch))
             {

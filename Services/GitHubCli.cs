@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace Claucraft.Services;
@@ -28,6 +29,10 @@ public sealed record PullRequestInfo(
 public static class GitHubCli
 {
     private const int TimeoutMs = 45_000;
+
+    /// <summary>The allowance for a repo-create-and-push, which reaches the network like a push does.</summary>
+    private const int NetworkTimeoutMs = 180_000;
+
     private const int ListLimit = 30;
 
     /// <summary>
@@ -140,6 +145,78 @@ public static class GitHubCli
     {
         return Task.Run(() => ProcessRunner.Run("gh", repoRoot, null, TimeoutMs, null,
             "pr", "review", number.ToString(), "--approve"));
+    }
+
+    /// <summary>
+    /// The accounts a new repo could be created under: the signed-in user first, then every
+    /// organization they belong to. Either gh call failing just shrinks the list - never throws.
+    /// </summary>
+    public static Task<List<string>> GetOwnersAsync()
+    {
+        return Task.Run(() =>
+        {
+            var owners = new List<string>();
+
+            var user = ProcessRunner.Run("gh", Environment.CurrentDirectory, null, TimeoutMs, null,
+                "api", "user", "--jq", ".login");
+            var login = user.StdOut.Trim();
+            if (user.Ok && login.Length > 0) owners.Add(login);
+
+            var orgs = ProcessRunner.Run("gh", Environment.CurrentDirectory, null, TimeoutMs, null,
+                "api", "user/orgs", "--jq", ".[].login");
+            if (orgs.Ok)
+            {
+                foreach (var line in orgs.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var name = line.Trim();
+                    if (name.Length > 0) owners.Add(name);
+                }
+            }
+
+            return owners;
+        });
+    }
+
+    /// <summary>
+    /// Creates a repository on GitHub from the current local one, wires it up as `origin`, and
+    /// pushes the current branch - all in one gh invocation, so a failure cannot leave the
+    /// remote half-configured.
+    /// </summary>
+    public static Task<GitResult> CreateAndPushAsync(
+        string repoRoot, string? owner, string name, string? description, bool isPrivate)
+    {
+        return Task.Run(() =>
+        {
+            if (string.IsNullOrWhiteSpace(name)) return GitResult.Failed("no name");
+            // GitHub repo names are letters, digits, '.', '-', '_' only; this also blocks a
+            // leading '-' from being parsed as a gh option instead of the repo name.
+            if (!Regex.IsMatch(name, "^[A-Za-z0-9._-]{1,100}$"))
+                return GitResult.Failed("invalid repository name");
+
+            // "owner/name" is gh's own syntax for creating under an org instead of the
+            // signed-in account - there is no separate --org flag. Owner comes from a
+            // gh-populated dropdown, not free typing, but it's still validated: GitHub logins
+            // are alnum/hyphen only.
+            var target = name;
+            if (!string.IsNullOrWhiteSpace(owner))
+            {
+                if (!Regex.IsMatch(owner, "^[A-Za-z0-9-]{1,100}$"))
+                    return GitResult.Failed("invalid owner");
+                target = owner + "/" + name;
+            }
+
+            var args = new List<string>
+            {
+                "repo", "create", target, isPrivate ? "--private" : "--public",
+                "--source=.", "--remote=origin", "--push",
+            };
+            // "=" form, not a separate argv element: keeps a description that happens to
+            // start with '-' from ever being re-parsed as another flag.
+            if (!string.IsNullOrWhiteSpace(description))
+                args.Add("--description=" + description);
+
+            return ProcessRunner.Run("gh", repoRoot, null, NetworkTimeoutMs, null, args.ToArray());
+        });
     }
 
     /// <summary>The branch a new pull request should merge into, as GitHub has it configured.</summary>
