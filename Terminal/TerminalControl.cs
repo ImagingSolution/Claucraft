@@ -4999,7 +4999,7 @@ public class TerminalControl : Control, IDisposable
         e.Handled = true;
     }
 
-    private static string BuildDroppedText(IDataTransfer data)
+    private string BuildDroppedText(IDataTransfer data)
     {
         var paths = new List<string>();
 
@@ -5034,11 +5034,15 @@ public class TerminalControl : Control, IDisposable
             if (sb.Length > 0)
                 sb.Append(' ');
 
-            // Quote paths containing spaces
-            if (path.Contains(' '))
-                sb.Append('"').Append(path).Append('"');
+            // "@" matches the CLI's own file-reference syntax, and the path is
+            // made relative to the working directory the same way the @
+            // completion popup names its matches.
+            var relative = RelativeToWorkingDirectory(path);
+            sb.Append('@');
+            if (relative.Contains(' '))
+                sb.Append('"').Append(relative).Append('"');
             else
-                sb.Append(path);
+                sb.Append(relative);
         }
         return sb.ToString();
     }
