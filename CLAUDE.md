@@ -18,6 +18,31 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 No test framework is configured. Verify changes by building successfully (`dotnet build`).
 
+## Release Process
+
+Whenever a GitHub Release is made (tag `vX.Y.Z`), it MUST carry the published
+single-file `Claucraft.exe` as an asset — the in-app updater (`UpdateService`)
+reads `/releases/latest` and only recognizes a release as installable if it
+finds that exact asset. A tag with no asset silently breaks update checks for
+everyone, since GitHub always serves the newest release as "latest" regardless
+of assets.
+
+Steps, every time:
+
+```bash
+git commit ...                      # build.number bumps on the next build
+dotnet publish -c Release -r win-x64 --self-contained true \
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+    -p:DebugType=none -o ./publish-single     # (or run publish.bat)
+git add build.number && git commit -m "..."   # commit the bumped counter
+git push
+gh release create vX.Y.Z ./publish-single/Claucraft.exe --title vX.Y.Z --notes "..."
+```
+
+The version in the tag must match the `FileVersion` baked into
+`publish-single/Claucraft.exe` by that publish (check with
+`(Get-Item .\publish-single\Claucraft.exe).VersionInfo.FileVersion`).
+
 ## Architecture
 
 Windows MDI terminal app for Claude Code, built with .NET 8.0 / Avalonia 11.3.12. All UI runs on a single STA thread.
