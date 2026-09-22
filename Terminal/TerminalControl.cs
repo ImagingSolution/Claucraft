@@ -4830,22 +4830,30 @@ public class TerminalControl : Control, IDisposable
     /// </summary>
     private static Color ClampFgForLightBg(Color c)
     {
-        double lum = RelativeLuminance(c);
-        if (lum > LightFgMaxLuminance)
-        {
-            // Luminance runs roughly as the 2.4th power of the channel values, so one
-            // factor lands on the target instead of iterating towards it.
-            double f = Math.Pow(LightFgMaxLuminance / lum, 1.0 / 2.4);
-            c = Color.FromRgb(
-                (byte)Math.Round(c.R * f),
-                (byte)Math.Round(c.G * f),
-                (byte)Math.Round(c.B * f));
-        }
+        c = ClampLuminance(c);
 
         var (h, s, l) = RgbToHsl(c);
         if (s <= 0) return c; // grey/white/black: nothing to boost
         s = Math.Min(1.0, s * LightFgSaturationBoost);
-        return HslToRgb(h, s, l);
+        c = HslToRgb(h, s, l);
+
+        // The boost can raise a channel-weighted luminance back above the target even
+        // though HSL lightness stayed fixed - green's 0.7152 weight dominates, so a
+        // saturation gain that grows the green channel outweighs shrinking red/blue.
+        return ClampLuminance(c);
+    }
+
+    private static Color ClampLuminance(Color c)
+    {
+        double lum = RelativeLuminance(c);
+        if (lum <= LightFgMaxLuminance) return c;
+        // Luminance runs roughly as the 2.4th power of the channel values, so one
+        // factor lands on the target instead of iterating towards it.
+        double f = Math.Pow(LightFgMaxLuminance / lum, 1.0 / 2.4);
+        return Color.FromRgb(
+            (byte)Math.Round(c.R * f),
+            (byte)Math.Round(c.G * f),
+            (byte)Math.Round(c.B * f));
     }
 
     /// <summary>WCAG relative luminance, 0 for black through 1 for white.</summary>

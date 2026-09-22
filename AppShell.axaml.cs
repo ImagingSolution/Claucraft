@@ -318,6 +318,15 @@ internal partial class AppShell : UserControl, IDockOwner
         public DateTime? LastTurnEndUtc { get; set; }
 
         /// <summary>
+        /// UTC time this window last actually raised the "answer ready" toast. Distinct from
+        /// <see cref="LastTurnEndUtc"/>, which is stamped on every working -&gt; idle edge even
+        /// when <see cref="NotifyTurnEnd"/> stays quiet (flicker turn, window in front, etc.) -
+        /// using that one for the exit-path dedup window would suppress the process-exit toast
+        /// for a completion nothing ever actually notified about.
+        /// </summary>
+        public DateTime? LastToastUtc { get; set; }
+
+        /// <summary>
         /// Claucraft's own jobs for this window that have not come back yet, by name. The CLI
         /// can hand the prompt back while the app is still finishing what the turn started -
         /// snapshotting the tree for a checkpoint, say - and a window that calls itself done
@@ -4874,6 +4883,7 @@ internal partial class AppShell : UserControl, IDockOwner
             NotifyKind.TaskComplete,
             Loc.Get("AnswerReady"),
             string.Format(Loc.Get("AnswerReadyFmt"), name));
+        entry.LastToastUtc = DateTime.UtcNow;
     }
 
     /// <summary>
@@ -8450,8 +8460,8 @@ internal partial class AppShell : UserControl, IDockOwner
             // A one-shot run's process can exit right on the heels of NotifyTurnEnd's own
             // toast for the same answer - without this, that is two notifications for one
             // completion.
-            if (entry.LastTurnEndUtc is DateTime lastTurnEnd
-                && DateTime.UtcNow - lastTurnEnd < ExitNotifyDedupWindow)
+            if (entry.LastToastUtc is DateTime lastToast
+                && DateTime.UtcNow - lastToast < ExitNotifyDedupWindow)
                 return;
 
             // Flash the taskbar and raise a toast when the window is not focused
