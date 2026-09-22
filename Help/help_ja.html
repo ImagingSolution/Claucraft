@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claucraft ヘルプ</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --sidebar-bg: #f5f5f7;
+    --text: #1d1d1f;
+    --subtle: #6e6e73;
+    --border: #d8d8dc;
+    --accent: #007aff;
+    --accent-bg: #eaf2ff;
+    --code-bg: #f0f0f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e1e;
+      --sidebar-bg: #252526;
+      --text: #e6e6e6;
+      --subtle: #9a9a9d;
+      --border: #3a3a3c;
+      --accent: #4da3ff;
+      --accent-bg: #123152;
+      --code-bg: #2a2a2c;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+  }
+  .sidebar {
+    flex: 0 0 260px;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    padding: 20px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .sidebar h1 {
+    font-size: 16px;
+    margin: 0 20px 16px;
+  }
+  .sidebar .group-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--subtle);
+    margin: 18px 20px 6px;
+  }
+  .sidebar a {
+    display: block;
+    padding: 6px 20px;
+    font-size: 13px;
+    color: var(--text);
+    text-decoration: none;
+    border-left: 3px solid transparent;
+  }
+  .sidebar a:hover {
+    background: var(--accent-bg);
+  }
+  .sidebar a.active {
+    border-left-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-bg);
+    font-weight: 600;
+  }
+  .content {
+    flex: 1;
+    padding: 32px 48px 80px;
+    max-width: 760px;
+  }
+  .content h2 {
+    font-size: 22px;
+    margin: 0 0 6px;
+    padding-top: 12px;
+    scroll-margin-top: 20px;
+  }
+  .content section {
+    margin-bottom: 40px;
+  }
+  .content section:first-of-type h2 {
+    padding-top: 0;
+  }
+  .subtitle {
+    color: var(--subtle);
+    font-size: 13px;
+    margin: 0 0 18px;
+  }
+  .content h3 {
+    font-size: 15px;
+    margin: 22px 0 6px;
+  }
+  .content p {
+    line-height: 1.8;
+    font-size: 14px;
+  }
+  .content ul {
+    line-height: 1.9;
+    font-size: 14px;
+    padding-left: 20px;
+  }
+  kbd {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+  }
+  code {
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: Consolas, monospace;
+    font-size: 13px;
+  }
+  .content img {
+    max-width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 10px 0 4px;
+    display: block;
+  }
+  .content table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+    margin: 12px 0 20px;
+  }
+  .content th, .content td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .content th {
+    background: var(--sidebar-bg);
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<nav class="sidebar" id="nav">
+  <h1>Claucraft ヘルプ</h1>
+
+  <div class="group-title">はじめに</div>
+  <a href="#about">Claucraft とは？</a>
+  <a href="#toolbar">ツールバー：プロジェクト・セッション</a>
+  <a href="#activity-bar">アクティビティバー</a>
+
+  <div class="group-title">サイドパネル</div>
+  <a href="#explorer">エクスプローラー</a>
+  <a href="#snippets">スニペット</a>
+  <a href="#windows-panel">ウィンドウ一覧パネル</a>
+  <a href="#settings">設定</a>
+
+  <div class="group-title">ターミナル・エディタ領域</div>
+  <a href="#mdi">MDI ターミナル・エディタウィンドウ</a>
+  <a href="#window-strip">ウィンドウストリップ（レイアウトツールバー）</a>
+  <a href="#workspaces">保存済みワークスペース</a>
+
+  <div class="group-title">ソース管理</div>
+  <a href="#source-control">ソース管理パネル</a>
+
+  <div class="group-title">ステータス・生産性</div>
+  <a href="#status-bar">ステータスバー・ライブステータス</a>
+  <a href="#slash-commands">スラッシュコマンド・コマンドパレット</a>
+  <a href="#shortcuts">ショートカット・セットアップ診断</a>
+  <a href="#notifications">通知・アップデート</a>
+  <a href="#extensions">拡張機能</a>
+  <a href="#launch-profiles">起動プロファイル・Worktree</a>
+</nav>
+
+<main class="content">
+
+<section id="about">
+  <h2>Claucraft とは？</h2>
+  <p class="subtitle">複数の Claude Code セッションを同時に実行・管理するための Windows デスクトップシェルです。</p>
+  <p>Claucraft は MDI（マルチドキュメントインターフェース）型のターミナルアプリケーションです。各 Claude Code
+  セッションは独立したフローティングターミナルウィンドウとして動作し、ファイルエディタ・ダイアグラムビューア・
+  メモリパネルと共にタイル表示やカスケード表示で並べられ、すべてがプロジェクト単位で管理される一つのシェルの中に
+  収まります。内部で使っているのは普段お使いの <code>claude</code> CLI そのものであり、Claucraft はこれを
+  置き換えるものではなく、複数セッションを並行して扱うためのプロジェクト管理・セッション履歴・git 操作・
+  ウィンドウレイアウト機能で包むものです。</p>
+  <table>
+    <tr><th></th><th>Claude デスクトップアプリ</th><th>Claude Code CLI</th><th>VS Code 拡張機能</th><th>Claucraft</th></tr>
+    <tr>
+      <td><strong>何であるか</strong></td>
+      <td>ターミナルやファイルシステムにアクセスしない、Claude とのチャットクライアント</td>
+      <td>一つのシェルウィンドウに紐づく単一のターミナルセッション</td>
+      <td>一つのエディタウィンドウに組み込まれ、ウィンドウごとに1セッション</td>
+      <td>複数の Claude Code セッションを並行してホストする独立の MDI シェル</td>
+    </tr>
+    <tr>
+      <td><strong>複数セッション</strong></td>
+      <td>個別のチャットのみ。プロジェクトやファイルの文脈はなし</td>
+      <td>自分で開いたターミナルタブ・ウィンドウの数だけ</td>
+      <td>VS Code のウィンドウごとに1つ</td>
+      <td>多数のセッションを自動でタイル・カスケード配置し、レイアウトを名前を付けて保存可能</td>
+    </tr>
+    <tr>
+      <td><strong>プロジェクトの切替</strong></td>
+      <td>該当なし</td>
+      <td>手動で <code>cd</code> して再起動</td>
+      <td>VS Code のウィンドウ・フォルダごと切替が必要</td>
+      <td>プロジェクトのコンボボックス一つで、エクスプローラー・git・セッション一覧を含むシェル全体の文脈が切り替わる</td>
+    </tr>
+    <tr>
+      <td><strong>セッション履歴</strong></td>
+      <td>アプリ内のチャット履歴</td>
+      <td>コマンドラインからセッション ID を指定して再開</td>
+      <td>VS Code 自身のセッション一覧</td>
+      <td>プロジェクトごとの検索可能なセッション一覧から、ワンクリックで再開</td>
+    </tr>
+    <tr>
+      <td><strong>Git 連携</strong></td>
+      <td>なし</td>
+      <td>使用しているシェル次第</td>
+      <td>VS Code 標準のソース管理ビュー</td>
+      <td>fetch/pull/push/merge・リスクファイルチェック・AI によるコミットメッセージ生成・コミットグラフを内蔵</td>
+    </tr>
+    <tr>
+      <td><strong>向いている場面</strong></td>
+      <td>コードを伴わない、手軽なチャット</td>
+      <td>エディタに依存しないスクリプト・自動化、単一タスクへの集中</td>
+      <td>コード編集と Claude Code の実行を同じウィンドウで行いたいとき</td>
+      <td>複数のプロジェクト・複数のセッションを同時に走らせ、見比べながら進めたいとき</td>
+    </tr>
+  </table>
+  <p>Claucraft が対象とするのは、他のどれもうまくカバーできない領域です。複数の Claude Code セッション
+  （異なるプロジェクト・異なる worktree・異なるタスク）を同時に走らせながら、どのターミナルが何をしているかを
+  見失わないようにする——それを自前の tmux やウィンドウマネージャの設定なしで実現します。</p>
+</section>
+
+<section id="toolbar">
+  <h2>ツールバー：プロジェクト・セッション</h2>
+  <p class="subtitle">ウィンドウ最上部、他のすべてのUIより上に表示される領域です。</p>
+  <img src="images/toolbar.png" alt="プロジェクト・セッションツールバー">
+  <p><strong>プロジェクト</strong>の行では、作業対象のフォルダをコンボボックスで選択します。パスを直接入力・貼り付けするか、
+  隣のフォルダアイコン（<strong>新規プロジェクト</strong>）をクリックしてフォルダ選択ダイアログを開きます。これはウェルカム画面の
+  同名の操作と同じです。</p>
+  <p><strong>セッション</strong>の行には、選択中のプロジェクトで過去に記録された Claude Code セッションが、新しい順に日時と
+  短いタイトル付きで一覧表示されます。一つを選択すると<strong>Resume</strong>ボタンが有効になり、そのセッションの会話を新しい
+  ターミナルウィンドウで再開できます。コンボの隣の検索アイコンからは<strong>セッション管理</strong>を開けます。保存済みセッション
+  が多いプロジェクトで、目的のセッションを絞り込むのに使います。</p>
+  <p><strong>New Session</strong>は新しい Claude Code の会話を開始します。右クリック（またはコンテキストメニュー）から
+  <strong>New Session (Worktree)</strong>を切り替えられます。有効にすると、新規セッションは専用の git worktree 内で開始され、
+  複数のウィンドウが同じファイルを同時に編集することがなくなります。Resume は常に、セッション履歴が置かれている元のプロジェクト
+  フォルダで開きます。</p>
+</section>
+
+<section id="activity-bar">
+  <h2>アクティビティバー</h2>
+  <p class="subtitle">ウィンドウ左端に並ぶ、細いアイコンの列です。</p>
+  <img src="images/activity-bar.png" alt="アクティビティバーのアイコン">
+  <p>各アイコンは、隣に表示するサイドパネルを切り替えます。</p>
+  <ul>
+    <li><strong>エクスプローラー</strong>（<kbd>Ctrl+Shift+E</kbd>）— 現在のプロジェクトのファイルツリー。</li>
+    <li><strong>スニペット</strong> — セッションに挿入できる再利用可能なテキスト片。</li>
+    <li><strong>ウィンドウ</strong> — 開いているすべてのターミナル・エディタ・ダイアグラム・メモリウィンドウの一覧。</li>
+    <li><strong>ダイアグラムビューア</strong> — セッション内の Mermaid 等のグラフ出力をその場で描画します。</li>
+    <li><strong>チャットビュー</strong> — 現在の会話を、ターミナル形式ではなく読みやすい形式で表示します。</li>
+    <li><strong>コンパクト</strong> — アクティブなセッションに対して <code>/compact</code> を実行します。</li>
+    <li><strong>スラッシュコマンド</strong>（<kbd>Ctrl+/</kbd>）— 利用可能なスラッシュコマンドを閲覧・挿入します。</li>
+    <li><strong>拡張機能</strong> — インストール済みの MCP サーバー・スキル・プラグイン。</li>
+    <li><strong>ソース管理</strong>（<kbd>Ctrl+Shift+G</kbd>）— プロジェクトの git ステータスと操作。</li>
+    <li><strong>コスト</strong> — 現在のセッションとプランのトークン使用量・費用。</li>
+    <li><strong>メモリ</strong> — Claude がこのプロジェクトについて、セッションをまたいで覚えている内容。</li>
+    <li><strong>設定</strong> — トピック別に整理されたアプリの各種設定。</li>
+  </ul>
+</section>
+
+<section id="explorer">
+  <h2>エクスプローラー</h2>
+  <img src="images/explorer.png" alt="エクスプローラーサイドパネル">
+  <p>選択中のプロジェクトのフォルダツリーを表示します。ファイルやフォルダを右クリックすると、開く・エクスプローラーで表示・
+  名前変更・削除などの操作が行えます。ファイルをダブルクリックすると、MDI 領域内のフローティングエディタウィンドウで開きます
+  （<a href="#mdi">MDI ターミナル・エディタウィンドウ</a>を参照）。エディタウィンドウ自身のタイトルバーには
+  <strong>保存</strong>（<kbd>Ctrl+S</kbd>）と<strong>閉じる</strong>のボタンがあります。</p>
+</section>
+
+<section id="snippets">
+  <h2>スニペット</h2>
+  <img src="images/snippets.png" alt="スニペットサイドパネル">
+  <p>プロンプト・コマンド・定型文など、セッションをまたいで再利用する短いテキストを保存しておく機能です。スニペットは
+  プロジェクト単位ではなくユーザー単位で保存されるため、プロジェクトを切り替えても同じ一覧が使えます。パネル上部の検索欄で
+  名前や内容から絞り込み、選んだものをアクティブなターミナルへ挿入します。</p>
+</section>
+
+<section id="windows-panel">
+  <h2>ウィンドウ一覧パネル</h2>
+  <img src="images/windows-panel.png" alt="ウィンドウ一覧パネル">
+  <p>MDI 領域で現在開いているすべてのウィンドウ（ターミナルセッション・エディタタブ・ダイアグラムビューア・メモリパネル）を、
+  画面上に表示されているかどうかにかかわらず一覧表示します。項目を選択するとそのウィンドウが最前面に来るため、タイル表示や
+  カスケード表示で他のウィンドウの下に隠れたセッションを探すときに最も速い方法です。</p>
+  <p>このパネルには<strong>Agent View</strong>の機能も含まれています。<code>claude agents</code> で起動した
+  バックグラウンドセッションを、起動元のウィンドウの下に、状態・現在の待機理由・プロセスがまだ生きているかどうかと
+  ともに表示します。CLI を実行するのではなく <code>~/.claude/jobs</code> から直接読み取るため、700ms ごとの
+  パネル更新でも余分なコストがかかりません。同じパネルには、実行中のサブエージェント（ラベル・種類・モデル・深さ）も
+  表示されます。</p>
+</section>
+
+<section id="settings">
+  <h2>設定</h2>
+  <img src="images/settings.png" alt="設定パネル">
+  <p>トピックごとにグループ化されています：一般設定、テーマ、AI プロバイダと CLI の構成、ソース管理の挙動（コミット
+  メッセージの言語、プッシュ前のリスクファイルチェック）、ライブステータス表示、プランの階層とコストダッシュボード、
+  起動プロファイル、キーボードショートカットなど。ほとんどの設定は即座に反映されますが、AI プロバイダなど一部の設定は
+  次に開始するセッションから反映されます。</p>
+</section>
+
+<section id="mdi">
+  <h2>MDI ターミナル・エディタウィンドウ</h2>
+  <p class="subtitle">ウィンドウの残り全体を占める、メインの作業領域です。</p>
+  <img src="images/mdi.png" alt="MDI ターミナル領域">
+  <p>各 Claude Code セッションは、この領域内の独立したフローティングターミナルウィンドウとして動作し、開いているファイル
+  エディタ・ダイアグラム・メモリウィンドウと共存します。ウィンドウのタイトルバーをドラッグすると移動でき、
+  <a href="#window-strip">ウィンドウストリップ</a>上のタブをドラッグすると並び替えたり、独立したトップレベルウィンドウへ
+  切り離したりできます。ウィンドウは自動レイアウト（後述）で並べることも、自由に配置することもできます。</p>
+  <p>ターミナルウィンドウを閉じると、その Claude Code プロセスは終了しますが、セッション自体は保持され、後から
+  <strong>セッション</strong>欄の<strong>Resume</strong>で再開できます。</p>
+</section>
+
+<section id="window-strip">
+  <h2>ウィンドウストリップ（レイアウトツールバー）</h2>
+  <img src="images/window-strip.png" alt="ウィンドウストリップ">
+  <p>MDI 領域のすぐ上にある横並びの帯には、このシェルで開いているすべてのウィンドウのタブが表示され、クリックで切り替え
+  られます。右端のアイコンボタンはレイアウトを制御します。</p>
+  <ul>
+    <li><strong>タイル配置</strong> — すべてのウィンドウを均等なグリッドに並べます。</li>
+    <li><strong>横に並べる</strong> / <strong>縦に並べる</strong> — ウィンドウを行または列に積み並べます。</li>
+    <li><strong>最大表示</strong> — アクティブなウィンドウを最大化し、他を隠します。</li>
+    <li><strong>ワークスペース</strong> — 名前付きのウィンドウ配置を保存・復元します。
+    <a href="#workspaces">保存済みワークスペース</a>を参照してください。</li>
+    <li><strong>ヘルプ</strong> — このページを開いたボタンです。</li>
+  </ul>
+  <p>ウィンドウを手動でリサイズ・移動すると、シェルは現在の自動レイアウトモードから抜けてカスタムレイアウトになります。
+  この状態は、いずれかのレイアウトボタンを再度選ぶまで保持されます。</p>
+</section>
+
+<section id="workspaces">
+  <h2>保存済みワークスペース</h2>
+  <img src="images/workspaces.png" alt="ワークスペースダイアログ">
+  <p>ワークスペースとは、どのウィンドウが開いていて、どう配置されているかを名前を付けて記録したスナップショットです。
+  ワークスペースダイアログの<strong>ワークスペースを名前を付けて保存...</strong>で現在のレイアウトを保存し、保存済みの
+  項目を選ぶと後から復元できます。同じプロジェクト内で異なる作業コンテキストを、レイアウトを組み直すことなく行き来する
+  のに便利です。</p>
+</section>
+
+<section id="source-control">
+  <h2>ソース管理パネル</h2>
+  <img src="images/source-control.png" alt="ソース管理パネル">
+  <p>アクティビティバー（<kbd>Ctrl+Shift+G</kbd>）から開く、現在のプロジェクトに特化した git クライアントです。</p>
+  <ul>
+    <li><strong>Fetch</strong> — 手元のファイルを変更せず、リモートの最新状況を確認します。</li>
+    <li><strong>Pull</strong> — リモートのコミットを取り込み、自分のコミットをその上に積み直します。</li>
+    <li><strong>Push</strong> — ローカルのコミットをリモートへ送信します。</li>
+    <li><strong>Merge</strong> — 他のブランチの作業を、いま作業中のブランチに取り込みます。</li>
+    <li><strong>ブランチメニュー</strong> — ブランチの切替・作成・削除。</li>
+  </ul>
+  <p>Push 前には任意で<strong>リスクファイルチェック</strong>を実行でき、変更ファイルに鍵・PC 固有の設定・ビルド生成物・
+  巨大ファイルが含まれていないか確認します。コミットメッセージは AI に英語または日本語で生成させることができ、これは
+  アプリの表示言語とは独立して設定できます。パネルにはブランチ・マージ履歴を可視化するコミットグラフも含まれます。</p>
+</section>
+
+<section id="status-bar">
+  <h2>ステータスバー・ライブステータス</h2>
+  <p class="subtitle">ウィンドウ最下部の帯です。</p>
+  <img src="images/status-bar.png" alt="ステータスバー">
+  <p>アクティブなセッションのライブ情報を表示します。</p>
+  <ul>
+    <li><strong>モードバッジ</strong> — アシスタントの現在のモード。クリックするか<kbd>Shift+Tab</kbd>でモードを
+    切り替えます。</li>
+    <li><strong>コンテキストメーター</strong> — 自動コンパクトが実行されるまでのコンテキストウィンドウ使用量。
+    クリックすると <code>/compact</code> を実行します。</li>
+    <li><strong>モデル</strong> / <strong>Effort</strong> — このセッションで応答しているモデルと推論 effort。
+    切り替えるとターミナルへ対応するコマンドが送信され、新規セッションの既定値も更新されます。</li>
+    <li><strong>レートリミット</strong> — プランの5時間枠・7日枠に対する使用状況と、各リセットまでの残り時間。</li>
+  </ul>
+</section>
+
+<section id="slash-commands">
+  <h2>スラッシュコマンド・コマンドパレット</h2>
+  <img src="images/slash-commands.png" alt="スラッシュコマンドパネル">
+  <p>スラッシュコマンドパネル（<kbd>Ctrl+/</kbd>）は、アクティブなセッションで利用できるすべてのコマンド
+  （組み込み・プロジェクト定義・ユーザー定義）を一覧表示し、選択したものをターミナルへ挿入します。コマンドパレットは、
+  UI 上の場所を覚えていなくても、レイアウト操作やパネル・ダイアログの表示といったアプリ全体の操作に、検索しながら
+  素早くアクセスする手段です。</p>
+</section>
+
+<section id="shortcuts">
+  <h2>ショートカット・セットアップ診断</h2>
+  <img src="images/shortcuts.png" alt="キーボードショートカットダイアログ">
+  <p><kbd>F1</kbd>キー、または設定内の<strong>キーボードショートカット</strong>ボタンから、アプリ内のすべての
+  ショートカット一覧を開けます。同じく設定内の<strong>セットアップ診断</strong>は、AI CLI・git・その他必要な
+  ツールがインストールおよびサインイン済みかを確認し、対応が必要な項目があれば報告します。</p>
+</section>
+
+<section id="notifications">
+  <h2>通知・アップデート</h2>
+  <img src="images/notifications.png" alt="チェックポイントダイアログ">
+  <p>トースト通知は、バックグラウンドのウィンドウで長時間実行中のターンが完了した場合などのイベントを知らせます。
+  新しいリリースが利用可能なときは、ウィンドウ左下にアップデートバナーが表示され、リリースノートの閲覧やその場での
+  アップデート適用を選べます。設定から開ける<strong>チェックポイント</strong>には、セッション内で後から戻れる
+  保存済みの状態が一覧表示されます。</p>
+</section>
+
+<section id="extensions">
+  <h2>拡張機能</h2>
+  <img src="images/extensions.png" alt="拡張機能パネル">
+  <p>現在の AI プロバイダ向けにインストールされている MCP サーバー・スキル・プラグインと、それぞれがセッションで
+  利用可能かどうかを一覧表示します。アプリの外でインストールや更新を行った後は、更新ボタンで一覧を再読み込みして
+  ください。</p>
+</section>
+
+<section id="launch-profiles">
+  <h2>起動プロファイル・Worktree</h2>
+  <img src="images/launch-profiles.png" alt="起動プロファイル設定">
+  <p><strong>起動プロファイル</strong>は、新規セッションすべてに自動で適用されるフラグです。たとえばコンテキスト長の
+  上限設定は、コスト削減に最も直結する項目です。設定から構成します。<strong>Worktree モード</strong>
+  （New Session のコンテキストメニューから切り替え）は、共有のプロジェクトフォルダではなく専用の git worktree で
+  セッションを開始するため、複数のウィンドウが同じリポジトリを、同じファイルを同時に編集することなく扱えます。</p>
+</section>
+
+</main>
+
+<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('#nav a'));
+  var sections = links.map(function (a) {
+    return document.getElementById(a.getAttribute('href').slice(1));
+  });
+  function setActive(id) {
+    links.forEach(function (a) {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + id);
+    });
+  }
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) setActive(entry.target.id);
+    });
+  }, { rootMargin: '-10% 0px -70% 0px', threshold: 0 });
+  sections.forEach(function (s) { if (s) observer.observe(s); });
+  if (sections[0]) setActive(sections[0].id);
+})();
+</script>
+
+</body>
+</html>

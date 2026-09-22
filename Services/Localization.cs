@@ -82,6 +82,7 @@ public static class Loc
         ["TileHorizontally"] = new() { ["English"] = "Tile horizontally", ["日本語"] = "横に並べる" },
         ["TileVertically"] = new() { ["English"] = "Tile vertically", ["日本語"] = "縦に並べる" },
         ["FullView"] = new() { ["English"] = "Full view", ["日本語"] = "最大表示" },
+        ["HelpTooltip"] = new() { ["English"] = "Help", ["日本語"] = "ヘルプ" },
 
         // ── Window Title ──
         ["AppTitle"] = new() { ["English"] = "Claucraft", ["日本語"] = "Claucraft" },

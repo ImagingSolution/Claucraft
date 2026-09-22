@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claucraft Help</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --sidebar-bg: #f5f5f7;
+    --text: #1d1d1f;
+    --subtle: #6e6e73;
+    --border: #d8d8dc;
+    --accent: #007aff;
+    --accent-bg: #eaf2ff;
+    --code-bg: #f0f0f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e1e;
+      --sidebar-bg: #252526;
+      --text: #e6e6e6;
+      --subtle: #9a9a9d;
+      --border: #3a3a3c;
+      --accent: #4da3ff;
+      --accent-bg: #123152;
+      --code-bg: #2a2a2c;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Yu Gothic UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+  }
+  .sidebar {
+    flex: 0 0 260px;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    padding: 20px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .sidebar h1 {
+    font-size: 16px;
+    margin: 0 20px 16px;
+  }
+  .sidebar .group-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--subtle);
+    margin: 18px 20px 6px;
+  }
+  .sidebar a {
+    display: block;
+    padding: 6px 20px;
+    font-size: 13px;
+    color: var(--text);
+    text-decoration: none;
+    border-left: 3px solid transparent;
+  }
+  .sidebar a:hover {
+    background: var(--accent-bg);
+  }
+  .sidebar a.active {
+    border-left-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-bg);
+    font-weight: 600;
+  }
+  .content {
+    flex: 1;
+    padding: 32px 48px 80px;
+    max-width: 760px;
+  }
+  .content h2 {
+    font-size: 22px;
+    margin: 0 0 6px;
+    padding-top: 12px;
+    scroll-margin-top: 20px;
+  }
+  .content section {
+    margin-bottom: 40px;
+  }
+  .content section:first-of-type h2 {
+    padding-top: 0;
+  }
+  .subtitle {
+    color: var(--subtle);
+    font-size: 13px;
+    margin: 0 0 18px;
+  }
+  .content h3 {
+    font-size: 15px;
+    margin: 22px 0 6px;
+  }
+  .content p {
+    line-height: 1.6;
+    font-size: 14px;
+  }
+  .content ul {
+    line-height: 1.7;
+    font-size: 14px;
+    padding-left: 20px;
+  }
+  kbd {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+  }
+  code {
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: Consolas, monospace;
+    font-size: 13px;
+  }
+  hr.divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 8px 0 32px;
+  }
+  .content img {
+    max-width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 10px 0 4px;
+    display: block;
+  }
+  .content table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+    margin: 12px 0 20px;
+  }
+  .content th, .content td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .content th {
+    background: var(--sidebar-bg);
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<nav class="sidebar" id="nav">
+  <h1>Claucraft Help</h1>
+
+  <div class="group-title">Getting Started</div>
+  <a href="#about">What Is Claucraft?</a>
+  <a href="#toolbar">Toolbar: Project &amp; Session</a>
+  <a href="#activity-bar">Activity Bar</a>
+
+  <div class="group-title">Side Panels</div>
+  <a href="#explorer">Explorer</a>
+  <a href="#snippets">Snippets</a>
+  <a href="#windows-panel">Windows Panel</a>
+  <a href="#settings">Settings</a>
+
+  <div class="group-title">Terminal &amp; Editor Area</div>
+  <a href="#mdi">MDI Terminal &amp; Editor Windows</a>
+  <a href="#window-strip">Window Strip Toolbar</a>
+  <a href="#workspaces">Saved Workspaces</a>
+
+  <div class="group-title">Source Control</div>
+  <a href="#source-control">Source Control Panel</a>
+
+  <div class="group-title">Status &amp; Productivity</div>
+  <a href="#status-bar">Status Bar &amp; Live Status</a>
+  <a href="#slash-commands">Slash Commands &amp; Command Palette</a>
+  <a href="#shortcuts">Shortcuts &amp; Setup Doctor</a>
+  <a href="#notifications">Notifications &amp; Updates</a>
+  <a href="#extensions">Extensions</a>
+  <a href="#launch-profiles">Launch Profiles &amp; Worktrees</a>
+</nav>
+
+<main class="content">
+
+<section id="about">
+  <h2>What Is Claucraft?</h2>
+  <p class="subtitle">A Windows desktop shell for running and managing multiple Claude Code sessions at once.</p>
+  <p>Claucraft is an MDI (multiple-document-interface) terminal application: every Claude Code
+  session runs inside its own floating terminal window, tiled or cascaded alongside file editors,
+  diagram viewers and memory panels, all within one project-aware shell. It talks to the same
+  <code>claude</code> CLI you already use — Claucraft does not replace it, it wraps it with project
+  management, session history, git tooling and layout features built around running several
+  sessions side by side.</p>
+  <table>
+    <tr><th></th><th>Claude Desktop app</th><th>Claude Code CLI</th><th>VS Code extension</th><th>Claucraft</th></tr>
+    <tr>
+      <td><strong>What it is</strong></td>
+      <td>Chat client for Claude, no terminal or file system access</td>
+      <td>Single terminal session bound to one shell window</td>
+      <td>Claude Code embedded in one editor window, one session per window</td>
+      <td>Standalone MDI shell hosting many Claude Code sessions in parallel</td>
+    </tr>
+    <tr>
+      <td><strong>Multiple sessions</strong></td>
+      <td>Separate chats, no project/file context</td>
+      <td>One per terminal tab/window you open yourself</td>
+      <td>One per VS Code window</td>
+      <td>Many, tiled/cascaded automatically, with saved workspace layouts</td>
+    </tr>
+    <tr>
+      <td><strong>Project switching</strong></td>
+      <td>N/A</td>
+      <td>Manual <code>cd</code> and relaunch</td>
+      <td>Requires switching VS Code windows/folders</td>
+      <td>A project combo box switches the whole shell's context — explorer, git, sessions — at once</td>
+    </tr>
+    <tr>
+      <td><strong>Session history</strong></td>
+      <td>Chat history in the app</td>
+      <td>Resume by session ID from the command line</td>
+      <td>VS Code's own session list</td>
+      <td>Per-project session list with search, one click to resume</td>
+    </tr>
+    <tr>
+      <td><strong>Git integration</strong></td>
+      <td>None</td>
+      <td>Whatever the shell provides</td>
+      <td>VS Code's built-in Source Control view</td>
+      <td>Built-in panel: fetch/pull/push/merge, risky-file check, AI commit messages, commit graph</td>
+    </tr>
+    <tr>
+      <td><strong>Best fit</strong></td>
+      <td>Quick chat, no code</td>
+      <td>Editor-agnostic scripting, automation, one focused task</td>
+      <td>Editing code and running Claude Code in the same window</td>
+      <td>Running and comparing several Claude Code sessions across one or more projects at once</td>
+    </tr>
+  </table>
+  <p>Claucraft is aimed at the case none of the others cover well: juggling several active Claude
+  Code sessions — different projects, different worktrees, different tasks — without losing track
+  of which terminal is which, or wiring up your own tmux/window-manager setup to do it.</p>
+</section>
+
+<section id="toolbar">
+  <h2>Toolbar: Project &amp; Session</h2>
+  <p class="subtitle">The panel at the top of the window, above everything else.</p>
+  <img src="images/toolbar.png" alt="Project and session toolbar">
+  <p>The <strong>Project</strong> row holds a folder combo box for choosing the project you are working
+  in. Type or paste a path directly, or click the folder icon next to it to open a picker
+  (<strong>New Project</strong>) — the same action available from the welcome page.</p>
+  <p>The <strong>Session</strong> row lists Claude Code sessions previously recorded for the selected
+  project, newest first, with their timestamp and a short title. Selecting one enables
+  <strong>Resume</strong>, which reopens that conversation in a new terminal window. The search icon
+  next to the combo opens <strong>Manage Sessions</strong>, a searchable list for projects with many
+  saved sessions.</p>
+  <p><strong>New Session</strong> starts a fresh Claude Code conversation. Right-click it (or open its
+  context menu) to toggle <strong>New Session (Worktree)</strong>: when enabled, new sessions are
+  started in their own git worktree, so two windows never edit the same files at once — Resume
+  always reopens in the original project folder, where the session's history lives.</p>
+</section>
+
+<section id="activity-bar">
+  <h2>Activity Bar</h2>
+  <p class="subtitle">The narrow strip of icons on the left edge of the window.</p>
+  <img src="images/activity-bar.png" alt="Activity bar icons">
+  <p>Each icon switches the side panel shown next to it:</p>
+  <ul>
+    <li><strong>Explorer</strong> (<kbd>Ctrl+Shift+E</kbd>) — the current project's file tree.</li>
+    <li><strong>Snippets</strong> — reusable text blocks you can insert into a session.</li>
+    <li><strong>Windows</strong> — a list of every open terminal, editor, diagram and memory window.</li>
+    <li><strong>Diagram Viewer</strong> — renders Mermaid/graph output from a session inline.</li>
+    <li><strong>Chat View</strong> — a readable, non-terminal rendering of the current conversation.</li>
+    <li><strong>Compact</strong> — runs <code>/compact</code> against the active session.</li>
+    <li><strong>Slash Commands</strong> (<kbd>Ctrl+/</kbd>) — browse and insert available slash commands.</li>
+    <li><strong>Extensions</strong> — installed MCP servers, skills and plugins.</li>
+    <li><strong>Source Control</strong> (<kbd>Ctrl+Shift+G</kbd>) — git status and actions for the project.</li>
+    <li><strong>Cost</strong> — token usage and spend for the current session and plan.</li>
+    <li><strong>Memory</strong> — what Claude remembers about this project across sessions.</li>
+    <li><strong>Settings</strong> — application preferences, grouped by topic.</li>
+  </ul>
+</section>
+
+<section id="explorer">
+  <h2>Explorer</h2>
+  <img src="images/explorer.png" alt="Explorer side panel">
+  <p>Shows the selected project's folder tree. Right-click a file or folder for common actions
+  (open, reveal, rename, delete, and similar). Double-clicking a file opens it in a floating
+  editor window inside the MDI area — see <a href="#mdi">MDI Terminal &amp; Editor Windows</a>.
+  Editor windows show <strong>Save</strong> (<kbd>Ctrl+S</kbd>) and <strong>Close</strong> buttons on
+  their own title bar.</p>
+</section>
+
+<section id="snippets">
+  <h2>Snippets</h2>
+  <img src="images/snippets.png" alt="Snippets side panel">
+  <p>Stores short pieces of text — prompts, commands, boilerplate — that you reuse across
+  sessions. Snippets are kept per user, not per project, so the same list follows you between
+  projects. Use the panel's search box to filter by name or content, then insert one into the
+  active terminal.</p>
+</section>
+
+<section id="windows-panel">
+  <h2>Windows Panel</h2>
+  <img src="images/windows-panel.png" alt="Windows panel">
+  <p>Lists every window currently open in the MDI area — terminal sessions, editor tabs, diagram
+  viewers and memory panels — regardless of which are on-screen at the moment. Selecting an entry
+  brings that window to the front, which is the fastest way to find a session buried behind
+  others in Tile or Cascade layouts.</p>
+  <p>This panel also includes <strong>Agent View</strong>: background sessions started with
+  <code>claude agents</code> are listed under the window that dispatched them, along with their
+  state, what they're currently waiting on, and whether the process is still alive. This is read
+  directly from <code>~/.claude/jobs</code> rather than by invoking the CLI, so the panel's
+  700&nbsp;ms refresh cycle stays free. The same panel also shows a session's in-flight subagents
+  (label, type, model, depth) while they run.</p>
+</section>
+
+<section id="settings">
+  <h2>Settings</h2>
+  <img src="images/settings.png" alt="Settings panel">
+  <p>Grouped by topic: general preferences, theme, AI provider and CLI configuration, source
+  control behavior (commit message language, risky-file checks before push), live status display,
+  plan tier and cost dashboard, launch profiles, and keyboard shortcuts. Most settings apply
+  immediately; a few — like the AI provider — apply to new sessions only.</p>
+</section>
+
+<section id="mdi">
+  <h2>MDI Terminal &amp; Editor Windows</h2>
+  <p class="subtitle">The main working area, filling the rest of the window.</p>
+  <img src="images/mdi.png" alt="MDI terminal area">
+  <p>Each Claude Code session runs in its own floating terminal window inside this area, alongside
+  any file editor, diagram or memory windows you have open. Drag a window's title bar to move it,
+  or drag its tab in the <a href="#window-strip">window strip</a> to reorder or pop it into its own
+  top-level window. Windows can be arranged automatically (see below) or positioned freely.</p>
+  <p>Closing a terminal window ends that Claude Code process; the session itself is preserved and
+  can be reopened later from <strong>Session</strong> → <strong>Resume</strong>.</p>
+</section>
+
+<section id="window-strip">
+  <h2>Window Strip Toolbar</h2>
+  <img src="images/window-strip.png" alt="Window strip toolbar">
+  <p>The horizontal strip directly above the MDI area lists a tab for every open window in this
+  shell and lets you switch between them. The icon buttons on its right edge control layout:</p>
+  <ul>
+    <li><strong>Tile</strong> — arrange all windows in an even grid.</li>
+    <li><strong>Tile Horizontally</strong> / <strong>Tile Vertically</strong> — stack windows in
+    rows or columns.</li>
+    <li><strong>Full View</strong> — maximize the active window, hiding the others.</li>
+    <li><strong>Workspaces</strong> — save or restore a named window arrangement; see
+    <a href="#workspaces">Saved Workspaces</a>.</li>
+    <li><strong>Help</strong> — the button you used to open this page.</li>
+  </ul>
+  <p>Manually resizing or moving a window switches the shell out of its current automatic layout
+  mode into a custom one, which is preserved until you pick a layout button again.</p>
+</section>
+
+<section id="workspaces">
+  <h2>Saved Workspaces</h2>
+  <img src="images/workspaces.png" alt="Workspaces dialog">
+  <p>A workspace is a named snapshot of which windows are open and how they are arranged. Use
+  <strong>Save Workspace As…</strong> from the Workspaces dialog to capture the current layout, and
+  select a saved entry to restore it later — useful for switching between different working
+  contexts within the same project without rebuilding the layout each time.</p>
+</section>
+
+<section id="source-control">
+  <h2>Source Control Panel</h2>
+  <img src="images/source-control.png" alt="Source control panel">
+  <p>A focused git client for the active project, opened from the activity bar
+  (<kbd>Ctrl+Shift+G</kbd>):</p>
+  <ul>
+    <li><strong>Fetch</strong> — checks what is new on the remote without changing any local files.</li>
+    <li><strong>Pull</strong> — brings the remote's commits into the current branch and replays
+    yours on top.</li>
+    <li><strong>Push</strong> — sends local commits to the remote.</li>
+    <li><strong>Merge</strong> — brings another branch's work into the branch you are on.</li>
+    <li><strong>Branch menu</strong> — switch, create or delete branches.</li>
+  </ul>
+  <p>Before a push, an optional <strong>risky files check</strong> scans changed files for
+  credentials, machine-local settings, build output and oversized files. A commit message can be
+  generated by the AI in either English or Japanese, set independently of the app's display
+  language. The panel also includes a commit graph for visualizing branch and merge history.</p>
+</section>
+
+<section id="status-bar">
+  <h2>Status Bar &amp; Live Status</h2>
+  <p class="subtitle">The strip along the bottom of the window.</p>
+  <img src="images/status-bar.png" alt="Status bar">
+  <p>Shows live information for the active session:</p>
+  <ul>
+    <li><strong>Mode badge</strong> — the assistant's current mode; click it, or press
+    <kbd>Shift+Tab</kbd>, to cycle modes.</li>
+    <li><strong>Context meter</strong> — how much of the context window is used before an
+    automatic compact; clicking it runs <code>/compact</code>.</li>
+    <li><strong>Model</strong> / <strong>Effort</strong> — the model and reasoning effort answering
+    in this session. Changing either sends the corresponding command to the terminal, and also
+    updates the default used for new sessions.</li>
+    <li><strong>Rate limits</strong> — usage against the plan's 5-hour and 7-day metering windows,
+    with time until each resets.</li>
+  </ul>
+</section>
+
+<section id="slash-commands">
+  <h2>Slash Commands &amp; Command Palette</h2>
+  <img src="images/slash-commands.png" alt="Slash commands panel">
+  <p>The Slash Commands panel (<kbd>Ctrl+/</kbd>) lists every command available to the active
+  session — built-in, project-defined and user-defined — and inserts the selected one into the
+  terminal. The Command Palette provides quick, searchable access to app-level actions (layouts,
+  panels, dialogs) without needing to know their location in the UI.</p>
+</section>
+
+<section id="shortcuts">
+  <h2>Shortcuts &amp; Setup Doctor</h2>
+  <img src="images/shortcuts.png" alt="Keyboard shortcuts dialog">
+  <p>Press <kbd>F1</kbd>, or use the <strong>Keyboard Shortcuts</strong> button in Settings, to open
+  a cheat sheet of every shortcut in the app. <strong>Setup Doctor</strong>, also in Settings,
+  checks that the AI CLI, git and any other required tools are installed and signed in, and
+  reports what — if anything — needs attention.</p>
+</section>
+
+<section id="notifications">
+  <h2>Notifications &amp; Updates</h2>
+  <img src="images/notifications.png" alt="Checkpoints dialog">
+  <p>Toast notifications surface events such as a long-running turn finishing while its window is
+  in the background. An update banner appears in the bottom-left corner when a new release is
+  available, with an option to view the release notes or apply the update in place.
+  <strong>Checkpoints</strong>, reachable from Settings, list saved states you can jump back to
+  within a session.</p>
+</section>
+
+<section id="extensions">
+  <h2>Extensions</h2>
+  <img src="images/extensions.png" alt="Extensions panel">
+  <p>Lists the MCP servers, skills and plugins currently installed for the active AI provider, and
+  whether each is available to the session. Use the refresh button after installing or updating
+  one outside the app.</p>
+</section>
+
+<section id="launch-profiles">
+  <h2>Launch Profiles &amp; Worktrees</h2>
+  <img src="images/launch-profiles.png" alt="Launch profiles settings">
+  <p><strong>Launch profiles</strong> are flags applied automatically to every new session — for
+  example, bounding context length, which is what most directly lowers cost. Configure them from
+  Settings. <strong>Worktree mode</strong> (toggled from the New Session context menu) starts a
+  session in its own git worktree instead of the shared project folder, so two windows can work
+  on the same repository without editing the same files at the same time.</p>
+</section>
+
+</main>
+
+<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('#nav a'));
+  var sections = links.map(function (a) {
+    return document.getElementById(a.getAttribute('href').slice(1));
+  });
+  function setActive(id) {
+    links.forEach(function (a) {
+      a.classList.toggle('active', a.getAttribute('href') === '#' + id);
+    });
+  }
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) setActive(entry.target.id);
+    });
+  }, { rootMargin: '-10% 0px -70% 0px', threshold: 0 });
+  sections.forEach(function (s) { if (s) observer.observe(s); });
+  if (sections[0]) setActive(sections[0].id);
+})();
+</script>
+
+</body>
+</html>

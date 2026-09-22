@@ -631,6 +631,7 @@ internal partial class AppShell : UserControl, IDockOwner
         LblOpenUsageChart.Text = Loc.Get("PaletteUsageChart");
         LblOpenCheckpoints.Text = Loc.Get("Checkpoints");
         ToolTip.SetTip(BtnWorkspaces, Loc.Get("Workspaces"));
+        ToolTip.SetTip(BtnHelp, Loc.Get("HelpTooltip"));
         if (_settingsInitialized) FillPlanTierCombo();
 
         // Window title, the labels that embed the AI name, plus feature gating
@@ -7851,6 +7852,41 @@ internal partial class AppShell : UserControl, IDockOwner
         _customLayout = false;
         _layout = MdiLayout.TileVertical;
         ArrangeChildren();
+    }
+
+    private void OnOpenHelp(object? sender, RoutedEventArgs e)
+    {
+        var fileName = Loc.Language == "日本語" ? "help_ja.html" : "help_en.html";
+        try
+        {
+            var helpDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "Claucraft", "Help");
+            System.IO.Directory.CreateDirectory(helpDir);
+
+            // Help files (HTML + images) are embedded in the exe (avares://), so they always ship
+            // with it even when only the .exe gets copied/updated. Re-extract the whole tree on
+            // every open so relative <img> references resolve and newer builds' content applies.
+            var baseUri = new Uri("avares://Claucraft/Help");
+            foreach (var assetUri in Avalonia.Platform.AssetLoader.GetAssets(baseUri, null))
+            {
+                var relative = assetUri.AbsolutePath.Substring(baseUri.AbsolutePath.Length).TrimStart('/');
+                var destPath = System.IO.Path.Combine(helpDir, relative.Replace('/', System.IO.Path.DirectorySeparatorChar));
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(destPath)!);
+                using (var resourceStream = Avalonia.Platform.AssetLoader.Open(assetUri))
+                using (var fileStream = System.IO.File.Create(destPath))
+                {
+                    resourceStream.CopyTo(fileStream);
+                }
+            }
+
+            var path = System.IO.Path.Combine(helpDir, fileName);
+            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[AppShell] Could not open the help file: {ex.GetType().Name}");
+        }
     }
 
     /// <summary>

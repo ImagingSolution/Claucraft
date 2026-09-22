@@ -33,5 +33,7 @@
 
   <ItemGroup>
     <AvaloniaResource Include="icon.ico" />
+    <AvaloniaResource Include="Help\**\*.html" />
+    <AvaloniaResource Include="Help\**\*.png" />
   </ItemGroup>
 </Project>
