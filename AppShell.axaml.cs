@@ -1339,6 +1339,7 @@ internal partial class AppShell : UserControl, IDockOwner
             Text = displayText,
             FontSize = 13,
             FontWeight = FontWeight.Normal,
+            FontFamily = TitleFontFamily,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
 
@@ -2355,6 +2356,13 @@ internal partial class AppShell : UserControl, IDockOwner
     /// The parts of one window-strip tab, handed back so the caller can wire them up. <c>Dot</c> is
     /// null on a tab that carries an icon instead, which only a terminal's changing status needs.
     /// </summary>
+    // Session titles come straight from the CLI's own OSC title text (see terminal.TitleChanged),
+    // which the real "claude" CLI stamps with a symbol outside Inter's glyph set (e.g. "✳ Claude
+    // Code"). Naming an emoji-capable family explicitly avoids relying on Skia's automatic
+    // system-font glyph fallback, which drops that glyph under the self-contained single-file
+    // publish (PublishSingleFile) even though the same title renders fine under `dotnet run`.
+    private static readonly FontFamily TitleFontFamily = new("Segoe UI Emoji,Segoe UI,Inter");
+
     private readonly record struct StripTab(Button Button, StackPanel Content, TextBlock Text, Ellipse? Dot, Button CloseButton);
 
     /// <summary>
@@ -2382,6 +2390,7 @@ internal partial class AppShell : UserControl, IDockOwner
         {
             Text = title,
             FontSize = 11,
+            FontFamily = TitleFontFamily,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxWidth = 120
@@ -8270,6 +8279,27 @@ internal partial class AppShell : UserControl, IDockOwner
 
     // ── MDI Child management ──
 
+    /// <summary>
+    /// The leading glyph off a raw OSC title (e.g. the "✳" in "✳ Claude Code"), or null when the
+    /// title does not open with one. Kept so a resumed session's tab can still carry the CLI's own
+    /// icon even though its title text is replaced by the session summary - see terminal.TitleChanged
+    /// in <see cref="CreateNewChild"/>.
+    /// </summary>
+    private static string? ExtractTitleIcon(string? title)
+    {
+        if (string.IsNullOrEmpty(title)) return null;
+        var lead = System.Globalization.StringInfo.GetNextTextElement(title);
+        if (string.IsNullOrEmpty(lead) || title.Length <= lead.Length || title[lead.Length] != ' ')
+            return null;
+
+        var category = char.GetUnicodeCategory(lead, 0);
+        return category is System.Globalization.UnicodeCategory.OtherSymbol
+            or System.Globalization.UnicodeCategory.MathSymbol
+            or System.Globalization.UnicodeCategory.OtherPunctuation
+            ? lead
+            : null;
+    }
+
     private void CreateNewChild(string command, string tabTitle, string? firstInput = null,
                                 string? sessionId = null, WorktreeLease? worktree = null)
     {
@@ -8295,6 +8325,7 @@ internal partial class AppShell : UserControl, IDockOwner
             Text = initialTitle,
             FontSize = 13,
             FontWeight = FontWeight.Normal,
+            FontFamily = TitleFontFamily,
             Foreground = new SolidColorBrush(MdiTitleFg(_isDark)),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
@@ -8476,9 +8507,16 @@ internal partial class AppShell : UserControl, IDockOwner
             // otherwise an OSC title would drop the tab back to the opening prompt.
             if (!string.IsNullOrEmpty(entry.SessionTitle)) return;
             // Prefer session summary (FirstUserInput) over terminal OSC title
-            var displayTitle = !string.IsNullOrEmpty(terminal.FirstUserInput)
+            var baseTitle = !string.IsNullOrEmpty(terminal.FirstUserInput)
                 ? terminal.FirstUserInput
                 : (string.IsNullOrWhiteSpace(title) ? tabTitle : title);
+            // The CLI's own OSC title carries its icon even when the summary text replaces its
+            // wording (e.g. on resume, where FirstUserInput is seeded before the terminal ever
+            // reports a title) - keep that icon rather than losing it along with the raw text.
+            var icon = ExtractTitleIcon(title);
+            var displayTitle = icon != null && !baseTitle.StartsWith(icon, StringComparison.Ordinal)
+                ? $"{icon} {baseTitle}"
+                : baseTitle;
             titleText.Text = displayTitle;
             stripText.Text = displayTitle;
             RefreshWindowsPanel();
