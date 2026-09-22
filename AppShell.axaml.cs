@@ -4842,6 +4842,13 @@ internal partial class AppShell : UserControl, IDockOwner
     private const int TurnEndMinBusyPolls = 2;
 
     /// <summary>
+    /// How long after <see cref="NoteChildTurnEnd"/> raises its toast the process-exit path
+    /// stays quiet, so a one-shot run's process exiting right after the turn ends does not
+    /// raise a second toast for the same answer.
+    /// </summary>
+    private static readonly TimeSpan ExitNotifyDedupWindow = TimeSpan.FromSeconds(5);
+
+    /// <summary>
     /// Raises the Windows notification for a finished answer, on the same working → idle edge
     /// the frame blink uses - so it covers a window that answered in the background too.
     ///
@@ -8436,6 +8443,17 @@ internal partial class AppShell : UserControl, IDockOwner
             terminal.IsGenerating = false;
             PaintChildDots(entry);   // grey: the pty handle is already signalled here
             RefreshSessionList();
+
+            // The user closing the tab themselves is not a completion - NotifyTurnEnd
+            // already skips this case, so the exit path has to as well.
+            if (entry.IsClosing) return;
+            // A one-shot run's process can exit right on the heels of NotifyTurnEnd's own
+            // toast for the same answer - without this, that is two notifications for one
+            // completion.
+            if (entry.LastTurnEndUtc is DateTime lastTurnEnd
+                && DateTime.UtcNow - lastTurnEnd < ExitNotifyDedupWindow)
+                return;
+
             // Flash the taskbar and raise a toast when the window is not focused
             if (!HostWindow.IsActive)
             {
