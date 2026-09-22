@@ -4292,7 +4292,13 @@ public class TerminalControl : Control, IDisposable
                 }
 
                 if (cell.Attributes.HasFlag(CellAttributes.Dim))
-                    fg = Color.FromArgb(180, fg.R, fg.G, fg.B);
+                {
+                    // Scale the colour itself down rather than laying a translucent fg over
+                    // the background: alpha blending over a light-mode white background wipes
+                    // out saturation (the colour reads as grey), while blending over the dark
+                    // background barely changes it. A flat RGB scale dims consistently in both.
+                    fg = Color.FromRgb((byte)(fg.R * 0.7), (byte)(fg.G * 0.7), (byte)(fg.B * 0.7));
+                }
 
                 if (cell.Attributes.HasFlag(CellAttributes.Inverse))
                     (fg, bg) = (bg, fg);
@@ -4805,31 +4811,94 @@ public class TerminalControl : Control, IDisposable
         return c;
     }
 
-    // 1.05 / (L + 0.05) = 5.0 solves to L = 0.16, so a foreground at or below this
-    // relative luminance reads at 5:1 or better against the white light-mode background.
-    private const double LightFgMaxLuminance = 0.16;
+    // 1.05 / (L + 0.05) = 4.0 solves to L = 0.2125; relaxed from the original 5:1 (L =
+    // 0.16) so colours aren't crushed almost to black to hit the ratio. Legibility now
+    // leans on the saturation boost below (hue/chroma difference from the white
+    // background) rather than on lightness contrast alone.
+    private const double LightFgMaxLuminance = 0.22;
+
+    // Uniform RGB scaling toward black keeps hue and even keeps the HSL saturation
+    // ratio intact (min/max shrink together), but a very dark shade of a colour still
+    // *reads* as muted grey - real chroma capacity shrinks toward zero as lightness
+    // approaches zero. Boosting HSL saturation after the scale compensates so text
+    // stays visibly colourful instead of just dark.
+    private const double LightFgSaturationBoost = 1.5;
 
     /// <summary>
     /// Scales a foreground colour down, hue intact, until it clears
-    /// <see cref="LightFgMaxLuminance"/>. Colours already dark enough come back untouched.
+    /// <see cref="LightFgMaxLuminance"/>, then boosts saturation to keep it vivid.
     /// </summary>
     private static Color ClampFgForLightBg(Color c)
     {
         double lum = RelativeLuminance(c);
-        if (lum <= LightFgMaxLuminance) return c;
+        if (lum > LightFgMaxLuminance)
+        {
+            // Luminance runs roughly as the 2.4th power of the channel values, so one
+            // factor lands on the target instead of iterating towards it.
+            double f = Math.Pow(LightFgMaxLuminance / lum, 1.0 / 2.4);
+            c = Color.FromRgb(
+                (byte)Math.Round(c.R * f),
+                (byte)Math.Round(c.G * f),
+                (byte)Math.Round(c.B * f));
+        }
 
-        // Luminance runs roughly as the 2.4th power of the channel values, so one factor
-        // lands on the target instead of iterating towards it.
-        double f = Math.Pow(LightFgMaxLuminance / lum, 1.0 / 2.4);
-        return Color.FromRgb(
-            (byte)Math.Round(c.R * f),
-            (byte)Math.Round(c.G * f),
-            (byte)Math.Round(c.B * f));
+        var (h, s, l) = RgbToHsl(c);
+        if (s <= 0) return c; // grey/white/black: nothing to boost
+        s = Math.Min(1.0, s * LightFgSaturationBoost);
+        return HslToRgb(h, s, l);
     }
 
     /// <summary>WCAG relative luminance, 0 for black through 1 for white.</summary>
     private static double RelativeLuminance(Color c) =>
         0.2126 * ToLinear(c.R) + 0.7152 * ToLinear(c.G) + 0.0722 * ToLinear(c.B);
+
+    private static (double h, double s, double l) RgbToHsl(Color c)
+    {
+        double r = c.R / 255.0, g = c.G / 255.0, b = c.B / 255.0;
+        double max = Math.Max(r, Math.Max(g, b));
+        double min = Math.Min(r, Math.Min(g, b));
+        double l = (max + min) / 2.0;
+        if (max == min) return (0, 0, l);
+
+        double d = max - min;
+        double s = l > 0.5 ? d / (2.0 - max - min) : d / (max + min);
+        double h;
+        if (max == r) h = (g - b) / d + (g < b ? 6 : 0);
+        else if (max == g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        return (h / 6.0, s, l);
+    }
+
+    private static Color HslToRgb(double h, double s, double l)
+    {
+        double r, g, b;
+        if (s <= 0)
+        {
+            r = g = b = l;
+        }
+        else
+        {
+            double q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            double p = 2 * l - q;
+            r = HueToRgb(p, q, h + 1.0 / 3.0);
+            g = HueToRgb(p, q, h);
+            b = HueToRgb(p, q, h - 1.0 / 3.0);
+        }
+        return Color.FromRgb(
+            (byte)Math.Round(Math.Clamp(r, 0, 1) * 255),
+            (byte)Math.Round(Math.Clamp(g, 0, 1) * 255),
+            (byte)Math.Round(Math.Clamp(b, 0, 1) * 255));
+    }
+
+    private static double HueToRgb(double p, double q, double t)
+    {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1.0 / 6.0) return p + (q - p) * 6 * t;
+        if (t < 1.0 / 2.0) return q;
+        if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6;
+        return p;
+    }
 
     private static double ToLinear(byte channel)
     {
