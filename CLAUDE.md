@@ -55,6 +55,6 @@ Switching active child triggers project context switching — the toolbar, explo
 - File-scoped namespaces throughout
 - Nullable reference types enabled
 - Unsafe blocks allowed (for P/Invoke in PseudoConsole)
-- Version scheme: `0.x.y.{auto-increment}` from `build.number` file
+- Version scheme: `1.0.{auto-increment}` from `build.number` file
 - Debug builds output to console (`Exe`), Release builds are windowless (`WinExe`)
 - All localized strings go in `Services/Localization.cs` with both EN and JP entries
