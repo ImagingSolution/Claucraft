@@ -13,8 +13,8 @@ public static class Loc
         ["SelectProjectFolder"] = new() { ["English"] = "Select project folder...", ["日本語"] = "プロジェクトフォルダを選択..." },
         ["OpenInExplorer"] = new() { ["English"] = "Open in Explorer", ["日本語"] = "エクスプローラーで開く" },
         ["NewSession"] = new() { ["English"] = "New Session", ["日本語"] = "新規セッション" },
-        ["NewSessionIsolated"] = new() { ["English"] = "New Session (Isolated)", ["日本語"] = "新規セッション（隔離）" },
-        ["NewSessionNotIsolated"] = new() { ["English"] = "New Session (Not Isolated)", ["日本語"] = "新規セッション（隔離しない）" },
+        ["NewSessionWorktree"] = new() { ["English"] = "New Session (Worktree)", ["日本語"] = "新規セッション（Worktree）" },
+        ["NewSessionNotWorktree"] = new() { ["English"] = "New Session (Not Worktree)", ["日本語"] = "新規セッション（Worktreeなし）" },
         ["Session"] = new() { ["English"] = "Session", ["日本語"] = "セッション" },
         ["SelectSession"] = new() { ["English"] = "Select a session to resume...", ["日本語"] = "再開するセッションを選択..." },
         ["Resume"] = new() { ["English"] = "Resume", ["日本語"] = "再開" },
@@ -721,13 +721,13 @@ public static class Loc
 
         // -- Git write operations --
 
-        // -- Isolated sessions (git worktree) --
+        // -- Worktree sessions (git worktree) --
         ["AttachFiles"] = new() { ["English"] = "Attach files", ["日本語"] = "ファイルを添付" },
-        ["IsolateSession"] = new() { ["English"] = "Isolate", ["日本語"] = "隔離" },
-        ["IsolateTooltip"] = new() { ["English"] = "Start New Session in its own git worktree, so two windows cannot edit the same files. Resume always opens in the project folder, where the session's history lives.", ["日本語"] = "[New Session] を専用の git worktree で開き、複数ウィンドウが同じファイルを編集しないようにします。[Resume] はセッション履歴のあるプロジェクトフォルダで開きます。" },
-        ["ResumeIsolateNote"] = new() { ["English"] = "Resume opens the session in the project folder - Isolate only applies to New Session.", ["日本語"] = "セッションはプロジェクトフォルダで開きます（隔離は [New Session] のみ）。" },
-        ["WorktreeFailedTitle"] = new() { ["English"] = "The isolated checkout could not be created", ["日本語"] = "隔離チェックアウトを作成できませんでした" },
-        ["WorktreeDirtyTitle"] = new() { ["English"] = "Close this isolated session?", ["日本語"] = "この隔離セッションを閉じますか？" },
+        ["WorktreeSession"] = new() { ["English"] = "Worktree", ["日本語"] = "Worktree" },
+        ["WorktreeTooltip"] = new() { ["English"] = "Start New Session in its own git worktree, so two windows cannot edit the same files. Resume always opens in the project folder, where the session's history lives.", ["日本語"] = "[New Session] を専用の git worktree で開き、複数ウィンドウが同じファイルを編集しないようにします。[Resume] はセッション履歴のあるプロジェクトフォルダで開きます。" },
+        ["ResumeWorktreeNote"] = new() { ["English"] = "Resume opens the session in the project folder - Worktree only applies to New Session.", ["日本語"] = "セッションはプロジェクトフォルダで開きます（Worktreeは [New Session] のみ）。" },
+        ["WorktreeFailedTitle"] = new() { ["English"] = "The worktree checkout could not be created", ["日本語"] = "Worktreeチェックアウトを作成できませんでした" },
+        ["WorktreeDirtyTitle"] = new() { ["English"] = "Close this worktree session?", ["日本語"] = "このworktreeセッションを閉じますか？" },
         ["WorktreeDirtyFmt"] = new() { ["English"] = "{0} still has uncommitted changes. Closing removes its checkout and those changes are lost.", ["日本語"] = "{0} に未コミットの変更が残っています。閉じるとチェックアウトごと削除され、その変更は失われます。" },
         ["StageAll"] = new() { ["English"] = "Stage all", ["日本語"] = "すべてステージ" },
         ["StageFile"] = new() { ["English"] = "Click to stage", ["日本語"] = "クリックでステージ" },

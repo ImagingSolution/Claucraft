@@ -334,7 +334,7 @@ internal partial class AppShell : UserControl, IDockOwner
         public string? SessionTitle { get; set; }
 
         /// <summary>
-        /// The isolated checkout this window works in, or null when it shares the project
+        /// The worktree checkout this window works in, or null when it shares the project
         /// folder with every other window. Owned by the window: closing it takes the checkout
         /// with it.
         /// </summary>
@@ -521,10 +521,10 @@ internal partial class AppShell : UserControl, IDockOwner
             ShowPanelContent(_activeSidePanel);
 
         // New Session context menu - the label reflects the toggle it will apply, refreshed
-        // again in OnNewClaudeContextMenuOpening since the Isolate checkbox can change afterward.
-        MenuNewClaudeIsolateToggle.Header = Loc.Get(ChkIsolate.IsChecked == true
-            ? "NewSessionNotIsolated"
-            : "NewSessionIsolated");
+        // again in OnNewClaudeContextMenuOpening since the Worktree checkbox can change afterward.
+        MenuNewClaudeWorktreeToggle.Header = Loc.Get(ChkWorktree.IsChecked == true
+            ? "NewSessionNotWorktree"
+            : "NewSessionWorktree");
 
         // Explorer context menu
         MenuTreeOpen.Header = Loc.Get("Open");
@@ -602,8 +602,8 @@ internal partial class AppShell : UserControl, IDockOwner
         ToolTip.SetTip(BtnActivitySourceControl, Loc.Get("SourceControlTooltip"));
         ToolTip.SetTip(StatusBranchName, Loc.Get("SourceControlTooltip"));
         ToolTip.SetTip(BtnBranchSwitch, Loc.Get("BranchSwitchTooltip"));
-        LblIsolate.Text = Loc.Get("IsolateSession");
-        ToolTip.SetTip(ChkIsolate, Loc.Get("IsolateTooltip"));
+        LblWorktree.Text = Loc.Get("WorktreeSession");
+        ToolTip.SetTip(ChkWorktree, Loc.Get("WorktreeTooltip"));
         LblLaunchProfile.Text = Loc.Get("LaunchProfile");
         LblPreferredModel.Text = Loc.Get("PreferredModelLabel");
         LblPreferredEffort.Text = Loc.Get("PreferredEffortLabel");
@@ -3834,7 +3834,7 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         var recentFolders = await SessionService.GetRecentProjectFoldersAsync();
 
-        // Isolated checkouts get a transcript folder of their own, but they are scratch space
+        // Worktree checkouts get a transcript folder of their own, but they are scratch space
         // belonging to a window, not projects anyone chose to open.
         recentFolders.RemoveAll(WorktreeService.IsWorktreePath);
 
@@ -4174,7 +4174,7 @@ internal partial class AppShell : UserControl, IDockOwner
         }
         catch { }
 
-        UpdateIsolateToggle();
+        UpdateWorktreeToggle();
 
         // Keep the source-control panel on the project the status bar just switched to. It
         // returns immediately while another sidebar panel is up.
@@ -4521,19 +4521,19 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     /// <summary>
-    /// The menu offers the opposite of whatever the Isolate checkbox is currently set to, so its
+    /// The menu offers the opposite of whatever the Worktree checkbox is currently set to, so its
     /// label has to be refreshed each time it opens rather than once at startup.
     /// </summary>
     private void OnNewClaudeContextMenuOpening(object? sender, CancelEventArgs e)
     {
-        MenuNewClaudeIsolateToggle.Header = Loc.Get(ChkIsolate.IsChecked == true
-            ? "NewSessionNotIsolated"
-            : "NewSessionIsolated");
+        MenuNewClaudeWorktreeToggle.Header = Loc.Get(ChkWorktree.IsChecked == true
+            ? "NewSessionNotWorktree"
+            : "NewSessionWorktree");
     }
 
-    private void OnNewClaudeIsolateToggle(object? sender, RoutedEventArgs e)
+    private void OnNewClaudeWorktreeToggle(object? sender, RoutedEventArgs e)
     {
-        LaunchClaudeWithInitialPrompt(forceIsolate: ChkIsolate.IsChecked != true);
+        LaunchClaudeWithInitialPrompt(forceWorktree: ChkWorktree.IsChecked != true);
     }
 
     private void OnCloseTab(object? sender, RoutedEventArgs e) => CloseActiveWindow();
@@ -5354,7 +5354,7 @@ internal partial class AppShell : UserControl, IDockOwner
         ToggleSidePanel(SidebarPanel.SourceControl);
     }
 
-    // ── Isolated sessions (git worktree) ──
+    // ── Worktree sessions (git worktree) ──
 
     /// <summary>A checkout handed to one window, with what is needed to take it away again.</summary>
     private sealed record WorktreeLease(string Path, string Branch, string RepoRoot);
@@ -5363,18 +5363,18 @@ internal partial class AppShell : UserControl, IDockOwner
     /// Creates the checkout the next session will work in, when the user has asked for one.
     /// Returns null for every other case - the toggle off, no repository, or git refusing -
     /// and the session then opens in the project folder as it always has.
-    /// <paramref name="forceIsolate"/> overrides the Isolate checkbox for a single launch, as the
+    /// <paramref name="forceWorktree"/> overrides the Worktree checkbox for a single launch, as the
     /// New Session context menu's opposite-of-the-checkbox item does.
     /// </summary>
-    private async Task<WorktreeLease?> PrepareWorktreeAsync(bool? forceIsolate = null)
+    private async Task<WorktreeLease?> PrepareWorktreeAsync(bool? forceWorktree = null)
     {
-        bool isolate = forceIsolate ?? ChkIsolate.IsChecked == true;
-        if (!isolate) return null;
+        bool worktree = forceWorktree ?? ChkWorktree.IsChecked == true;
+        if (!worktree) return null;
 
         var repo = _projectFolder;
         if (string.IsNullOrEmpty(repo)) return null;
 
-        // Isolating an isolated session would cut the new branch from the old one. Go back to
+        // Worktree-ing an already-worktree session would cut the new branch from the old one. Go back to
         // the repository it came from instead.
         var origin = _children.FirstOrDefault(c =>
             string.Equals(c.WorktreePath, repo, StringComparison.OrdinalIgnoreCase))?.WorktreeOrigin;
@@ -5444,18 +5444,18 @@ internal partial class AppShell : UserControl, IDockOwner
 
     /// <summary>
     /// The toggle only means anything inside a repository, and only for a folder that is not
-    /// already an isolated checkout.
+    /// already a worktree checkout.
     /// </summary>
-    private void UpdateIsolateToggle()
+    private void UpdateWorktreeToggle()
     {
         bool possible = !string.IsNullOrEmpty(_projectFolder)
             && GitChangeService.IsGitRepository(_projectFolder);
 
-        ChkIsolate.IsVisible = possible;
-        if (!possible) ChkIsolate.IsChecked = false;
+        ChkWorktree.IsVisible = possible;
+        if (!possible) ChkWorktree.IsChecked = false;
     }
 
-    private void OnIsolateChanged(object? sender, RoutedEventArgs e)
+    private void OnWorktreeChanged(object? sender, RoutedEventArgs e)
     {
         // Deliberately not persisted: it decides where the next session's files live, which is
         // not a preference to inherit silently on the next launch.
@@ -5463,7 +5463,7 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     /// <summary>
-    /// The Resume button's tip, which gains a line while Isolate is on. The checkbox acts on
+    /// The Resume button's tip, which gains a line while Worktree is on. The checkbox acts on
     /// New Session alone: a resumed session has to open where its transcript was recorded, so
     /// Resume stays in the project folder however the toggle is set.
     /// </summary>
@@ -5474,8 +5474,8 @@ internal partial class AppShell : UserControl, IDockOwner
         if (BtnResumeSession is null) return;
 
         string tip = _cli.Features.SessionList ? Loc.Get("Resume") : Loc.Get("ContinueSessionTooltip");
-        if (ChkIsolate.IsChecked == true)
-            tip += Environment.NewLine + Loc.Get("ResumeIsolateNote");
+        if (ChkWorktree.IsChecked == true)
+            tip += Environment.NewLine + Loc.Get("ResumeWorktreeNote");
 
         ToolTip.SetTip(BtnResumeSession, tip);
     }
@@ -8100,7 +8100,7 @@ internal partial class AppShell : UserControl, IDockOwner
                     int folderIdx = items.FindIndex(f => f.Equals(_projectFolder, StringComparison.OrdinalIgnoreCase));
                     if (folderIdx < 0)
                     {
-                        // An isolated checkout is kept out of the recent list - it is scratch
+                        // A worktree checkout is kept out of the recent list - it is scratch
                         // space belonging to a window, not a project anyone opened - but the box
                         // still has to name where the active window is working.
                         items.Insert(0, _projectFolder);
@@ -8220,7 +8220,7 @@ internal partial class AppShell : UserControl, IDockOwner
     private void CreateNewChild(string command, string tabTitle, string? firstInput = null,
                                 string? sessionId = null, WorktreeLease? worktree = null)
     {
-        // An isolated session works in its checkout, and so does everything that follows the
+        // A worktree session works in its checkout, and so does everything that follows the
         // active window: explorer, changed files, session list and the branch readout all
         // describe the tree the AI is actually editing.
         string? workFolder = worktree?.Path ?? _projectFolder;
@@ -8467,7 +8467,7 @@ internal partial class AppShell : UserControl, IDockOwner
         SyncSessionSelection();
 
         // The explorer, changed files, session list and branch readout all follow the active
-        // window. An isolated one works in a different tree, so they have to move with it.
+        // window. A worktree one works in a different tree, so they have to move with it.
         if (worktree != null) ActivateTerminal(entry);
 
         Dispatcher.UIThread.Post(() =>
@@ -8953,9 +8953,9 @@ internal partial class AppShell : UserControl, IDockOwner
         }
     }
 
-    private async void LaunchClaudeWithInitialPrompt(bool? forceIsolate = null)
+    private async void LaunchClaudeWithInitialPrompt(bool? forceWorktree = null)
     {
-        var worktree = await PrepareWorktreeAsync(forceIsolate);
+        var worktree = await PrepareWorktreeAsync(forceWorktree);
         CreateNewChild(
             _cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()),
             _cli.Active.Name,

@@ -122,7 +122,7 @@ public static class WorktreeService
     /// <summary>
     /// Removes a worktree and, if nothing was left behind on its branch, the branch too.
     /// The branch is deleted with `-d`, which refuses when it holds unmerged commits - so work
-    /// the user committed in an isolated session outlives the window it was done in.
+    /// the user committed in a worktree session outlives the window it was done in.
     /// </summary>
     public static Task<GitResult> RemoveAsync(string repoRoot, string worktreePath, string? branch)
     {

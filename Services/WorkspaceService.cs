@@ -30,7 +30,7 @@ public class WorkspaceTab
     /// <summary>True when the user renamed the tab, so the restored title is not overwritten.</summary>
     public bool IsManualTitle { get; set; }
 
-    /// <summary>Isolated checkout the tab worked in, or empty when it shared the project folder.</summary>
+    /// <summary>Worktree checkout the tab worked in, or empty when it shared the project folder.</summary>
     public string WorktreePath { get; set; } = "";
 
     /// <summary>Branch that checkout is on, which is what lets it be re-created if the folder went.</summary>

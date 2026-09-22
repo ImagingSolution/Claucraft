@@ -69,8 +69,8 @@
                                    VerticalAlignment="Center" HorizontalAlignment="Center" />
                         <Button.ContextMenu>
                             <ContextMenu x:Name="MenuNewClaude" Opening="OnNewClaudeContextMenuOpening">
-                                <MenuItem x:Name="MenuNewClaudeIsolateToggle" Header="New Session (Isolated)"
-                                          Click="OnNewClaudeIsolateToggle" />
+                                <MenuItem x:Name="MenuNewClaudeWorktreeToggle" Header="New Session (Worktree)"
+                                          Click="OnNewClaudeWorktreeToggle" />
                             </ContextMenu>
                         </Button.ContextMenu>
                     </Button>
@@ -563,16 +563,16 @@
                                                   IsCheckedChanged="OnUseShellIconsChanged" />
                                     </StackPanel>
                                 </Border>
-                                <!-- Isolate and the context profile picker used to sit in the top
+                                <!-- Worktree and the context profile picker used to sit in the top
                                      toolbar; they moved here so the toolbar stays focused on
                                      picking a project/session. -->
                                 <Border Classes="settings-group">
                                     <StackPanel Spacing="12">
                                         <TextBlock x:Name="LblSessionLaunch" Text="Session Launch" Classes="settings-group-header" />
-                                        <CheckBox x:Name="ChkIsolate" IsVisible="False"
+                                        <CheckBox x:Name="ChkWorktree" IsVisible="False"
                                                   Foreground="{DynamicResource SubtleText}"
-                                                  IsCheckedChanged="OnIsolateChanged">
-                                            <TextBlock x:Name="LblIsolate" Text="Isolate"
+                                                  IsCheckedChanged="OnWorktreeChanged">
+                                            <TextBlock x:Name="LblWorktree" Text="Worktree"
                                                        VerticalAlignment="Center" />
                                         </CheckBox>
                                         <StackPanel x:Name="LaunchProfileRow" Spacing="6"
