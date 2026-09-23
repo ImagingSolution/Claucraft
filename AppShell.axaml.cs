@@ -2971,6 +2971,15 @@ internal partial class AppShell : UserControl, IDockOwner
     // begins once the pointer has moved far enough, so the args are kept until then.
     private PointerPressedEventArgs? _treeDragTrigger;
 
+    // A plain press on an item of a multi-selection would collapse the selection
+    // before the drag can start, so it is swallowed and applied on release instead
+    // (Windows Explorer behaves the same way).
+    private FileTreeNode? _treeDeferredSelect;
+
+    // With several items selected, SelectedItem is just the first of them; the
+    // context menu and double-click should act on the item actually clicked.
+    private FileTreeNode? _treeLastPressed;
+
     private void HookFileTreeDrag()
     {
         // Tunnel: TreeViewItem handles pointer events for selection, so bubbling never reaches us
@@ -2983,14 +2992,35 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         _treeDragCandidate = null;
         _treeDragTrigger = null;
+        _treeDeferredSelect = null;
+        _treeLastPressed = FindTreeNode(e.Source);
         if (!e.GetCurrentPoint(FileTree).Properties.IsLeftButtonPressed) return;
 
-        var node = FindTreeNode(e.Source);
+        var node = _treeLastPressed;
         if (node == null || string.IsNullOrEmpty(node.FullPath)) return;
 
         _treeDragOrigin = e.GetPosition(FileTree);
         _treeDragCandidate = node;
         _treeDragTrigger = e;
+
+        if (e.KeyModifiers == KeyModifiers.None
+            && FileTree.SelectedItems.Count > 1
+            && FileTree.SelectedItems.Contains(node)
+            && !IsInsideToggleButton(e.Source))
+        {
+            _treeDeferredSelect = node;
+            e.Handled = true;
+        }
+    }
+
+    private static bool IsInsideToggleButton(object? source)
+    {
+        for (var visual = source as Visual; visual != null; visual = visual.GetVisualParent())
+        {
+            if (visual is Avalonia.Controls.Primitives.ToggleButton) return true;
+            if (visual is TreeViewItem) return false;
+        }
+        return false;
     }
 
     private async void OnFileTreePointerMoved(object? sender, PointerEventArgs e)
@@ -3011,12 +3041,18 @@ internal partial class AppShell : UserControl, IDockOwner
         var trigger = _treeDragTrigger;
         _treeDragCandidate = null;
         _treeDragTrigger = null;
+        _treeDeferredSelect = null;
         if (trigger == null) return;
+
+        // Dragging a selected item carries the whole selection, in tree order
+        var nodes = FileTree.SelectedItems.Contains(node)
+            ? SelectedTreeNodesInDisplayOrder()
+            : new List<FileTreeNode> { node };
 
         _treeDragActive = true;
         try
         {
-            var data = await BuildTreeDragDataAsync(node);
+            var data = await BuildTreeDragDataAsync(nodes);
             await DragDrop.DoDragDropAsync(trigger, data, DragDropEffects.Copy | DragDropEffects.Link);
         }
         catch { /* drag aborted */ }
@@ -3024,31 +3060,62 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     private void OnFileTreePointerReleased(object? sender, PointerReleasedEventArgs e)
-        => _treeDragCandidate = null;
+    {
+        _treeDragCandidate = null;
 
-    private async Task<DataTransfer> BuildTreeDragDataAsync(FileTreeNode node)
+        // The press was swallowed and no drag followed: apply the plain click now
+        if (_treeDeferredSelect is { } node)
+        {
+            _treeDeferredSelect = null;
+            FileTree.SelectedItems.Clear();
+            FileTree.SelectedItem = node;
+        }
+    }
+
+    private List<FileTreeNode> SelectedTreeNodesInDisplayOrder()
+    {
+        var selected = FileTree.SelectedItems.OfType<FileTreeNode>().ToHashSet();
+        var ordered = new List<FileTreeNode>();
+        foreach (var item in FileTree.GetVisualDescendants().OfType<TreeViewItem>())
+        {
+            if (item.DataContext is FileTreeNode n && selected.Remove(n))
+                ordered.Add(n);
+        }
+        // Selected but scrolled out of the realized containers
+        ordered.AddRange(selected);
+        return ordered;
+    }
+
+    private async Task<DataTransfer> BuildTreeDragDataAsync(IReadOnlyList<FileTreeNode> nodes)
     {
         var data = new DataTransfer();
-        var entry = new DataTransferItem();
-        var path = node.FullPath;
+        var entries = new List<DataTransferItem>();
+
+        foreach (var node in nodes)
+        {
+            var entry = new DataTransferItem();
+            try
+            {
+                IStorageItem? item = node.IsDirectory
+                    ? await HostWindow.StorageProvider.TryGetFolderFromPathAsync(node.FullPath)
+                    : await HostWindow.StorageProvider.TryGetFileFromPathAsync(node.FullPath);
+                if (item != null)
+                    entry.SetFile(item);
+            }
+            catch { /* keep the text-only payload */ }
+            entries.Add(entry);
+        }
 
         // Own format + plain text keep the drop working even when the storage
-        // lookup below fails (UNC paths, permission issues, …)
-        entry.Set(TerminalControl.ExplorerPathFormat, path);
-        entry.SetText(path.Contains(' ') ? "\"" + path + "\"" : path);
+        // lookup above fails (UNC paths, permission issues, …). They go on the
+        // first item only, carrying every path, so the drop target reads them once.
+        var paths = nodes.Select(n => n.FullPath).ToList();
+        entries[0].Set(TerminalControl.ExplorerPathFormat, string.Join("\n", paths));
+        entries[0].SetText(string.Join(" ", paths.Select(p => p.Contains(' ') ? "\"" + p + "\"" : p)));
 
-        try
-        {
-            IStorageItem? item = node.IsDirectory
-                ? await HostWindow.StorageProvider.TryGetFolderFromPathAsync(path)
-                : await HostWindow.StorageProvider.TryGetFileFromPathAsync(path);
-            if (item != null)
-                entry.SetFile(item);
-        }
-        catch { /* keep the text-only payload */ }
-
-        // Added last so the item carries every format it is going to have
-        data.Add(entry);
+        // Added last so each item carries every format it is going to have
+        foreach (var entry in entries)
+            data.Add(entry);
         return data;
     }
 
@@ -3066,6 +3133,8 @@ internal partial class AppShell : UserControl, IDockOwner
 
     private FileTreeNode? GetSelectedTreeNode()
     {
+        if (_treeLastPressed != null && FileTree.SelectedItems.Contains(_treeLastPressed))
+            return _treeLastPressed;
         return FileTree.SelectedItem as FileTreeNode;
     }
 

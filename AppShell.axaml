@@ -423,6 +423,7 @@
                             <TreeView x:Name="FileTree"
                                       Background="Transparent"
                                       Margin="0,4"
+                                      SelectionMode="Multiple"
                                       DoubleTapped="OnTreeItemDoubleTapped">
                                 <TreeView.ContextMenu>
                                     <ContextMenu>
