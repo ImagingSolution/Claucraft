@@ -68,12 +68,17 @@ public static class UpdateService
     /// </summary>
     private static readonly HttpClient Http = new() { Timeout = Timeout.InfiniteTimeSpan };
 
-    /// <summary>The real build, whatever the test hook says. This is what the notice shows.</summary>
-    public static Version RunningVersion =>
-        Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0, 0);
+    /// <summary>
+    /// The real build, whatever the test hook says. This is what the notice shows. Trimmed to
+    /// three parts: the assembly always reports a fourth (0), but versions and tags are "1.0.X".
+    /// </summary>
+    public static Version RunningVersion { get; } =
+        Assembly.GetExecutingAssembly().GetName().Version is { } v
+            ? new Version(v.Major, v.Minor, Math.Max(v.Build, 0))
+            : new Version(0, 0, 0);
 
     /// <summary>The version a release is measured against.</summary>
-    public static Version CurrentVersion => TestMode ? new Version(0, 0, 0, 0) : RunningVersion;
+    public static Version CurrentVersion => TestMode ? new Version(0, 0, 0) : RunningVersion;
 
     private static readonly string UserAgent = $"Claucraft/{RunningVersion}";
 
@@ -188,7 +193,7 @@ public static class UpdateService
         return value.Length > 0;
     }
 
-    /// <summary>Tags are written "v0.1.12.744"; the leading v is the only decoration.</summary>
+    /// <summary>Tags are written "v1.0.12"; the leading v is the only decoration.</summary>
     private static bool TryParseTag(string tag, out Version version)
     {
         var text = tag.TrimStart('v', 'V').Trim();
