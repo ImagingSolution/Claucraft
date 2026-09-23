@@ -398,6 +398,8 @@ internal partial class AppShell : UserControl, IDockOwner
         _rateLimits.Updated += OnRateLimitsUpdated;
         BuildModelFlyout();
         BuildEffortFlyout();
+        ModelCatalog.Changed += () => Dispatcher.UIThread.Post(OnModelCatalogChanged);
+        _ = ModelCatalog.ScanRecentTranscriptsAsync();
 
         // Mirror what the CLI is doing into the status bar. Cheap: reads the screen buffer
         // that is already in memory, no extra process or file access.
@@ -7038,7 +7040,11 @@ internal partial class AppShell : UserControl, IDockOwner
         // Caught here regardless of what triggered it - Claucraft's own dropdown, "/model x"
         // typed straight at the prompt, or the CLI's own interactive picker - since all three
         // end with the CLI printing this same banner.
-        if (snap.ModelSwitchedTo is { Length: > 0 } switched) _pendingModelLabel = switched;
+        if (snap.ModelSwitchedTo is { Length: > 0 } switched)
+        {
+            _pendingModelLabel = switched;
+            ModelCatalog.ObserveName(switched);
+        }
 
         if (!_cli.Features.CompactButton)
         {
@@ -7096,6 +7102,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         ApplyContextMeter();
 
+        ModelCatalog.ObserveId(session.Model);
         var model = SessionCostMonitor.ModelDisplayName(session.Model);
 
         // A switch only reaches the transcript with the next reply, so the picked name stands
@@ -7140,9 +7147,8 @@ internal partial class AppShell : UserControl, IDockOwner
     /// <summary>
     /// What the model dropdown offers, as (alias to send, id that alias resolves to today).
     /// The alias is what gets sent - it always points at the newest release in its line, so a
-    /// new version needs no change here. The id exists only to name the entry, and it is run
-    /// through the same table the status bar reads with, which keeps the displayed names in
-    /// one place: when a line ships a new version, ModelDisplayName is the only edit.
+    /// new version needs no change here. The id exists only to name the entry; ModelCatalog
+    /// moves it forward as newer versions turn up in the transcripts.
     /// </summary>
     private void OnPreferredModelChanged(object? sender, SelectionChangedEventArgs e)
     {
@@ -7166,23 +7172,31 @@ internal partial class AppShell : UserControl, IDockOwner
         _settings.Save();
     }
 
-    private static readonly (string Alias, string ModelId)[] SwitchableModels =
+    /// <summary>
+    /// A line moved to a newer version: rename its entries in the status-bar dropdown and in the
+    /// launch-time override box, keeping whatever the box has selected.
+    /// </summary>
+    private void OnModelCatalogChanged()
     {
-        ("fable", "claude-fable-5-1"),
-        ("opus", "claude-opus-5"),
-        ("sonnet", "claude-sonnet-5"),
-        ("haiku", "claude-haiku-4-5"),
-    };
+        BuildModelFlyout();
+
+        if (CmbPreferredModel.ItemsSource == null) return;
+        _suppressModelEffortOverrideChange = true;
+        int index = CmbPreferredModel.SelectedIndex;
+        CmbPreferredModel.ItemsSource = ModelOverrideChoices.Select(c => c.Label).ToList();
+        CmbPreferredModel.SelectedIndex = index;
+        _suppressModelEffortOverrideChange = false;
+    }
 
     /// <summary>
-    /// Fills the model dropdown. Built once: the entries never change, and which one is active
-    /// is already on the bar next to it.
+    /// Fills the model dropdown. Rebuilt whenever <see cref="ModelCatalog"/> learns of a newer
+    /// version, so each entry carries the name of the model its alias resolves to today.
     /// </summary>
     private void BuildModelFlyout()
     {
         var flyout = new MenuFlyout { Placement = PlacementMode.Top };
 
-        foreach (var (alias, modelId) in SwitchableModels)
+        foreach (var (alias, modelId) in ModelCatalog.Switchable)
         {
             var label = SessionCostMonitor.ModelDisplayName(modelId);
             var item = new MenuItem { Header = label };
@@ -7279,9 +7293,9 @@ internal partial class AppShell : UserControl, IDockOwner
     /// the launch profile's own flags decide; reuses the same alias tables the mid-session
     /// switch flyouts use, so the two pickers never drift apart.
     /// </summary>
-    private static readonly (string? Alias, string Label)[] ModelOverrideChoices =
+    private static (string? Alias, string Label)[] ModelOverrideChoices =>
         new (string? Alias, string Label)[] { (null, Loc.Get("EffortAuto")) }
-            .Concat(SwitchableModels.Select(m => ((string?)m.Alias, SessionCostMonitor.ModelDisplayName(m.ModelId))))
+            .Concat(ModelCatalog.Switchable.Select(m => ((string?)m.Alias, SessionCostMonitor.ModelDisplayName(m.ModelId))))
             .ToArray();
 
     private static readonly (string? Alias, string Label)[] EffortOverrideChoices =
@@ -7421,11 +7435,7 @@ internal partial class AppShell : UserControl, IDockOwner
     private static string? ModelIdForAlias(string? alias)
     {
         if (string.IsNullOrWhiteSpace(alias)) return null;
-        foreach (var (candidate, modelId) in SwitchableModels)
-        {
-            if (string.Equals(candidate, alias, StringComparison.OrdinalIgnoreCase)) return modelId;
-        }
-        return alias;
+        return ModelCatalog.IdForAlias(alias) ?? alias;
     }
 
     /// <summary>

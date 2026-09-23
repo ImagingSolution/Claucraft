@@ -298,34 +298,17 @@ public sealed class SessionCostMonitor
     }
 
     /// <summary>
-    /// The name a model goes by, from the id the transcript records. An id this build has never
-    /// heard of passes through unchanged, so a model released later still reads as something true.
+    /// The name a model goes by, from the id the transcript records ("claude-opus-5-5" →
+    /// "Opus 5.5"). Worked out from the id itself rather than a table, so a model released later
+    /// is named right without a new build; an id in some other shape passes through unchanged.
     /// </summary>
     public static string ModelDisplayName(string? modelId)
     {
         if (string.IsNullOrWhiteSpace(modelId) || modelId == "unknown") return "";
 
         var id = modelId.Trim();
-        foreach (var (prefix, name) in ModelNames)
-        {
-            if (id.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return name;
-        }
-        return id;
+        return ModelCatalog.DisplayName(id) ?? id;
     }
-
-    /// <summary>Longest ids first - "claude-opus-4-8" must not be caught by a shorter prefix.</summary>
-    private static readonly (string Prefix, string Name)[] ModelNames =
-    {
-        ("claude-sonnet-4-6", "Sonnet 4.6"),
-        ("claude-haiku-4-5", "Haiku 4.5"),
-        ("claude-opus-4-8", "Opus 4.8"),
-        ("claude-opus-4-7", "Opus 4.7"),
-        ("claude-opus-4-6", "Opus 4.6"),
-        ("claude-mythos-5", "Mythos 5"),
-        ("claude-sonnet-5", "Sonnet 5"),
-        ("claude-fable-5-1", "Fable 5.1"),
-        ("claude-opus-5", "Opus 5"),
-    };
 
     private static long ReadLong(JsonElement obj, string name)
     {
