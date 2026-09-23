@@ -868,13 +868,12 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     /// <summary>
-    /// Window title, e.g. "Claucraft Ver.0.1.12.244". Called from
+    /// Window title, e.g. "Claucraft Ver.1.0.12". Called from
     /// ApplyProviderUi() so it follows both a language change and an AI switch.
     /// </summary>
     private void UpdateWindowTitle()
     {
-        var ver = Assembly.GetExecutingAssembly().GetName().Version;
-        var verStr = ver != null ? $"Ver.{ver.Major}.{ver.Minor}.{ver.Build}.{ver.Revision}" : "";
+        var verStr = $"Ver.{UpdateService.RunningVersion}";
         if (TopLevel.GetTopLevel(this) is Window window)
             window.Title = $"{Loc.Get("AppTitle")} {verStr}";
     }
@@ -5525,6 +5524,9 @@ internal partial class AppShell : UserControl, IDockOwner
         if (!string.Equals(repo, _projectFolder, StringComparison.OrdinalIgnoreCase)) return;
 
         // Rebuilt on every click: branches come and go, unlike the fixed model and effort lists.
+        var inWorktrees = await WorktreeService.GetBranchesInOtherWorktreesAsync(repo);
+        if (!string.Equals(repo, _projectFolder, StringComparison.OrdinalIgnoreCase)) return;
+
         var flyout = new MenuFlyout { Placement = PlacementMode.Top };
         foreach (var branch in branches)
         {
@@ -5534,6 +5536,12 @@ internal partial class AppShell : UserControl, IDockOwner
                 Header = name == current ? "✓ " + name : "   " + name,
                 IsEnabled = name != current,
             };
+            // Greyed but still clickable, so the click can say why the switch is not possible.
+            if (name != current && inWorktrees.ContainsKey(name))
+            {
+                item.Header = "   " + name + "  " + Loc.Get("BranchInWorktreeTag");
+                item.Opacity = 0.5;
+            }
             item.Click += (_, _) => _ = SwitchBranchAsync(name);
             flyout.Items.Add(item);
         }
@@ -5551,6 +5559,15 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         var repo = _projectFolder;
         if (string.IsNullOrEmpty(repo)) return;
+
+        // Checked again here rather than trusting the menu: a worktree may have been opened since.
+        var inWorktrees = await WorktreeService.GetBranchesInOtherWorktreesAsync(repo);
+        if (inWorktrees.TryGetValue(branch, out var worktreePath))
+        {
+            ShowMessageDialog(Loc.Get("BranchInWorktreeTitle"),
+                string.Format(Loc.Get("BranchInWorktreeFmt"), branch, worktreePath));
+            return;
+        }
 
         if (!await ShowConfirmDialog(
                 Loc.Get("SwitchBranchConfirmTitle"),

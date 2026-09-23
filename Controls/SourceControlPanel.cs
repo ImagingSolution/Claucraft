@@ -1263,6 +1263,9 @@ public sealed class SourceControlPanel : UserControl
         if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
 
         // Rebuilt on every click: branches come and go, unlike the fixed model and effort lists.
+        var inWorktrees = await WorktreeService.GetBranchesInOtherWorktreesAsync(repo);
+        if (!string.Equals(repo, _repo, StringComparison.OrdinalIgnoreCase)) return;
+
         var flyout = new MenuFlyout { Placement = PlacementMode.Bottom };
         foreach (var branch in branches)
         {
@@ -1272,6 +1275,12 @@ public sealed class SourceControlPanel : UserControl
                 Header = name == current ? "✓ " + name : "   " + name,
                 IsEnabled = name != current,
             };
+            // Greyed but still clickable, so the click can say why the switch is not possible.
+            if (name != current && inWorktrees.ContainsKey(name))
+            {
+                item.Header = "   " + name + "  " + Loc.Get("BranchInWorktreeTag");
+                item.Opacity = 0.5;
+            }
             item.Click += (_, _) => SwitchBranch(name);
             flyout.Items.Add(item);
         }
@@ -1305,6 +1314,15 @@ public sealed class SourceControlPanel : UserControl
 
     private async void SwitchBranch(string branch)
     {
+        // Checked again here rather than trusting the menu: a worktree may have been opened since.
+        var inWorktrees = await WorktreeService.GetBranchesInOtherWorktreesAsync(_repo);
+        if (inWorktrees.TryGetValue(branch, out var worktreePath))
+        {
+            _host.ShowMessage(Loc.Get("BranchInWorktreeTitle"),
+                string.Format(Loc.Get("BranchInWorktreeFmt"), branch, worktreePath));
+            return;
+        }
+
         if (!await _host.Confirm(
                 Loc.Get("SwitchBranchConfirmTitle"),
                 string.Format(Loc.Get("SwitchBranchConfirmFmt"), branch)))

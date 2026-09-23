@@ -196,6 +196,33 @@ public static class WorktreeService
         });
     }
 
+    /// <summary>
+    /// Branches checked out in a worktree other than <paramref name="repoRoot"/>, mapped to that
+    /// worktree's folder. git refuses to switch to any of them, so the branch menus mark them
+    /// and explain instead of letting the switch fail with git's own message.
+    /// </summary>
+    public static async Task<Dictionary<string, string>> GetBranchesInOtherWorktreesAsync(string repoRoot)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(repoRoot)) return map;
+
+        var self = NormalizePath(repoRoot);
+        foreach (var worktree in await ListAsync(repoRoot))
+        {
+            if (worktree.Branch.Length == 0) continue;
+            var path = NormalizePath(worktree.Path);
+            if (string.Equals(path, self, StringComparison.OrdinalIgnoreCase)) continue;
+            map[worktree.Branch] = path;
+        }
+        return map;
+    }
+
+    private static string NormalizePath(string path)
+    {
+        try { return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar); }
+        catch { return path; }
+    }
+
     private static string Sanitize(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
