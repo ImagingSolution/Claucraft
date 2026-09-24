@@ -62,8 +62,9 @@ public sealed class CommitGraphView : Control
     private const double FontSize = 12;
 
     /// <summary>
-    /// One colour per lane, cycled. Chosen to stay legible on both the light and the dark
-    /// background, since the window follows whichever theme the app is in.
+    /// The colours branches are drawn in, handed out in turn (see <see cref="AssignColors"/>).
+    /// Chosen to stay legible on both the light and the dark background, since the window
+    /// follows whichever theme the app is in.
     /// </summary>
     private static readonly Color[] LaneColors =
     {
@@ -97,9 +98,15 @@ public sealed class CommitGraphView : Control
     private readonly IBrush _headChipText;
     private readonly IBrush _tagBrush;
     private readonly Pen _tagPen;
-    private readonly Pen _dimPen;
 
     private CommitGraph _graph = new();
+
+    /// <summary>Colour index of each row's dot, aligned with <see cref="CommitGraph.Rows"/>.</summary>
+    private int[] _rowColors = Array.Empty<int>();
+
+    /// <summary>Colour index of each line, aligned with <see cref="CommitGraph.Edges"/>.</summary>
+    private int[] _edgeColors = Array.Empty<int>();
+
     private bool _showUncommitted;
     private int _selected = -1;
     private ScrollViewer? _scroller;
@@ -137,7 +144,6 @@ public sealed class CommitGraphView : Control
         _headChipText = _dotFill;
         _tagBrush = new SolidColorBrush(Color.FromRgb(0xD2, 0x99, 0x22));
         _tagPen = new Pen(_tagBrush, 1);
-        _dimPen = new Pen(_dimBrush, 1);
 
         Focusable = true;
         ClipToBounds = true;
@@ -210,6 +216,7 @@ public sealed class CommitGraphView : Control
         bool wasUncommitted = keepSelection && IsUncommittedSelected;
 
         _graph = graph;
+        (_rowColors, _edgeColors) = AssignColors(graph);
         _showUncommitted = showUncommitted;
 
         // Lanes give up width rather than piling up at the right edge once there are more of
@@ -235,6 +242,67 @@ public sealed class CommitGraphView : Control
         // Re-announcing a selection that has not moved would only make the detail pane reload
         // the commit it is already showing.
         if (!sameSelection) SelectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Colours the graph by branch rather than by lane. A commit carries on the colour of the
+    /// child whose first parent it is along the same lane, and a commit a branch points at starts
+    /// a fresh colour -- so where history runs straight on from one branch into another, the dots
+    /// and the line change colour at the branch's commit and its label matches them.
+    /// </summary>
+    private static (int[] Rows, int[] Edges) AssignColors(CommitGraph graph)
+    {
+        var rowColors = new int[graph.Rows.Count];
+        var edgeColors = new int[graph.Edges.Count];
+
+        var arrivals = new List<int>?[graph.Rows.Count];
+        for (int e = 0; e < graph.Edges.Count; e++)
+        {
+            int to = graph.Edges[e].ToRow;
+            if (to >= 0) (arrivals[to] ??= new List<int>()).Add(e);
+        }
+
+        int next = 0;
+        for (int row = 0; row < graph.Rows.Count; row++)
+        {
+            var graphRow = graph.Rows[row];
+
+            int inherited = -1;
+            foreach (int e in arrivals[row] ?? Enumerable.Empty<int>())
+            {
+                var edge = graph.Edges[e];
+                if (edge.FromLane != graphRow.Lane || edge.TravelLane != graphRow.Lane) continue;
+                var parents = graph.Rows[edge.FromRow].Node.Parents;
+                if (parents.Count == 0 || parents[0] != graphRow.Node.Hash) continue;
+                inherited = rowColors[edge.FromRow];
+                break;
+            }
+
+            bool startsBranch = graphRow.Node is GitCommit commit && commit.Refs.Any(r =>
+                r.Kind is GitRefKind.LocalBranch or GitRefKind.RemoteBranch);
+
+            if (inherited >= 0 && !startsBranch)
+            {
+                rowColors[row] = inherited;
+                continue;
+            }
+
+            // A new branch must not look like a continuation of the one it follows on from.
+            int color = next++ % LaneColors.Length;
+            if (color == inherited) color = next++ % LaneColors.Length;
+            rowColors[row] = color;
+        }
+
+        // A line belongs to the branch on its outer side: the child's where a branch forks off
+        // or runs straight down, the parent's where a merge reaches out to it.
+        for (int e = 0; e < graph.Edges.Count; e++)
+        {
+            var edge = graph.Edges[e];
+            bool childSide = edge.FromLane >= Math.Max(edge.TravelLane, edge.ToLane);
+            edgeColors[e] = childSide || edge.ToRow < 0 ? rowColors[edge.FromRow] : rowColors[edge.ToRow];
+        }
+
+        return (rowColors, edgeColors);
     }
 
     /// <summary>
@@ -362,8 +430,9 @@ public sealed class CommitGraphView : Control
 
     private void DrawEdges(DrawingContext context, int firstRow, int lastRow, double totalHeight)
     {
-        foreach (var edge in _graph.Edges)
+        for (int e = 0; e < _graph.Edges.Count; e++)
         {
+            var edge = _graph.Edges[e];
             // A parent outside the loaded range has no row; run its line off the bottom.
             int toRow = edge.ToRow >= 0 ? edge.ToRow + RowOffset : DisplayCount;
             int fromRow = edge.FromRow + RowOffset;
@@ -375,7 +444,7 @@ public sealed class CommitGraphView : Control
             double x2 = LaneX(edge.ToLane);
             double y2 = edge.ToRow >= 0 ? RowCenter(toRow) : totalHeight;
 
-            context.DrawGeometry(null, LanePen(EdgePens, edge.ColorLane),
+            context.DrawGeometry(null, ColorPen(EdgePens, _edgeColors[e]),
                 BuildEdge(x1, y1, xt, x2, y2));
         }
     }
@@ -436,7 +505,7 @@ public sealed class CommitGraphView : Control
         if (firstRow > bottom || lastRow < 0) return;
 
         double x = LaneX(lane);
-        context.DrawLine(LanePen(StemPens, lane),
+        context.DrawLine(ColorPen(StemPens, _rowColors[headRow]),
             new Point(x, RowCenter(0)), new Point(x, RowCenter(bottom)));
     }
 
@@ -446,21 +515,23 @@ public sealed class CommitGraphView : Control
         {
             int headRow = HeadRow();
             int lane = headRow >= 0 ? _graph.Rows[headRow].Lane : 0;
-            context.DrawEllipse(_dotFill, LanePen(DotPens, lane),
+            int color = headRow >= 0 ? _rowColors[headRow] : 0;
+            context.DrawEllipse(_dotFill, ColorPen(DotPens, color),
                 new Point(LaneX(lane), RowCenter(0)), _dotRadius, _dotRadius);
         }
 
         for (int row = Math.Max(firstRow, RowOffset); row <= lastRow; row++)
         {
             var graphRow = _graph.Rows[row - RowOffset];
+            int color = _rowColors[row - RowOffset];
             var center = new Point(LaneX(graphRow.Lane), RowCenter(row));
 
             // A merge gets a ring rather than a disc, so the joins stand out when scanning.
             if (graphRow.Node is GitCommit { IsMerge: true })
-                context.DrawEllipse(_dotFill, LanePen(RingPens, graphRow.Lane), center,
+                context.DrawEllipse(_dotFill, ColorPen(RingPens, color), center,
                     _dotRadius, _dotRadius);
             else
-                context.DrawEllipse(LaneBrush(graphRow.Lane), null, center, _dotRadius, _dotRadius);
+                context.DrawEllipse(ColorBrush(color), null, center, _dotRadius, _dotRadius);
         }
     }
 
@@ -491,7 +562,7 @@ public sealed class CommitGraphView : Control
             foreach (var reference in commit.Refs)
             {
                 if (remaining < 40) break;
-                double used = DrawRefChip(context, reference, _graph.Rows[row - RowOffset].Lane, x, top, remaining);
+                double used = DrawRefChip(context, reference, _rowColors[row - RowOffset], x, top, remaining);
                 x += used;
                 remaining -= used;
             }
@@ -507,13 +578,13 @@ public sealed class CommitGraphView : Control
     }
 
     /// <summary>Draws one branch, remote, or tag label and reports how much width it took.</summary>
-    private double DrawRefChip(DrawingContext context, GitRef reference, int lane, double x, double top, double maxWidth)
+    private double DrawRefChip(DrawingContext context, GitRef reference, int color, double x, double top, double maxWidth)
     {
+        // Branches, local and remote alike, wear the colour of the line they start.
         var (brush, pen) = reference.Kind switch
         {
             GitRefKind.Tag => (_tagBrush, _tagPen),
-            GitRefKind.RemoteBranch => (_dimBrush, _dimPen),
-            _ => (LaneBrush(lane), LanePen(ChipPens, lane)),
+            _ => (ColorBrush(color), ColorPen(ChipPens, color)),
         };
 
         var text = new FormattedText(reference.Name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
@@ -570,11 +641,9 @@ public sealed class CommitGraphView : Control
 
     private static double RowCenter(int row) => row * RowHeight + RowHeight / 2;
 
-    private static int ColorIndex(int lane) => Math.Abs(lane) % LaneColors.Length;
+    private static IBrush ColorBrush(int color) => LaneBrushes[color];
 
-    private static IBrush LaneBrush(int lane) => LaneBrushes[ColorIndex(lane)];
-
-    private static Pen LanePen(Pen[] pens, int lane) => pens[ColorIndex(lane)];
+    private static Pen ColorPen(Pen[] pens, int color) => pens[color];
 
     private static string FormatDate(DateTimeOffset date) =>
         date == default ? "" : date.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
