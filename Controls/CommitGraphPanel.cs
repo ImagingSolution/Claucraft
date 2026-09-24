@@ -475,8 +475,7 @@ public class CommitGraphPanel : UserControl
                 !(quietOnConflict && (await GitWriteService.GetConflictsAsync(_repoRoot)).Count > 0))
             {
                 var detail = result.Message;
-                _showMessage?.Invoke(Loc.Get("GitFailedTitle"),
-                    detail.Length > 0 ? detail : Loc.Get("GitFailedTitle"));
+                _showMessage?.Invoke(Loc.Get("GitFailedTitle"), GitErrorHints.Describe(detail));
             }
         }
         catch (Exception ex)

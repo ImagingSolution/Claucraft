@@ -1050,8 +1050,7 @@ public sealed class SourceControlPanel : UserControl
             if (!ok && !(quietOnConflict && (await GitWriteService.GetConflictsAsync(_repo)).Count > 0))
             {
                 var detail = result.Message;
-                _host.ShowMessage(Loc.Get("GitFailedTitle"),
-                    detail.Length > 0 ? detail : Loc.Get("GitFailedTitle"));
+                _host.ShowMessage(Loc.Get("GitFailedTitle"), GitErrorHints.Describe(detail));
             }
         }
         catch (Exception ex)

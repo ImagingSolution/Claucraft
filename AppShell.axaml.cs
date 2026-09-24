@@ -5674,8 +5674,7 @@ internal partial class AppShell : UserControl, IDockOwner
             if (!result.Ok)
             {
                 var detail = result.Message;
-                ShowMessageDialog(Loc.Get("GitFailedTitle"),
-                    detail.Length > 0 ? detail : Loc.Get("GitFailedTitle"));
+                ShowMessageDialog(Loc.Get("GitFailedTitle"), GitErrorHints.Describe(detail));
             }
 
             return result.Ok;
