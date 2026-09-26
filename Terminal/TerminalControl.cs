@@ -1378,10 +1378,10 @@ public class TerminalControl : Control, IDisposable
         return availableSize;
     }
 
-    /// <summary>The composer card: centred on the transcript's reading column, above a margin.</summary>
+    /// <summary>The composer card: spans the window like the transcript, above a margin.</summary>
     private Rect ChatCardRect(double width, double height)
     {
-        double cardW = Math.Max(0, Math.Min(Controls.ChatTheme.ColumnMaxWidth, width - 48));
+        double cardW = Math.Max(0, width - 48);
         double cardH = ChatComposerHeight - ChatGapTop - ChatGapBottom;
         return new Rect((width - cardW) / 2, height - ChatGapBottom - cardH, cardW, cardH);
     }

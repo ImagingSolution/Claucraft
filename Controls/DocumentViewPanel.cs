@@ -19,9 +19,6 @@ namespace Claucraft.Controls;
 /// </summary>
 public static class ChatTheme
 {
-    /// <summary>Width of the reading column; the transcript and the composer both centre on it.</summary>
-    public const double ColumnMaxWidth = 760;
-
     // Sampled from the desktop app's own dark and light themes
     public static Color Background(bool isDark) => isDark ? Color.FromRgb(21, 21, 21) : Color.FromRgb(252, 252, 251);
     public static Color UserBubble(bool isDark) => isDark ? Color.FromRgb(33, 33, 33) : Color.FromRgb(240, 240, 239);
@@ -119,7 +116,6 @@ public class DocumentViewPanel : Panel
         _messagesStack = new StackPanel
         {
             Spacing = 10,
-            MaxWidth = ChatTheme.ColumnMaxWidth,
             Margin = new Thickness(24, 20, 24, 28),
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
@@ -463,7 +459,7 @@ public class DocumentViewPanel : Panel
                 CornerRadius = new CornerRadius(14),
                 Padding = new Thickness(14, 9),
                 HorizontalAlignment = HorizontalAlignment.Right,
-                MaxWidth = ChatTheme.ColumnMaxWidth * 0.8,
+                Margin = new Thickness(56, 0, 0, 0),
                 Child = new SelectableTextBlock
                 {
                     Text = msg.Text,
@@ -762,7 +758,6 @@ public class DocumentViewPanel : Panel
                     CornerRadius = new CornerRadius(14),
                     Padding = new Thickness(14, 9),
                     HorizontalAlignment = HorizontalAlignment.Right,
-                    MaxWidth = ChatTheme.ColumnMaxWidth * 0.8,
                     Margin = new Thickness(56, 0, 0, 0),
                     Child = new SelectableTextBlock
                     {
@@ -899,7 +894,6 @@ public class DocumentViewPanel : Panel
             Padding = new Thickness(14, 10),
             Margin = new Thickness(0, 0, 56, 0),
             HorizontalAlignment = HorizontalAlignment.Left,
-            MaxWidth = ChatTheme.ColumnMaxWidth * 0.85,
             Child = stack,
         };
     }
