@@ -1341,7 +1341,9 @@ public class TerminalControl : Control, IDisposable
         {
             // The box takes the height its text wraps to, within bounds, and the transcript
             // above gives up that much room
-            double w = Bounds.Width > 0 ? Bounds.Width : availableSize.Width;
+            // The width being measured for, not the last one arranged: going by Bounds, a window
+            // that just got narrower lays out at its old width and clips the right-hand side
+            double w = double.IsFinite(availableSize.Width) ? availableSize.Width : Bounds.Width;
             var card = ChatCardRect(w, 0);
             _inputTextBox.Measure(new Size(Math.Max(0, card.Width - ChatCardPadX * 2), double.PositiveInfinity));
             _chatInputHeight = Math.Clamp(_inputTextBox.DesiredSize.Height, ChatInputMinHeight, ChatInputMaxHeight);
@@ -1367,11 +1369,12 @@ public class TerminalControl : Control, IDisposable
         _attachStrip.Measure(new Size(availableSize.Width, Controls.ImageAttachmentStrip.StripHeight));
         if (_isDocumentView && _docViewPanel != null)
         {
-            // Use Bounds for actual size (availableSize may be Infinity)
-            double actualH = Bounds.Height > 0 ? Bounds.Height : availableSize.Height;
+            // Prefer the size being measured for; Bounds only stands in when that is unbounded,
+            // since it still holds the previous layout's size and would keep bubbles off-screen
+            double actualH = double.IsFinite(availableSize.Height) ? availableSize.Height : Bounds.Height;
             double docH = Math.Max(0, actualH - InputAreaHeight - ExpandedPanelHeight);
             _docViewPanel.Measure(new Size(
-                Bounds.Width > 0 ? Bounds.Width : availableSize.Width,
+                double.IsFinite(availableSize.Width) ? availableSize.Width : Bounds.Width,
                 docH));
         }
         _permissionOverlay?.Measure(availableSize);
