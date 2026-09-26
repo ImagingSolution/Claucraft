@@ -1075,17 +1075,14 @@ internal partial class AppShell : UserControl, IDockOwner
     private void OnActivityDocView(object? sender, RoutedEventArgs e)
     {
         if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
-        var terminal = _children[_activeChildIndex].Terminal;
+        var child = _children[_activeChildIndex];
+        var terminal = child.Terminal;
 
-        // Find session JSONL path
-        string? sessionPath = null;
-        if (CmbSessions.SelectedItem is SessionInfo selected)
-            sessionPath = SessionMessageReader.FindSessionFile(_projectFolder ?? "", selected.Id);
-        sessionPath ??= SessionMessageReader.FindMostRecentSession(_projectFolder ?? "");
-
-        if (sessionPath != null)
-            terminal.SetDocumentViewSession(sessionPath);
-
+        // This window's own transcript only. The session dropdown and the newest file in the
+        // folder both belong to whichever window wrote last, so a fresh window showed its
+        // neighbour's conversation. Until TrackSessionIdAsync learns the id the view stays
+        // empty; RefreshSessionReadout attaches it on the next tick after that.
+        terminal.SetDocumentViewSession(ResolveSessionPath(child));
         terminal.ToggleDocumentView();
         SetActivityButtonActive(BtnActivityDocView, terminal.IsDocumentView);
     }
@@ -4769,6 +4766,11 @@ internal partial class AppShell : UserControl, IDockOwner
 
         _insight = TerminalInsight.Analyze(screen);
 
+        // A new window learns its session id a poll or two after launch, and /clear moves it to
+        // a new one; either way Chat View follows the window's own transcript.
+        if (_children[_activeChildIndex].Terminal is { IsDocumentView: true } docTerminal)
+            docTerminal.SetDocumentViewSession(ResolveActiveSessionPath());
+
         // Judged once here and reused for the rest of the poll: the blink, the progress line
         // and the activity readout all answer the same question and must not disagree.
         _activeBusy = IsChildBusy(_children[_activeChildIndex], _insight.IsWorking);
@@ -7036,6 +7038,7 @@ internal partial class AppShell : UserControl, IDockOwner
     /// </summary>
     private async void RefreshSessionReadout(TerminalSnapshot snap)
     {
+
         // Caught here regardless of what triggered it - Claucraft's own dropdown, "/model x"
         // typed straight at the prompt, or the CLI's own interactive picker - since all three
         // end with the CLI printing this same banner.

@@ -443,6 +443,7 @@ public class TerminalControl : Control, IDisposable
         if (string.IsNullOrEmpty(_inputTextBox.Text) && !_attachStrip.HasItems) return false;
 
         bool withImages = _attachStrip.HasItems;
+        _docViewPanel?.ShowPendingPrompt(_inputTextBox.Text ?? "");
         var text = JoinWithAttachments(_inputTextBox.Text ?? "");
         PromptSubmitted?.Invoke(text);
         WriteAndSubmit(text, withImages);
@@ -2781,6 +2782,7 @@ public class TerminalControl : Control, IDisposable
         var text = JoinWithAttachments(_expandedTextBox.Text ?? "");
         if (!string.IsNullOrEmpty(text))
         {
+            if (_isDocumentView) _docViewPanel?.ShowPendingPrompt(_expandedTextBox.Text ?? "");
             // Record input position for prompt navigation
             int submitRow = _inputStartAbsRow;
             if (_userInputRows.Count == 0 || Math.Abs(_userInputRows[^1] - submitRow) > 1)
@@ -3639,11 +3641,19 @@ public class TerminalControl : Control, IDisposable
 
     public void SetDocumentViewSession(string? path)
     {
+        if (string.Equals(_docViewSessionPath, path, StringComparison.OrdinalIgnoreCase)) return;
         _docViewSessionPath = path;
-        if (_isDocumentView && _docViewPanel != null && path != null)
+        if (!_isDocumentView || _docViewPanel == null) return;
+
+        if (path != null)
         {
             _docViewPanel.LoadSession(path);
             _docViewPanel.StartPolling();
+        }
+        else
+        {
+            _docViewPanel.StopPolling();
+            _docViewPanel.Clear();
         }
     }
 
@@ -3668,6 +3678,10 @@ public class TerminalControl : Control, IDisposable
             {
                 _docViewPanel.LoadSession(_docViewSessionPath);
                 _docViewPanel.StartPolling();
+            }
+            else
+            {
+                _docViewPanel.Clear();
             }
             StartSuggestionWatch();
         }
@@ -3705,6 +3719,7 @@ public class TerminalControl : Control, IDisposable
             _suggestionTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
             _suggestionTimer.Tick += (_, _) =>
             {
+                _docViewPanel?.SetWorking(Services.TerminalInsight.IsWorking(GetScreenText(0)));
                 var s = ReadPromptSuggestion();
                 if (s == _promptSuggestion) return;
                 _promptSuggestion = s;
@@ -3718,6 +3733,7 @@ public class TerminalControl : Control, IDisposable
     {
         _suggestionTimer?.Stop();
         _promptSuggestion = null;
+        _docViewPanel?.SetWorking(false);
     }
 
     private void ApplyChatPlaceholder()

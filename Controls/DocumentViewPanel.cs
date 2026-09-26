@@ -58,6 +58,12 @@ public class DocumentViewPanel : Panel
     private readonly TextBlock _emptyLabel;
     private readonly Button _scrollDownButton;
     private readonly DispatcherTimer _pollTimer;
+    private Control? _pendingView;
+    private int _pendingUserCount;
+    private DateTime _pendingSince;
+    private static readonly TimeSpan PendingPromptTimeout = TimeSpan.FromSeconds(15);
+    private readonly Control _workingView;
+    private bool _isWorking;
 
     // What is on screen, one entry per message, so a poll only rebuilds the changed tail
     private readonly List<string> _keys = new();
@@ -162,6 +168,12 @@ public class DocumentViewPanel : Panel
         ApplyChrome();
         SetEmptyState(Loc.Get("NoSession", "No session loaded"));
 
+        _workingView = new ClaudeSparkIndicator
+        {
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _pollTimer.Tick += OnPollTick;
     }
@@ -191,10 +203,54 @@ public class DocumentViewPanel : Panel
     public void LoadSession(string jsonlPath)
     {
         _currentSessionPath = jsonlPath;
+        _pendingView = null;
         _autoScroll = true;
         ClearViews();
         Refresh(force: true);
         ScrollToBottom();
+    }
+
+    /// <summary>
+    /// Shows a just-sent prompt straight away. The CLI writes it to the transcript a moment later
+    /// and the poll picks it up after that; until then this bubble stands in for it.
+    /// </summary>
+    public void ShowPendingPrompt(string text)
+    {
+        RemovePendingView();
+        // Slash commands are not always written to the transcript as a prompt
+        if (string.IsNullOrWhiteSpace(text) || text.TrimStart().StartsWith('/') || _currentSessionPath == null) return;
+
+        _pendingUserCount = _keys.Count(k => k.StartsWith("0|"));
+        _pendingSince = DateTime.UtcNow;
+        var msg = new ConversationMessage(MessageRole.User, text, DateTime.Now, null, false, false);
+        _pendingView = CreateUserView(msg, _keys.Count > 0 ? msg : null);
+        _messagesStack.Children.Add(_pendingView);
+        PlaceWorkingView();
+        SetEmptyState(null);
+        _autoScroll = true;
+        ScrollToBottom();
+    }
+
+    private void RemovePendingView()
+    {
+        if (_pendingView != null) _messagesStack.Children.Remove(_pendingView);
+    }
+
+    /// <summary>Whether the CLI is mid-turn; shows the spark under the transcript while it is.</summary>
+    public void SetWorking(bool working)
+    {
+        if (working == _isWorking) return;
+        _isWorking = working;
+        PlaceWorkingView();
+        if (_autoScroll) ScrollToBottom();
+    }
+
+    // The spark stays the last thing in the column. A just-sent prompt shows it too, since the
+    // CLI takes a moment to start its spinner.
+    private void PlaceWorkingView()
+    {
+        _messagesStack.Children.Remove(_workingView);
+        if (_isWorking || _pendingView != null) _messagesStack.Children.Add(_workingView);
     }
 
     public void StartPolling() => _pollTimer.Start();
@@ -245,7 +301,8 @@ public class DocumentViewPanel : Panel
     {
         if (string.IsNullOrEmpty(_currentSessionPath)) return;
         if (!System.IO.File.Exists(_currentSessionPath)) return;
-        if (CountLines(_currentSessionPath) == _lastLineCount) return;
+        bool pendingExpired = _pendingView != null && DateTime.UtcNow - _pendingSince > PendingPromptTimeout;
+        if (CountLines(_currentSessionPath) == _lastLineCount && !pendingExpired) return;
 
         if (Refresh(force: false) && _autoScroll)
             ScrollToBottom();
@@ -260,6 +317,8 @@ public class DocumentViewPanel : Panel
         var messages = SessionMessageReader.ReadSession(path);
         _lastLineCount = CountLines(path);
         UpdateHeader(path, messages);
+        RemovePendingView();
+        _messagesStack.Children.Remove(_workingView);
 
         // Keep the longest prefix that is unchanged and rebuild only what follows it, so
         // expanded groups and the scroll position survive a new reply arriving.
@@ -283,6 +342,17 @@ public class DocumentViewPanel : Panel
             _keys.Add(key);
             _views.Add(view);
         }
+
+        // Keep the stand-in bubble last until the transcript holds the prompt it stands for
+        if (_pendingView != null)
+        {
+            bool arrived = messages.Count(m => m.Role == MessageRole.User) > _pendingUserCount;
+            if (arrived || DateTime.UtcNow - _pendingSince > PendingPromptTimeout)
+                _pendingView = null;
+            else
+                _messagesStack.Children.Add(_pendingView);
+        }
+        PlaceWorkingView();
 
         SetEmptyState(_messagesStack.Children.Count == 0 ? "" : null);
         return changed;
@@ -862,5 +932,64 @@ public class DocumentViewPanel : Panel
             return count;
         }
         catch { return 0; }
+    }
+}
+
+/// <summary>
+/// The desktop app's "Claude is writing" mark: the orange spark under the reply, its rays
+/// breathing in and out one after another while the whole mark turns slowly.
+/// </summary>
+public class ClaudeSparkIndicator : Control
+{
+    private const int RayCount = 12;
+    // Uneven resting lengths, like the hand-drawn rays of the logo
+    private static readonly double[] RayLength = { 1.0, 0.78, 0.92, 0.7, 0.96, 0.82, 1.0, 0.74, 0.9, 0.8, 0.95, 0.72 };
+    private readonly DateTime _start = DateTime.UtcNow;
+    private bool _running;
+
+    public ClaudeSparkIndicator()
+    {
+        Width = 22;
+        Height = 22;
+        IsHitTestVisible = false;
+    }
+
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _running = true;
+        RequestFrame();
+    }
+
+    protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        _running = false;
+        base.OnDetachedFromVisualTree(e);
+    }
+
+    private void RequestFrame() => TopLevel.GetTopLevel(this)?.RequestAnimationFrame(_ =>
+    {
+        if (!_running) return;
+        InvalidateVisual();
+        RequestFrame();
+    });
+
+    public override void Render(DrawingContext context)
+    {
+        double t = (DateTime.UtcNow - _start).TotalSeconds;
+        var c = new Point(Bounds.Width / 2, Bounds.Height / 2);
+        double radius = Math.Min(Bounds.Width, Bounds.Height) / 2;
+        double spin = t * 0.9;
+        var pen = new Pen(new SolidColorBrush(ChatTheme.Accent), radius * 0.2, lineCap: PenLineCap.Round);
+
+        for (int i = 0; i < RayCount; i++)
+        {
+            // A wave runs round the mark: each ray grows and shrinks a little after its neighbour
+            double wave = 0.5 + 0.5 * Math.Sin(t * 4.2 - i * (2 * Math.PI / RayCount) * 2);
+            double len = radius * RayLength[i] * (0.55 + 0.45 * wave);
+            double a = spin + i * 2 * Math.PI / RayCount;
+            var dir = new Vector(Math.Cos(a), Math.Sin(a));
+            context.DrawLine(pen, c + dir * (radius * 0.12), c + dir * len);
+        }
     }
 }
