@@ -41,6 +41,9 @@ public class WorkspaceTab
 
     /// <summary>Reasoning effort the tab was running at, or empty when unknown.</summary>
     public string Effort { get; set; } = "";
+
+    /// <summary>Whether the tab was showing Chat View rather than the terminal.</summary>
+    public bool ChatView { get; set; }
 }
 
 /// <summary>Root object persisted to workspace.json.</summary>

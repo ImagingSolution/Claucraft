@@ -92,6 +92,12 @@ public class AppSettings
     /// </summary>
     public string? LastEffort { get; set; }
 
+    /// <summary>
+    /// Whether the window in front was last showing Chat View, so a session opened with no
+    /// window to take after - from the welcome page's Recent list - still opens the same way.
+    /// </summary>
+    public bool LastChatView { get; set; }
+
     // ── Source control ──
 
     /// <summary>

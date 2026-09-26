@@ -1084,7 +1084,21 @@ internal partial class AppShell : UserControl, IDockOwner
         // empty; RefreshSessionReadout attaches it on the next tick after that.
         terminal.SetDocumentViewSession(ResolveSessionPath(child));
         terminal.ToggleDocumentView();
+        SyncDocViewReadout(terminal);
+    }
+
+    /// <summary>
+    /// Points the Chat View button at the window in front, and remembers its mode for sessions
+    /// opened after every window is gone.
+    /// </summary>
+    private void SyncDocViewReadout(TerminalControl terminal)
+    {
         SetActivityButtonActive(BtnActivityDocView, terminal.IsDocumentView);
+        if (_settings.LastChatView != terminal.IsDocumentView)
+        {
+            _settings.LastChatView = terminal.IsDocumentView;
+            _settings.Save();
+        }
     }
 
     private async void OnActivityDiagram(object? sender, RoutedEventArgs e)
@@ -7750,6 +7764,7 @@ internal partial class AppShell : UserControl, IDockOwner
                 WorktreeBranch = child.WorktreeBranch ?? "",
                 WorktreeOrigin = child.WorktreeOrigin ?? "",
                 Effort = child.Effort ?? "",
+                ChatView = child.Terminal.IsDocumentView,
             });
         }
 
@@ -7788,10 +7803,11 @@ internal partial class AppShell : UserControl, IDockOwner
 
             // Each tab comes back at its own effort, not the one of whichever tab reopened before it.
             string? tabEffort = string.IsNullOrEmpty(tab.Effort) ? _settings.LastEffort : tab.Effort;
+            // Likewise its own view mode, rather than inheriting the tab restored before it.
             if (canResume)
-                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId, ActiveLaunchProfile()), tab.TabTitle, tab.TabTitle, tab.SessionId, lease, tabEffort);
+                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId, ActiveLaunchProfile()), tab.TabTitle, tab.TabTitle, tab.SessionId, lease, tabEffort, tab.ChatView);
             else
-                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle, worktree: lease, effort: tabEffort);
+                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle, worktree: lease, effort: tabEffort, chatView: tab.ChatView);
 
             if (tab.IsManualTitle && _children.Count > 0)
             {
@@ -8262,6 +8278,8 @@ internal partial class AppShell : UserControl, IDockOwner
         SetActiveLayoutItem(child);
 
         UpdateStripSelection();
+        // Chat View is per window, so the activity button follows the window taking over.
+        SyncDocViewReadout(child.Terminal);
 
         // The transcript readouts belong to the window being left behind. Repaint them from the
         // window taking over here rather than on the next poll, so the context meter cannot
@@ -8424,8 +8442,15 @@ internal partial class AppShell : UserControl, IDockOwner
 
     private void CreateNewChild(string command, string tabTitle, string? firstInput = null,
                                 string? sessionId = null, WorktreeLease? worktree = null,
-                                string? effort = null)
+                                string? effort = null, bool? chatView = null)
     {
+        // Null means "open the way the window in front is shown", so resuming and continuing
+        // keep Chat View just as New Session does.
+        bool startInChat = chatView
+            ?? (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
+                ? _children[_activeChildIndex].Terminal.IsDocumentView
+                : _settings.LastChatView);
+
         // A new window carries on at the effort of the one in front, or failing that the one the
         // app was last left at; the CLI's own default would otherwise reset it on every launch.
         command = PinEffort(command, effort
@@ -8709,6 +8734,16 @@ internal partial class AppShell : UserControl, IDockOwner
             // and ShellHost is the one place that knows how each one wraps a launch. The CLI goes
             // in because `command` was quoted for whatever shell it picks.
             terminal.StartProcess(ShellHost.Build(command, workFolder, _cli.Active), workFolder);
+            // Start in Chat View when asked to. A resumed session's transcript is attached now; a
+            // new one's does not exist yet, and the session poll attaches it once
+            // TrackSessionIdAsync learns the id.
+            if (startInChat && !terminal.IsDocumentView)
+            {
+                terminal.SetDocumentViewSession(ResolveSessionPath(entry));
+                terminal.ToggleDocumentView();
+            }
+            if (ReferenceEquals(_activeChild, entry))
+                SyncDocViewReadout(terminal);
             terminal.FocusTerminal();
             // The new child is already active, so nothing else will refresh the status bar
             // for it: without this, Stop / Undo stay blank until the tab is clicked.
@@ -9188,11 +9223,15 @@ internal partial class AppShell : UserControl, IDockOwner
 
     private async void LaunchClaudeWithInitialPrompt(bool? forceWorktree = null)
     {
+        // Read before the await: the worktree dialog can change which window is in front.
+        bool chatView = _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+            && _children[_activeChildIndex].Terminal.IsDocumentView;
         var worktree = await PrepareWorktreeAsync(forceWorktree);
         CreateNewChild(
             _cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()),
             _cli.Active.Name,
-            worktree: worktree);
+            worktree: worktree,
+            chatView: chatView);
     }
 
     /// <summary>The launch profile new sessions start with, or null when the CLI defines none.</summary>
