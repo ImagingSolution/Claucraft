@@ -319,7 +319,7 @@ public class TerminalControl : Control, IDisposable
         _inputTextBox.Padding = new Thickness(2, 4);
         _inputTextBox.FontFamily = Controls.ChatTheme.BodyFont;
         _inputTextBox.FontSize = Controls.ChatTheme.BodySize(_fontSize);
-        _inputTextBox.PlaceholderText = Services.Loc.Get("ChatInputPlaceholder");
+        ApplyChatPlaceholder();
         _inputTextBox.TextWrapping = TextWrapping.Wrap;
         _inputTextBox.AcceptsReturn = true;
         _inputTextBox.MinHeight = 0;
@@ -913,7 +913,11 @@ public class TerminalControl : Control, IDisposable
         // Enter: send text to PTY
         if (e.Key == Key.Enter)
         {
-            // Document view mode: send accumulated text from input box, then \r
+            // Document view mode: send accumulated text from input box, then \r.
+            // An empty box sends the CLI's suggested prompt shown as its placeholder.
+            if (_isDocumentView && string.IsNullOrEmpty(_inputTextBox.Text) && !_attachStrip.HasItems
+                && _promptSuggestion is { } suggested)
+                _inputTextBox.Text = suggested;
             if (_isDocumentView && SubmitChatInput())
             {
                 e.Handled = true;
@@ -945,6 +949,16 @@ public class TerminalControl : Control, IDisposable
                 WriteAndSubmit(" " + _attachStrip.TakeReferences(), true);
             else
                 _pty?.WriteInput("\r");
+            e.Handled = true;
+            return;
+        }
+
+        // Tab in an empty chat box: take the suggested prompt into the box for editing
+        if (e.Key == Key.Tab && e.KeyModifiers == KeyModifiers.None && _isDocumentView
+            && string.IsNullOrEmpty(_inputTextBox.Text) && _promptSuggestion is { } suggestion)
+        {
+            _inputTextBox.Text = suggestion;
+            _inputTextBox.CaretIndex = suggestion.Length;
             e.Handled = true;
             return;
         }
@@ -2752,12 +2766,14 @@ public class TerminalControl : Control, IDisposable
     private async void WriteAndSubmit(string text, bool withImages)
     {
         _pty?.WriteInput(text);
-        if (withImages)
-            await Task.Delay(AttachmentSubmitDelayMs);
+        // Text arriving in one burst reads as a paste to the CLI, and a CR inside a paste is a
+        // newline rather than a submit. Attached image paths also need time to be resolved.
+        await Task.Delay(withImages ? AttachmentSubmitDelayMs : SubmitDelayMs);
         _pty?.WriteInput("\r");
     }
 
     private const int AttachmentSubmitDelayMs = 300;
+    private const int SubmitDelayMs = 150;
 
     private void SendExpandedText()
     {
@@ -3653,7 +3669,7 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.LoadSession(_docViewSessionPath);
                 _docViewPanel.StartPolling();
             }
-
+            StartSuggestionWatch();
         }
         else
         {
@@ -3662,6 +3678,7 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.IsVisible = false;
                 _docViewPanel.StopPolling();
             }
+            StopSuggestionWatch();
         }
 
         ApplyInputChrome();
@@ -3672,6 +3689,86 @@ public class TerminalControl : Control, IDisposable
         InvalidateArrange();
         InvalidateVisual();
         DocumentViewChanged?.Invoke(_isDocumentView);
+    }
+
+    // ── Suggested next prompt (chat view) ──
+
+    private DispatcherTimer? _suggestionTimer;
+    private string? _promptSuggestion;
+
+    // The terminal shows the CLI's suggestion as ghost text in its prompt; the chat view hides
+    // that prompt, so the box carries the suggestion as its placeholder instead.
+    private void StartSuggestionWatch()
+    {
+        if (_suggestionTimer == null)
+        {
+            _suggestionTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+            _suggestionTimer.Tick += (_, _) =>
+            {
+                var s = ReadPromptSuggestion();
+                if (s == _promptSuggestion) return;
+                _promptSuggestion = s;
+                ApplyChatPlaceholder();
+            };
+        }
+        _suggestionTimer.Start();
+    }
+
+    private void StopSuggestionWatch()
+    {
+        _suggestionTimer?.Stop();
+        _promptSuggestion = null;
+    }
+
+    private void ApplyChatPlaceholder()
+    {
+        if (!_isDocumentView) return;
+        _inputTextBox.PlaceholderText = _promptSuggestion is { } s
+            ? string.Format(Services.Loc.Get("ChatSuggestionPlaceholder"), s)
+            : Services.Loc.Get("ChatInputPlaceholder");
+    }
+
+    /// <summary>
+    /// The CLI's predicted next prompt: ghost text after the prompt marker with the caret still
+    /// in front of it. Null when the prompt holds typed text, or when the only dim text is the first-run
+    /// "Try ..." hint, which is an example rather than something to send.
+    /// </summary>
+    private string? ReadPromptSuggestion()
+    {
+        int bottom = _buffer.Rows - 1;
+        for (int r = bottom; r >= 0 && bottom - r < 24; r--)
+        {
+            if (FirstNonBlankCol(r) != 0) continue;
+            int marker = GetCellAt(r, 0).Character;
+            if (marker != '❯' && marker != '>') continue;
+            // The ghost text carries no dim attribute through ConPTY; what sets it apart from
+            // typed text is that the caret stays at the start of the input instead of after it.
+            if (_buffer.CursorRow != r || _buffer.CursorCol != 2) return null;
+
+            var sb = new System.Text.StringBuilder();
+            for (int row = r; row < _buffer.Rows && row - r < MaxInputBlockRows; row++)
+            {
+                // A wrapped suggestion continues at the text column; stop at anything else
+                if (row > r && FirstNonBlankCol(row) != 2) break;
+                int lastCol = -1;
+                for (int col = 2; col < _buffer.Cols; col++)
+                {
+                    var cell = GetCellAt(row, col);
+                    if ((cell.Attributes & CellAttributes.WideCharTrail) != 0) continue;
+                    if (cell.Character > ' ') lastCol = col;
+                    sb.Append(cell.Text);
+                }
+                int len = sb.Length;
+                while (len > 0 && sb[len - 1] == ' ') len--;
+                sb.Length = len;
+                sb.Append(' ');
+                if (lastCol < _buffer.Cols * 2 / 3) break;   // a short row did not wrap
+            }
+
+            var text = sb.ToString().Trim();
+            return text.Length == 0 || text.StartsWith("Try \"") ? null : text;
+        }
+        return null;
     }
 
     /// <summary>
