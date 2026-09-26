@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -234,13 +235,18 @@ public class TerminalControl : Control, IDisposable
 
         // Document view theme
         _docViewPanel?.UpdateTheme(_isDark);
+        _attachStrip.UpdateTheme(_isDark);
 
         InvalidateVisual();
     }
 
     // Terminal area height = total height - input area - expanded panel
     private double ExpandedPanelHeight => _isExpanded ? _expandedHeight : 0;
-    private double InputAreaHeight => _isExpanded ? 0 : InputBoxHeight + InputBoxMargin;
+    private double InputAreaHeight => (_isExpanded ? 0 : InputBoxHeight + InputBoxMargin) + AttachmentStripHeight;
+
+    /// <summary>Pasted/dropped images waiting to go out with the next submit.</summary>
+    private readonly Controls.ImageAttachmentStrip _attachStrip = new();
+    private double AttachmentStripHeight => _attachStrip.HasItems ? Controls.ImageAttachmentStrip.StripHeight : 0;
     private double TerminalAreaHeight => Math.Max(0, Bounds.Height - InputAreaHeight - ExpandedPanelHeight);
 
     public void SetFont(string fontFamily, double fontSize)
@@ -358,6 +364,16 @@ public class TerminalControl : Control, IDisposable
         LogicalChildren.Add(_expandButton);
         VisualChildren.Add(_expandedPanel);
         LogicalChildren.Add(_expandedPanel);
+        VisualChildren.Add(_attachStrip);
+        LogicalChildren.Add(_attachStrip);
+        _attachStrip.ItemsChanged += () =>
+        {
+            // The strip takes its height from the terminal, so the PTY follows it
+            RecalcTerminalSize();
+            InvalidateMeasure();
+            InvalidateArrange();
+            InvalidateVisual();
+        };
 
         // Build search bar
         BuildSearchBar();
@@ -512,7 +528,7 @@ public class TerminalControl : Control, IDisposable
                 goto handleKeys;
             // Let Ctrl shortcuts through
             bool isCtrl = e.KeyModifiers.HasFlag(KeyModifiers.Control);
-            if (!isCtrl)
+            if (!isCtrl && !IsAltV(e))
                 return; // Let TextBox handle normal editing (Backspace, arrows, etc.)
         }
 
@@ -529,7 +545,7 @@ public class TerminalControl : Control, IDisposable
             }
             bool isCtrlShortcut = e.KeyModifiers.HasFlag(KeyModifiers.Control)
                 && e.Key is Key.C or Key.V or Key.F or Key.Up or Key.Down;
-            if (!isCtrlShortcut)
+            if (!isCtrlShortcut && !IsAltV(e))
                 return;
         }
         handleKeys:
@@ -624,6 +640,16 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
+        // Alt+V: Claude Code CLI's image-paste key. The CLI can't read the clipboard
+        // through ConPTY, so paste the image as a file path, same as Ctrl+V does.
+        // With no image on the clipboard the key goes through as Meta-v.
+        if (IsAltV(e))
+        {
+            _ = PasteImageOrMetaVAsync();
+            e.Handled = true;
+            return;
+        }
+
         // Ctrl+X: cut the selection. Without one there is nothing to cut, so the key
         // falls through to the PTY the way any other unhandled key does.
         if (e.Key == Key.X && e.KeyModifiers.HasFlag(KeyModifiers.Control) && _hasSelection)
@@ -651,12 +677,12 @@ public class TerminalControl : Control, IDisposable
         if (e.Key == Key.Enter)
         {
             // Document view mode: send accumulated text from input box, then \r
-            if (_isDocumentView && !string.IsNullOrEmpty(_inputTextBox.Text))
+            if (_isDocumentView && (!string.IsNullOrEmpty(_inputTextBox.Text) || _attachStrip.HasItems))
             {
-                var text = _inputTextBox.Text;
+                bool withImages = _attachStrip.HasItems;
+                var text = JoinWithAttachments(_inputTextBox.Text ?? "");
                 PromptSubmitted?.Invoke(text);
-                _pty?.WriteInput(text);
-                _pty?.WriteInput("\r");
+                WriteAndSubmit(text, withImages);
                 _inputTextBox.Text = "";
                 _inputTextBox.CaretIndex = 0;
 
@@ -693,7 +719,12 @@ public class TerminalControl : Control, IDisposable
             PromptSubmitted?.Invoke(ReadSubmittedLine());
             _inputStartPending = true;
             ClearUndo();
-            _pty?.WriteInput("\r");
+            // Attached images ride along with a prompt, never with an answer to a
+            // permission question, which Enter also confirms
+            if (_attachStrip.HasItems && !IsPermissionPromptOnScreen())
+                WriteAndSubmit(" " + _attachStrip.TakeReferences(), true);
+            else
+                _pty?.WriteInput("\r");
             e.Handled = true;
             return;
         }
@@ -835,29 +866,58 @@ public class TerminalControl : Control, IDisposable
         }
     }
 
+    private static bool IsAltV(KeyEventArgs e) =>
+        e.Key == Key.V
+        && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift | KeyModifiers.Alt)) == KeyModifiers.Alt;
+
+    /// <summary>
+    /// Attaches whatever images the clipboard holds — copied image files, or a bitmap
+    /// saved to a temp PNG — to the thumbnail strip. False when there were none.
+    /// </summary>
+    private async Task<bool> TryAttachClipboardImagesAsync(IClipboard clipboard)
+    {
+        try
+        {
+            // Files copied in Explorer: only the images among them become attachments
+            var files = await clipboard.TryGetFilesAsync();
+            if (files != null)
+            {
+                var images = files
+                    .Select(f => f.Path?.LocalPath)
+                    .Where(p => !string.IsNullOrEmpty(p) && Controls.ImageAttachmentStrip.IsImageFile(p!))
+                    .ToList();
+                foreach (var path in images)
+                    _attachStrip.Add(path!, FileReference(path!));
+                if (images.Count > 0) return true;
+            }
+
+            // TryGetBitmapAsync covers every bitmap flavour Windows offers (PNG, CF_DIB, …),
+            // so the format probing the old clipboard API needed is no longer necessary.
+            var bitmap = await clipboard.TryGetBitmapAsync();
+            if (bitmap == null) return false;
+            var tempPath = SaveClipboardImage(bitmap);
+            if (tempPath == null) return false;
+            _attachStrip.Add(tempPath, tempPath.Contains(' ') ? $"\"{tempPath}\"" : tempPath);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private async Task PasteImageOrMetaVAsync()
+    {
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard == null || !await TryAttachClipboardImagesAsync(clipboard))
+            _pty?.WriteInput("\x1bv");
+    }
+
     private async Task PasteFromClipboardAsync()
     {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard == null) return;
 
-        // Check for image data in clipboard (same behavior as Claude Code CLI).
-        // TryGetBitmapAsync covers every bitmap flavour Windows offers (PNG, CF_DIB, …),
-        // so the format probing the old clipboard API needed is no longer necessary.
-        try
-        {
-            var bitmap = await clipboard.TryGetBitmapAsync();
-            if (bitmap != null)
-            {
-                var tempPath = SaveClipboardImage(bitmap);
-                if (tempPath != null)
-                {
-                    var pathStr = tempPath.Contains(' ') ? $"\"{tempPath}\"" : tempPath;
-                    _pty?.WriteInput(pathStr);
-                    return;
-                }
-            }
-        }
-        catch { }
+        // Images go to the thumbnail strip and out with the next submit
+        if (await TryAttachClipboardImagesAsync(clipboard))
+            return;
 
         // Fallback: paste text
         var text = await clipboard.TryGetTextAsync();
@@ -1051,6 +1111,7 @@ public class TerminalControl : Control, IDisposable
         if (_isExpanded)
             _expandedPanel.Measure(new Size(availableSize.Width, _expandedHeight));
         _searchBar?.Measure(availableSize);
+        _attachStrip.Measure(new Size(availableSize.Width, Controls.ImageAttachmentStrip.StripHeight));
         if (_isDocumentView && _docViewPanel != null)
         {
             // Use Bounds for actual size (availableSize may be Infinity)
@@ -1088,6 +1149,13 @@ public class TerminalControl : Control, IDisposable
             _stopButton.Arrange(new Rect(tbW, tbY, stopW, InputBoxHeight));
             _expandButton.Arrange(new Rect(tbW + stopW, tbY, ExpandButtonWidth, InputBoxHeight));
         }
+
+        // Attachment thumbnails sit directly above whichever input is showing
+        double stripH = AttachmentStripHeight;
+        double stripY = Math.Max(0, finalSize.Height - InputAreaHeight - ExpandedPanelHeight);
+        _attachStrip.Arrange(stripH > 0
+            ? new Rect(0, stripY, finalSize.Width, stripH)
+            : new Rect(0, finalSize.Height, 0, 0));
 
         // Always the bottom edge of the control, in both layouts. The input row is flush with
         // that edge either way, so the line stays inside it and never shifts when the input is
@@ -2373,9 +2441,33 @@ public class TerminalControl : Control, IDisposable
         InvalidateVisual();
     }
 
+    /// <summary>The typed text with the attached images' references after it; empties the strip.</summary>
+    private string JoinWithAttachments(string text)
+    {
+        var refs = _attachStrip.TakeReferences();
+        if (refs.Length == 0) return text;
+        return string.IsNullOrWhiteSpace(text) ? refs : text.TrimEnd() + " " + refs;
+    }
+
+    /// <summary>
+    /// Types <paramref name="text"/> into the CLI and submits it. When image references
+    /// are in it, Enter waits a moment: arriving in the same burst as the paths, the CLI
+    /// takes it as part of a paste and turns the paths into attachments without sending.
+    /// </summary>
+    private async void WriteAndSubmit(string text, bool withImages)
+    {
+        _pty?.WriteInput(text);
+        if (withImages)
+            await Task.Delay(AttachmentSubmitDelayMs);
+        _pty?.WriteInput("\r");
+    }
+
+    private const int AttachmentSubmitDelayMs = 300;
+
     private void SendExpandedText()
     {
-        var text = _expandedTextBox.Text;
+        bool withImages = _attachStrip.HasItems;
+        var text = JoinWithAttachments(_expandedTextBox.Text ?? "");
         if (!string.IsNullOrEmpty(text))
         {
             // Record input position for prompt navigation
@@ -2394,7 +2486,7 @@ public class TerminalControl : Control, IDisposable
                     TitleChanged?.Invoke(summary);
             }
             PromptSubmitted?.Invoke(text);
-            _pty?.WriteInput(text + "\r");
+            WriteAndSubmit(text, withImages);
             _expandedTextBox.Text = "";
         }
         _expandedTextBox.Focus();
@@ -5028,6 +5120,7 @@ public class TerminalControl : Control, IDisposable
     {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard == null) return;
+        if (await TryAttachClipboardImagesAsync(clipboard)) return;
         var text = await clipboard.TryGetTextAsync();
         if (string.IsNullOrEmpty(text)) return;
 
@@ -5067,17 +5160,21 @@ public class TerminalControl : Control, IDisposable
 
     private void OnFileDrop(object? sender, DragEventArgs e)
     {
-        var text = BuildDroppedText(e.DataTransfer);
-        if (string.IsNullOrEmpty(text)) return;
+        var text = BuildDroppedText(e.DataTransfer, out bool attached);
+        if (string.IsNullOrEmpty(text) && !attached) return;
 
         // Dropping onto an inactive MDI child should bring it to the front
         Clicked?.Invoke();
-        ShowInInputArea(text);
+        if (!string.IsNullOrEmpty(text))
+            ShowInInputArea(text);
+        else
+            _inputTextBox.Focus();
         e.Handled = true;
     }
 
-    private string BuildDroppedText(IDataTransfer data)
+    private string BuildDroppedText(IDataTransfer data, out bool attachedImages)
     {
+        attachedImages = false;
         var paths = new List<string>();
 
         var files = data.TryGetFiles();
@@ -5105,23 +5202,29 @@ public class TerminalControl : Control, IDisposable
         if (paths.Count == 0)
             return (data.TryGetText() ?? "").Trim();
 
-        var sb = new System.Text.StringBuilder();
+        // Images become thumbnails and go out with the next submit; the rest are typed in
+        var others = new List<string>();
         foreach (var path in paths)
         {
-            if (sb.Length > 0)
-                sb.Append(' ');
-
-            // "@" matches the CLI's own file-reference syntax, and the path is
-            // made relative to the working directory the same way the @
-            // completion popup names its matches.
-            var relative = RelativeToWorkingDirectory(path);
-            sb.Append('@');
-            if (relative.Contains(' '))
-                sb.Append('"').Append(relative).Append('"');
+            if (Controls.ImageAttachmentStrip.IsImageFile(path))
+            {
+                _attachStrip.Add(path, FileReference(path));
+                attachedImages = true;
+            }
             else
-                sb.Append(relative);
+                others.Add(path);
         }
-        return sb.ToString();
+        return string.Join(" ", others.Select(FileReference));
+    }
+
+    /// <summary>
+    /// "@" matches the CLI's own file-reference syntax, and the path is made relative
+    /// to the working directory the same way the @ completion popup names its matches.
+    /// </summary>
+    private string FileReference(string path)
+    {
+        var relative = RelativeToWorkingDirectory(path);
+        return relative.Contains(' ') ? $"@\"{relative}\"" : "@" + relative;
     }
 
     /// <summary>
