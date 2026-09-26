@@ -2828,6 +2828,17 @@ public class TerminalControl : Control, IDisposable
         }
     }
 
+    /// <summary>
+    /// The AskUserQuestion selector is up: every page of it lists a "Type something" row and
+    /// ends with an "Esc to cancel" hint. Without it, the keys would land in the prompt.
+    /// </summary>
+    private bool IsAskSelectorOnScreen()
+    {
+        var screen = GetScreenText(0);
+        return screen.Contains("Type something", StringComparison.Ordinal)
+            && screen.Contains("Esc to cancel", StringComparison.Ordinal);
+    }
+
     private const int AskKeyDelayMs = 120;
     private const int AttachmentSubmitDelayMs = 300;
     private const int SubmitDelayMs = 150;
@@ -3726,6 +3737,7 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.SetFont(_typeface.FontFamily.Name, _fontSize);
                 _docViewPanel.AskAnswered += (questions, replies) => AnswerAskUserQuestion(questions, replies);
                 _docViewPanel.AskCancelled += () => _pty?.WriteInput("\x1b");
+                _docViewPanel.IsAskOpen = IsAskSelectorOnScreen;
                 VisualChildren.Add(_docViewPanel);
                 LogicalChildren.Add(_docViewPanel);
             }

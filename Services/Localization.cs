@@ -197,6 +197,7 @@ public static class Loc
         ["AskSending"] = new() { ["English"] = "Sending…", ["日本語"] = "送信中…" },
         ["AskCancel"] = new() { ["English"] = "Cancel the question", ["日本語"] = "質問をキャンセル" },
         ["AskCollapse"] = new() { ["English"] = "Collapse", ["日本語"] = "折りたたむ" },
+        ["AskNotOpen"] = new() { ["English"] = "This question is no longer open in the terminal, so the answer was not sent.", ["日本語"] = "この質問はターミナルでもう開いていないため、回答は送信されませんでした。" },
         ["ChatCompacted"] = new() { ["English"] = "Earlier conversation was summarized", ["日本語"] = "これより前の会話は要約されました" },
         ["PermissionRequired"] = new() { ["English"] = "Permission Required", ["日本語"] = "許可が必要です" },
         ["AllowAction"] = new() { ["English"] = "Yes, allow", ["日本語"] = "はい、許可" },

@@ -78,6 +78,11 @@ public class DocumentViewPanel : Panel
 
     /// <summary>The reader dismissed the open question.</summary>
     public event Action? AskCancelled;
+    /// <summary>
+    /// Whether the CLI's question selector is on screen. The transcript cannot tell: a question
+    /// cut off by a restart still reads as open until the next prompt is written.
+    /// </summary>
+    public Func<bool>? IsAskOpen { get; set; }
 
     private string? _currentSessionPath;
     private int _lastLineCount;
@@ -975,8 +980,18 @@ public class DocumentViewPanel : Panel
         int page = state.Page = Math.Clamp(state.Page, 0, questions.Count - 1);
         var q = questions[page];
         bool last = page == questions.Count - 1;
-        bool live = !state.Sent;
+        if (state.Dismissed) return new Panel();
+        bool live = !state.Sent && !state.Stale;
         var root = new StackPanel();
+
+        // Nothing goes to the terminal unless the selector is really there to take the keys
+        bool CheckOpen()
+        {
+            if (IsAskOpen == null || IsAskOpen()) return true;
+            state.Stale = true;
+            rerender();
+            return false;
+        }
 
         // Header: "1/2", the question, collapse and cancel
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto") };
@@ -1013,8 +1028,10 @@ public class DocumentViewPanel : Panel
         });
         Grid.SetColumn(collapse, 2);
         header.Children.Add(collapse);
-        var close = AskIconButton("M1,1 L10,10 M10,1 L1,10", Loc.Get("AskCancel"), live, () =>
+        var close = AskIconButton("M1,1 L10,10 M10,1 L1,10", Loc.Get("AskCancel"), !state.Sent, () =>
         {
+            if (state.Stale) { state.Dismissed = true; rerender(); return; }
+            if (!CheckOpen()) return;
             state.Sent = true;
             rerender();
             AskCancelled?.Invoke();
@@ -1022,6 +1039,15 @@ public class DocumentViewPanel : Panel
         Grid.SetColumn(close, 3);
         header.Children.Add(close);
         root.Children.Add(header);
+        if (state.Stale)
+            root.Children.Add(new TextBlock
+            {
+                Text = Loc.Get("AskNotOpen"),
+                FontSize = _baseFontSize * 0.85,
+                Foreground = Brush(pal.Dim),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 8, 0, 0),
+            });
         if (state.Collapsed) return root;
 
         // Every mark on the page is redrawn from the state, so a click never rebuilds the
@@ -1115,6 +1141,7 @@ public class DocumentViewPanel : Panel
         // Footer: Back on the left; Skip and Next / Submit on the right
         void Submit()
         {
+            if (!CheckOpen()) return;
             state.Sent = true;
             var replies = new List<AskReply>();
             for (int k = 0; k < questions.Count; k++)
@@ -1312,6 +1339,8 @@ public class DocumentViewPanel : Panel
     {
         public int Page;
         public bool Sent;
+        public bool Stale;       // the CLI was no longer asking when an answer was tried
+        public bool Dismissed;
         public bool Collapsed;
         public readonly List<SortedSet<int>> Selected = new();
         public readonly List<string> Other = new();
