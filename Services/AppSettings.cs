@@ -86,6 +86,12 @@ public class AppSettings
     public string? PreferredModel { get; set; }
     public string? PreferredEffort { get; set; }
 
+    /// <summary>
+    /// Effort the window in front was last at, so the next launch of the app starts there
+    /// instead of wherever the CLI's own default happens to sit.
+    /// </summary>
+    public string? LastEffort { get; set; }
+
     // ── Source control ──
 
     /// <summary>

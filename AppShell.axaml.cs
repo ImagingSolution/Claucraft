@@ -7360,6 +7360,12 @@ internal partial class AppShell : UserControl, IDockOwner
 
         StatusEffortText.Text = EffortDisplayName(effort);
         ToolTip.SetTip(StatusEffortName, Loc.Get("EffortTooltip"));
+
+        if (!string.Equals(_settings.LastEffort, effort, StringComparison.OrdinalIgnoreCase))
+        {
+            _settings.LastEffort = effort;
+            _settings.Save();
+        }
     }
 
     /// <summary>
@@ -7375,6 +7381,21 @@ internal partial class AppShell : UserControl, IDockOwner
         return string.Equals(level, "auto", StringComparison.OrdinalIgnoreCase)
             ? Loc.Get("EffortAuto")
             : level;
+    }
+
+    /// <summary>
+    /// Adds --effort to a launch command. A level the command already pins (a launch profile or
+    /// the settings override) is left to win, and "auto" is not passed on: --effort has no such
+    /// level, and leaving the flag off is what hands the choice back to the CLI.
+    /// </summary>
+    private string PinEffort(string command, string? level)
+    {
+        if (string.IsNullOrWhiteSpace(level)
+            || string.Equals(level, "auto", StringComparison.OrdinalIgnoreCase)
+            || !_cli.Features.SupportsModelEffortOverride
+            || Regex.IsMatch(command, "--effort[= ]"))
+            return command;
+        return command + " --effort " + level;
     }
 
     /// <summary>
@@ -7728,6 +7749,7 @@ internal partial class AppShell : UserControl, IDockOwner
                 WorktreePath = child.WorktreePath ?? "",
                 WorktreeBranch = child.WorktreeBranch ?? "",
                 WorktreeOrigin = child.WorktreeOrigin ?? "",
+                Effort = child.Effort ?? "",
             });
         }
 
@@ -7764,10 +7786,12 @@ internal partial class AppShell : UserControl, IDockOwner
                              && tab.ProviderId == _cli.ActiveId
                              && _cli.Features.SessionList;
 
+            // Each tab comes back at its own effort, not the one of whichever tab reopened before it.
+            string? tabEffort = string.IsNullOrEmpty(tab.Effort) ? _settings.LastEffort : tab.Effort;
             if (canResume)
-                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId, ActiveLaunchProfile()), tab.TabTitle, tab.TabTitle, tab.SessionId, lease);
+                CreateNewChild(_cli.BuildResumeCommand(tab.SessionId, ActiveLaunchProfile()), tab.TabTitle, tab.TabTitle, tab.SessionId, lease, tabEffort);
             else
-                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle, worktree: lease);
+                CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle, worktree: lease, effort: tabEffort);
 
             if (tab.IsManualTitle && _children.Count > 0)
             {
@@ -8399,8 +8423,17 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     private void CreateNewChild(string command, string tabTitle, string? firstInput = null,
-                                string? sessionId = null, WorktreeLease? worktree = null)
+                                string? sessionId = null, WorktreeLease? worktree = null,
+                                string? effort = null)
     {
+        // A new window carries on at the effort of the one in front, or failing that the one the
+        // app was last left at; the CLI's own default would otherwise reset it on every launch.
+        command = PinEffort(command, effort
+            ?? (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
+                ? _children[_activeChildIndex].Effort
+                : null)
+            ?? _settings.LastEffort);
+
         // A worktree session works in its checkout, and so does everything that follows the
         // active window: explorer, changed files, session list and the branch readout all
         // describe the tree the AI is actually editing.

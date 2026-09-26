@@ -38,6 +38,9 @@ public class WorkspaceTab
 
     /// <summary>Repository the checkout was cut from.</summary>
     public string WorktreeOrigin { get; set; } = "";
+
+    /// <summary>Reasoning effort the tab was running at, or empty when unknown.</summary>
+    public string Effort { get; set; } = "";
 }
 
 /// <summary>Root object persisted to workspace.json.</summary>
