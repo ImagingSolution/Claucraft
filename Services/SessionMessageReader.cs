@@ -13,6 +13,15 @@ public record AskUserOption(string Label, string Description);
 public record AskUserQuestionItem(string Question, string Header, List<AskUserOption> Options, bool MultiSelect);
 public record AskUserData(List<AskUserQuestionItem> Questions, Dictionary<string, string> Answers, Dictionary<string, string>? Notes);
 
+/// <summary>One tool call inside an assistant turn, with the argument that best says what it did.</summary>
+public record ToolCall(string Name, string? Detail);
+
+/// <summary>An image attached to a user prompt: a file on disk or an inline base64 block.</summary>
+public record ChatImage(string? Path, string? Base64);
+
+/// <summary>Title and working folder of a session, for the chat view's header.</summary>
+public record SessionMeta(string? Title, string? Cwd);
+
 public record ConversationMessage(
     MessageRole Role,
     string Text,
@@ -21,7 +30,9 @@ public record ConversationMessage(
     bool IsToolUse,
     bool IsThinking,
     AskUserData? AskUser = null,
-    bool IsToolRejection = false
+    bool IsToolRejection = false,
+    IReadOnlyList<ToolCall>? Tools = null,
+    IReadOnlyList<ChatImage>? Images = null
 );
 
 /// <summary>
@@ -97,7 +108,8 @@ public static class SessionMessageReader
                 continue;
             }
 
-            // Consolidate consecutive assistant text messages into one
+            // Consolidate consecutive assistant text messages into one. A tool call ends the
+            // run, so a turn reads text / tools / text in the order it happened.
             if (msg.Role == MessageRole.Assistant && !msg.IsToolUse && !msg.IsThinking)
             {
                 var textParts = new List<string> { msg.Text };
@@ -105,15 +117,9 @@ public static class SessionMessageReader
                 i++;
 
                 while (i < messages.Count && messages[i].Role == MessageRole.Assistant
-                    && !messages[i].IsThinking && messages[i].AskUser == null)
+                    && !messages[i].IsToolUse && messages[i].AskUser == null)
                 {
-                    if (messages[i].IsToolUse && !messages[i].Text.Contains('\n'))
-                    {
-                        // Skip compact tool use markers within a response
-                        i++;
-                        continue;
-                    }
-                    if (!string.IsNullOrWhiteSpace(messages[i].Text) && !messages[i].IsToolUse)
+                    if (!messages[i].IsThinking && !string.IsNullOrWhiteSpace(messages[i].Text))
                         textParts.Add(messages[i].Text);
                     i++;
                 }
@@ -123,8 +129,26 @@ public static class SessionMessageReader
                 continue;
             }
 
-            // Skip thinking blocks and tool-use-only messages (they'll show as part of progress)
-            if (msg.IsThinking || (msg.IsToolUse && !msg.Text.Contains('\n')))
+            // Consecutive tool calls fold into one group, the collapsed "ran N commands" line
+            if (msg.IsToolUse && msg.Role == MessageRole.Assistant)
+            {
+                var tools = new List<ToolCall>();
+                var timestamp = msg.Timestamp;
+                while (i < messages.Count && messages[i].Role == MessageRole.Assistant
+                    && messages[i].AskUser == null
+                    && (messages[i].IsToolUse || messages[i].IsThinking))
+                {
+                    if (messages[i].Tools != null) tools.AddRange(messages[i].Tools!);
+                    i++;
+                }
+                if (tools.Count > 0)
+                    result.Add(new ConversationMessage(MessageRole.Assistant, $"[Tools: {tools.Count}]",
+                        timestamp, tools[0].Name, true, false, Tools: tools));
+                continue;
+            }
+
+            // Thinking on its own carries nothing readable (the CLI stores it redacted)
+            if (msg.IsThinking)
             {
                 i++;
                 continue;
@@ -285,6 +309,11 @@ public static class SessionMessageReader
 
             if (type == "user")
             {
+                // The summary written when the context is compacted is logged as a user turn,
+                // but nobody typed it: show where it happened, not its text
+                if (root.TryGetProperty("isCompactSummary", out var compactProp) && compactProp.ValueKind == JsonValueKind.True)
+                    return new ConversationMessage(MessageRole.System, Loc.Get("ChatCompacted"), timestamp, null, false, false);
+
                 // Check for toolUseResult (AskUserQuestion answer or tool rejection)
                 if (root.TryGetProperty("toolUseResult", out var toolUseResultProp))
                 {
@@ -299,7 +328,21 @@ public static class SessionMessageReader
                         return ParseToolRejection(root, timestamp, toolUseIdToName);
                     }
                 }
-                return ParseUserMessage(root, timestamp);
+
+                // Newer CLIs tag each prompt with who produced it: "human" is the person;
+                // task-notification, peer, auto-continuation and the rest are the CLI or
+                // another agent talking, and are not theirs to show as a prompt
+                if (root.TryGetProperty("origin", out var originProp) && originProp.ValueKind == JsonValueKind.Object
+                    && originProp.TryGetProperty("kind", out var kindProp) && kindProp.ValueKind == JsonValueKind.String
+                    && kindProp.GetString() != "human")
+                    return null;
+
+                var userMsg = ParseUserMessage(root, timestamp);
+                // Logs from before the origin tag: a background task's report is the one
+                // non-human prompt that still gets through
+                if (userMsg != null && userMsg.Text.TrimStart().StartsWith("<task-notification>", StringComparison.Ordinal))
+                    return null;
+                return userMsg;
             }
             else if (type == "assistant")
             {
@@ -327,6 +370,7 @@ public static class SessionMessageReader
         if (!root.TryGetProperty("message", out var msgProp)) return null;
 
         string? text = null;
+        var images = new List<ChatImage>();
 
         if (msgProp.ValueKind == JsonValueKind.String)
         {
@@ -335,15 +379,109 @@ public static class SessionMessageReader
         else if (msgProp.ValueKind == JsonValueKind.Object && msgProp.TryGetProperty("content", out var contentProp))
         {
             text = ExtractAllTextContent(contentProp, skipToolResults: true);
+            CollectInlineImages(contentProp, images);
         }
 
-        if (string.IsNullOrWhiteSpace(text)) return null;
+        text = string.IsNullOrWhiteSpace(text) ? "" : CleanMetadataTags(text);
 
-        // Clean up metadata tags
-        text = CleanMetadataTags(text);
-        if (string.IsNullOrWhiteSpace(text)) return null;
+        // Claucraft hands pasted images to the CLI as file paths, so the prompt text carries
+        // them. Show those as thumbnails and keep the path out of the bubble.
+        text = ImagePathPattern.Replace(text, m =>
+        {
+            var path = m.Groups["p"].Value;
+            if (!File.Exists(path)) return m.Value;
+            images.Add(new ChatImage(path, null));
+            return "";
+        }).Trim();
 
-        return new ConversationMessage(MessageRole.User, text, timestamp, null, false, false);
+        if (string.IsNullOrWhiteSpace(text) && images.Count == 0) return null;
+
+        return new ConversationMessage(MessageRole.User, text, timestamp, null, false, false,
+            Images: images.Count > 0 ? images : null);
+    }
+
+    /// <summary>An absolute Windows image path, optionally @-prefixed and quoted, as Claucraft writes it.</summary>
+    private static readonly Regex ImagePathPattern = new(
+        @"@?""?(?<p>[A-Za-z]:\\[^""\r\n]*?\.(?:png|jpe?g|gif|bmp|webp))""?",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static void CollectInlineImages(JsonElement content, List<ChatImage> images)
+    {
+        if (content.ValueKind != JsonValueKind.Array) return;
+        foreach (var item in content.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object) continue;
+            if (!item.TryGetProperty("type", out var t) || t.GetString() != "image") continue;
+            if (item.TryGetProperty("source", out var src) && src.ValueKind == JsonValueKind.Object
+                && src.TryGetProperty("data", out var data) && data.GetString() is string b64
+                && b64.Length > 0)
+                images.Add(new ChatImage(null, b64));
+        }
+    }
+
+    /// <summary>
+    /// The argument that best describes a tool call in one line: the command it ran, the file
+    /// it touched, the pattern it searched for.
+    /// </summary>
+    private static string? DescribeToolInput(string? toolName, JsonElement item)
+    {
+        if (!item.TryGetProperty("input", out var input) || input.ValueKind != JsonValueKind.Object)
+            return null;
+
+        if (toolName == "Skill" && input.TryGetProperty("skill", out var skill) && skill.GetString() is string s)
+            return "/" + s;
+
+        foreach (var key in new[] { "command", "file_path", "notebook_path", "path", "pattern", "url", "query", "description", "prompt" })
+        {
+            if (input.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+                && v.GetString() is string value && !string.IsNullOrWhiteSpace(value))
+            {
+                value = value.Trim();
+                int nl = value.IndexOf('\n');
+                if (nl >= 0) value = value[..nl] + " …";
+                return value.Length > 160 ? value[..160] + "…" : value;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The session's title (renamed, AI-generated or summary, in that order) and its working
+    /// folder, read from the same JSONL the transcript comes from.
+    /// </summary>
+    public static SessionMeta ReadSessionMeta(string jsonlPath)
+    {
+        string? customTitle = null, aiTitle = null, summary = null, cwd = null;
+        try
+        {
+            using var stream = new FileStream(jsonlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                bool titleLine = line.Contains("\"custom-title\"") || line.Contains("\"ai-title\"")
+                    || line.Contains("\"summary\"");
+                if (!titleLine && cwd != null) continue;
+                if (!titleLine && !line.Contains("\"cwd\"")) continue;
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    var root = doc.RootElement;
+                    string? Str(string name) =>
+                        root.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+                    switch (Str("type"))
+                    {
+                        case "custom-title": customTitle = Str("customTitle") ?? Str("title") ?? customTitle; break;
+                        case "ai-title": aiTitle = Str("aiTitle") ?? aiTitle; break;
+                        case "summary": summary = Str("summary") ?? summary; break;
+                    }
+                    cwd ??= Str("cwd");
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return new SessionMeta(customTitle ?? aiTitle ?? summary, cwd);
     }
 
     private static ConversationMessage? ParseAssistantMessage(JsonElement root, DateTime? timestamp, Dictionary<string, string> toolUseIdToName)
@@ -353,6 +491,7 @@ public static class SessionMessageReader
         if (contentProp.ValueKind != JsonValueKind.Array) return null;
 
         var textParts = new List<string>();
+        var tools = new List<ToolCall>();
         string? toolName = null;
         bool isToolUse = false;
         bool isThinking = false;
@@ -401,6 +540,10 @@ public static class SessionMessageReader
                     if (id != null && toolName != null)
                         toolUseIdToName[id] = toolName;
                 }
+
+                // AskUserQuestion shows up as its own question card once answered
+                if (toolName != null && toolName != "AskUserQuestion")
+                    tools.Add(new ToolCall(toolName, DescribeToolInput(toolName, item)));
             }
         }
 
@@ -410,7 +553,9 @@ public static class SessionMessageReader
         // Suppress text accompanying tool_use (narration like "Now modify...", etc.)
         if (isToolUse)
         {
-            return new ConversationMessage(MessageRole.Assistant, $"[Tool: {toolName}]", timestamp, toolName, true, false);
+            if (tools.Count == 0) return null;
+            return new ConversationMessage(MessageRole.Assistant, $"[Tool: {toolName}]", timestamp, toolName, true, false,
+                Tools: tools);
         }
 
         var fullText = string.Join("\n", textParts);

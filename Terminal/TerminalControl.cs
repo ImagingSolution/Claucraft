@@ -93,6 +93,28 @@ public class TerminalControl : Control, IDisposable
     private const double InputBoxMargin = 2;
     private const double ExpandButtonWidth = 32;
 
+    // Chat view composer: the same input row, dressed as the desktop app's rounded card. The
+    // text box grows with its content between the two heights; the buttons sit on a row below.
+    private readonly Border _chatBackdrop = new() { IsVisible = false, IsHitTestVisible = false };
+    private readonly Border _chatCard = new()
+    {
+        IsVisible = false,
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(16),
+        Cursor = new Cursor(StandardCursorType.Ibeam),
+    };
+    private Button _chatAttachButton = null!;
+    private Button _chatSendButton = null!;
+    private double _chatInputHeight = ChatInputMinHeight;
+    private const double ChatInputMinHeight = 26;
+    private const double ChatInputMaxHeight = 180;
+    private const double ChatButtonSize = 30;
+    private const double ChatCardPadX = 14, ChatCardPadTop = 10, ChatCardPadBottom = 8;
+    private const double ChatGapTop = 6, ChatGapBottom = 14;
+    private bool ChatComposerShown => _isDocumentView && !_isExpanded;
+    private double ChatComposerHeight =>
+        ChatGapTop + ChatCardPadTop + AttachmentStripHeight + _chatInputHeight + 4 + ChatButtonSize + ChatCardPadBottom + ChatGapBottom;
+
     // Indeterminate progress line pinned to the bottom edge of the input row
     private readonly Controls.MarqueeBar _marquee;
 
@@ -202,12 +224,7 @@ public class TerminalControl : Control, IDisposable
         var border = _isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200);
         var subtle = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(85, 85, 93);
 
-        _inputTextBox.Foreground = new SolidColorBrush(fg);
-        _inputTextBox.Background = new SolidColorBrush(bg);
-        _inputTextBox.BorderBrush = new SolidColorBrush(border);
-
-        _expandButton.Background = new SolidColorBrush(bg);
-        _expandButton.Foreground = new SolidColorBrush(subtle);
+        ApplyInputChrome();
 
         // Expanded panel
         _expandedPanel.Background = new SolidColorBrush(bgDeep);
@@ -235,14 +252,221 @@ public class TerminalControl : Control, IDisposable
 
         // Document view theme
         _docViewPanel?.UpdateTheme(_isDark);
-        _attachStrip.UpdateTheme(_isDark);
 
         InvalidateVisual();
     }
 
+    private static readonly string[] ChatChromeResourceKeys =
+    {
+        "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused",
+        "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused",
+        "TextControlBorderThemeThicknessFocused", "TextControlPlaceholderForeground",
+        "TextControlPlaceholderForegroundPointerOver", "TextControlPlaceholderForegroundFocused",
+    };
+
+    /// <summary>
+    /// Styles the input row for the current view: the terminal's flat strip, or the chat view's
+    /// borderless box inside a rounded card. Both are the same TextBox, so every path that
+    /// feeds it (IME, paste, drop, history) works the same in either.
+    /// </summary>
+    private void ApplyInputChrome()
+    {
+        var fg = _isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(38, 40, 44);
+        var bg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(242, 242, 242);
+        var border = _isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200);
+        var subtle = _isDark ? Color.FromRgb(160, 160, 165) : Color.FromRgb(85, 85, 93);
+
+        _attachStrip.UpdateTheme(_isDark);
+        bool chat = _isDocumentView;
+        _chatBackdrop.IsVisible = chat;
+        _chatCard.IsVisible = chat;
+        _chatAttachButton.IsVisible = chat;
+        _chatSendButton.IsVisible = chat;
+
+        if (!chat)
+        {
+            _inputTextBox.Foreground = new SolidColorBrush(fg);
+            _inputTextBox.Background = new SolidColorBrush(bg);
+            _inputTextBox.BorderBrush = new SolidColorBrush(border);
+            _inputTextBox.BorderThickness = new Thickness(0, 1, 0, 0);
+            _inputTextBox.Padding = new Thickness(6, 4);
+            _inputTextBox.FontFamily = _typeface.FontFamily;
+            _inputTextBox.FontSize = _fontSize;
+            _inputTextBox.PlaceholderText = "IME input here — auto-sent on commit";
+            _inputTextBox.TextWrapping = TextWrapping.NoWrap;
+            _inputTextBox.AcceptsReturn = false;
+            _inputTextBox.ClearValue(MinHeightProperty);
+            foreach (var key in ChatChromeResourceKeys)
+                _inputTextBox.Resources.Remove(key);
+
+            _expandButton.Background = new SolidColorBrush(bg);
+            _expandButton.Foreground = new SolidColorBrush(subtle);
+            _expandButton.CornerRadius = new CornerRadius(0);
+            _stopButton.CornerRadius = new CornerRadius(0);
+            _attachStrip.BorderThickness = new Thickness(0, 1, 0, 0);
+            return;
+        }
+
+        var pal = Services.MarkdownParser.ChatPalette.For(_isDark);
+        var surface = Controls.ChatTheme.Surface(_isDark);
+        _chatBackdrop.Background = new SolidColorBrush(Controls.ChatTheme.Background(_isDark));
+        _chatCard.Background = new SolidColorBrush(surface);
+        _chatCard.BorderBrush = new SolidColorBrush(Controls.ChatTheme.Outline(_isDark));
+
+        _inputTextBox.Foreground = new SolidColorBrush(pal.Fg);
+        _inputTextBox.Background = Brushes.Transparent;
+        _inputTextBox.BorderThickness = new Thickness(0);
+        _inputTextBox.Padding = new Thickness(2, 4);
+        _inputTextBox.FontFamily = Controls.ChatTheme.BodyFont;
+        _inputTextBox.FontSize = Controls.ChatTheme.BodySize(_fontSize);
+        _inputTextBox.PlaceholderText = Services.Loc.Get("ChatInputPlaceholder");
+        _inputTextBox.TextWrapping = TextWrapping.Wrap;
+        _inputTextBox.AcceptsReturn = true;
+        _inputTextBox.MinHeight = 0;
+        // Fluent repaints the box on hover and focus; inside the card it has to stay invisible
+        var res = _inputTextBox.Resources;
+        foreach (var key in ChatChromeResourceKeys)
+            res[key] = key.Contains("Placeholder") ? new SolidColorBrush(pal.Dim) : Brushes.Transparent;
+        res["TextControlBorderThemeThicknessFocused"] = new Thickness(0);
+
+        _expandButton.Background = Brushes.Transparent;
+        _expandButton.Foreground = new SolidColorBrush(pal.Dim);
+        _expandButton.CornerRadius = new CornerRadius(8);
+        _stopButton.CornerRadius = new CornerRadius(ChatButtonSize / 2);
+        _attachStrip.Background = Brushes.Transparent;
+        _attachStrip.BorderThickness = new Thickness(0);
+
+        _chatAttachButton.BorderBrush = new SolidColorBrush(Controls.ChatTheme.Outline(_isDark));
+        if (_chatAttachButton.Content is Avalonia.Controls.Shapes.Path plus)
+            plus.Stroke = new SolidColorBrush(pal.Dim);
+        UpdateChatSendState();
+    }
+
+    /// <summary>The send button lights up once there is something to send.</summary>
+    private void UpdateChatSendState()
+    {
+        bool ready = !string.IsNullOrWhiteSpace(_inputTextBox.Text) || _attachStrip.HasItems;
+        var pal = Services.MarkdownParser.ChatPalette.For(_isDark);
+        _chatSendButton.Background = new SolidColorBrush(ready
+            ? Controls.ChatTheme.Accent
+            : (_isDark ? Color.FromRgb(70, 69, 65) : Color.FromRgb(226, 224, 219)));
+        if (_chatSendButton.Content is Avalonia.Controls.Shapes.Path arrow)
+            arrow.Stroke = new SolidColorBrush(ready ? Colors.White : pal.Dim);
+    }
+
+    private void BuildChatComposer()
+    {
+        _chatAttachButton = new Button
+        {
+            Content = new Avalonia.Controls.Shapes.Path
+            {
+                Data = Geometry.Parse("M6,0 V12 M0,6 H12"),
+                StrokeThickness = 1.5,
+                Width = 12,
+                Height = 12,
+                Stretch = Stretch.Uniform,
+            },
+            Width = ChatButtonSize,
+            Height = ChatButtonSize,
+            Padding = new Thickness(0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Focusable = false,
+            IsVisible = false,
+        };
+        ToolTip.SetTip(_chatAttachButton, Services.Loc.Get("ChatAttach"));
+        _chatAttachButton.Click += (_, _) => _ = AttachFilesAsync();
+
+        _chatSendButton = new Button
+        {
+            Content = new Avalonia.Controls.Shapes.Path
+            {
+                Data = Geometry.Parse("M6,12 V1 M1,6 L6,1 L11,6"),
+                StrokeThickness = 1.8,
+                StrokeLineCap = PenLineCap.Round,
+                StrokeJoin = PenLineJoin.Round,
+                Width = 11,
+                Height = 12,
+                Stretch = Stretch.Uniform,
+            },
+            Width = ChatButtonSize,
+            Height = ChatButtonSize,
+            Padding = new Thickness(0),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(8),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Focusable = false,
+            IsVisible = false,
+        };
+        ToolTip.SetTip(_chatSendButton, Services.Loc.Get("ChatSend"));
+        _chatSendButton.Click += (_, _) =>
+        {
+            SubmitChatInput();
+            _inputTextBox.Focus();
+        };
+
+        // A click anywhere on the card is a click into the text
+        _chatCard.PointerPressed += (_, e) =>
+        {
+            Clicked?.Invoke();
+            _inputTextBox.Focus();
+            e.Handled = true;
+        };
+
+        _inputTextBox.TextChanged += (_, _) =>
+        {
+            if (!_isDocumentView) return;
+            UpdateChatSendState();
+            InvalidateMeasure();
+        };
+
+        // Behind everything else: the card is drawn first and the input row lands on top of it
+        VisualChildren.Insert(0, _chatCard);
+        LogicalChildren.Add(_chatCard);
+        VisualChildren.Insert(0, _chatBackdrop);
+        LogicalChildren.Add(_chatBackdrop);
+        VisualChildren.Add(_chatAttachButton);
+        LogicalChildren.Add(_chatAttachButton);
+        VisualChildren.Add(_chatSendButton);
+        LogicalChildren.Add(_chatSendButton);
+    }
+
+    /// <summary>Sends what the chat view's box holds, with any attached images. False if empty.</summary>
+    private bool SubmitChatInput()
+    {
+        if (string.IsNullOrEmpty(_inputTextBox.Text) && !_attachStrip.HasItems) return false;
+
+        bool withImages = _attachStrip.HasItems;
+        var text = JoinWithAttachments(_inputTextBox.Text ?? "");
+        PromptSubmitted?.Invoke(text);
+        WriteAndSubmit(text, withImages);
+        _inputTextBox.Text = "";
+        _inputTextBox.CaretIndex = 0;
+
+        // Capture first input as tab title
+        if (!_firstInputCaptured)
+        {
+            _firstInputCaptured = true;
+            FirstUserInput = text.Trim();
+            var summary = FirstUserInput;
+            if (summary.Length > 30) summary = summary[..30] + "...";
+            if (!string.IsNullOrWhiteSpace(summary))
+                TitleChanged?.Invoke(summary);
+        }
+        return true;
+    }
+
     // Terminal area height = total height - input area - expanded panel
     private double ExpandedPanelHeight => _isExpanded ? _expandedHeight : 0;
-    private double InputAreaHeight => (_isExpanded ? 0 : InputBoxHeight + InputBoxMargin) + AttachmentStripHeight;
+    private double InputAreaHeight => ChatComposerShown
+        ? ChatComposerHeight
+        : (_isExpanded ? 0 : InputBoxHeight + InputBoxMargin) + AttachmentStripHeight;
 
     /// <summary>Pasted/dropped images waiting to go out with the next submit.</summary>
     private readonly Controls.ImageAttachmentStrip _attachStrip = new();
@@ -253,8 +477,7 @@ public class TerminalControl : Control, IDisposable
     {
         _typeface = new Typeface(fontFamily + ", Consolas, Courier New");
         _fontSize = fontSize;
-        _inputTextBox.FontFamily = new FontFamily(fontFamily + ", Consolas, Courier New");
-        _inputTextBox.FontSize = fontSize;
+        ApplyInputChrome();
         _docViewPanel?.SetFont(fontFamily, fontSize);
         MeasureCellSize();
         RecalcTerminalSize();
@@ -373,7 +596,10 @@ public class TerminalControl : Control, IDisposable
             InvalidateMeasure();
             InvalidateArrange();
             InvalidateVisual();
+            if (_isDocumentView) UpdateChatSendState();
         };
+
+        BuildChatComposer();
 
         // Build search bar
         BuildSearchBar();
@@ -668,7 +894,18 @@ public class TerminalControl : Control, IDisposable
         // Shift+Enter: send newline (line feed) for multi-line input
         if (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
         {
-            _pty?.WriteInput("\n");
+            if (_isDocumentView)
+            {
+                // Chat view: a new line in the box, sent with the rest on Enter
+                var current = _inputTextBox.Text ?? "";
+                var caret = Math.Clamp(_inputTextBox.CaretIndex, 0, current.Length);
+                _inputTextBox.Text = current.Insert(caret, "\n");
+                _inputTextBox.CaretIndex = caret + 1;
+            }
+            else
+            {
+                _pty?.WriteInput("\n");
+            }
             e.Handled = true;
             return;
         }
@@ -677,25 +914,8 @@ public class TerminalControl : Control, IDisposable
         if (e.Key == Key.Enter)
         {
             // Document view mode: send accumulated text from input box, then \r
-            if (_isDocumentView && (!string.IsNullOrEmpty(_inputTextBox.Text) || _attachStrip.HasItems))
+            if (_isDocumentView && SubmitChatInput())
             {
-                bool withImages = _attachStrip.HasItems;
-                var text = JoinWithAttachments(_inputTextBox.Text ?? "");
-                PromptSubmitted?.Invoke(text);
-                WriteAndSubmit(text, withImages);
-                _inputTextBox.Text = "";
-                _inputTextBox.CaretIndex = 0;
-
-                // Capture first input as tab title
-                if (!_firstInputCaptured)
-                {
-                    _firstInputCaptured = true;
-                    FirstUserInput = text.Trim();
-                    var summary = FirstUserInput;
-                    if (summary.Length > 30) summary = summary[..30] + "...";
-                    if (!string.IsNullOrWhiteSpace(summary))
-                        TitleChanged?.Invoke(summary);
-                }
                 e.Handled = true;
                 return;
             }
@@ -1102,11 +1322,29 @@ public class TerminalControl : Control, IDisposable
 
     protected override Size MeasureOverride(Size availableSize)
     {
-        _stopButton.Measure(new Size(availableSize.Width, InputBoxHeight));
-        double stopW = _stopButton.IsVisible ? _stopButton.DesiredSize.Width : 0;
-        double tbW = Math.Max(0, availableSize.Width - ExpandButtonWidth - stopW);
-        _inputTextBox.Measure(new Size(tbW, InputBoxHeight));
-        _expandButton.Measure(new Size(ExpandButtonWidth, InputBoxHeight));
+        if (ChatComposerShown)
+        {
+            // The box takes the height its text wraps to, within bounds, and the transcript
+            // above gives up that much room
+            double w = Bounds.Width > 0 ? Bounds.Width : availableSize.Width;
+            var card = ChatCardRect(w, 0);
+            _inputTextBox.Measure(new Size(Math.Max(0, card.Width - ChatCardPadX * 2), double.PositiveInfinity));
+            _chatInputHeight = Math.Clamp(_inputTextBox.DesiredSize.Height, ChatInputMinHeight, ChatInputMaxHeight);
+            _stopButton.Measure(new Size(w, ChatButtonSize));
+            _expandButton.Measure(new Size(ChatButtonSize, ChatButtonSize));
+            _chatAttachButton.Measure(new Size(ChatButtonSize, ChatButtonSize));
+            _chatSendButton.Measure(new Size(ChatButtonSize, ChatButtonSize));
+            _chatBackdrop.Measure(new Size(w, ChatComposerHeight));
+            _chatCard.Measure(card.Size);
+        }
+        else
+        {
+            _stopButton.Measure(new Size(availableSize.Width, InputBoxHeight));
+            double stopW = _stopButton.IsVisible ? _stopButton.DesiredSize.Width : 0;
+            double tbW = Math.Max(0, availableSize.Width - ExpandButtonWidth - stopW);
+            _inputTextBox.Measure(new Size(tbW, InputBoxHeight));
+            _expandButton.Measure(new Size(ExpandButtonWidth, InputBoxHeight));
+        }
         _marquee.Measure(new Size(availableSize.Width, Controls.MarqueeBar.LineHeight));
         if (_isExpanded)
             _expandedPanel.Measure(new Size(availableSize.Width, _expandedHeight));
@@ -1125,9 +1363,63 @@ public class TerminalControl : Control, IDisposable
         return availableSize;
     }
 
+    /// <summary>The composer card: centred on the transcript's reading column, above a margin.</summary>
+    private Rect ChatCardRect(double width, double height)
+    {
+        double cardW = Math.Max(0, Math.Min(Controls.ChatTheme.ColumnMaxWidth, width - 48));
+        double cardH = ChatComposerHeight - ChatGapTop - ChatGapBottom;
+        return new Rect((width - cardW) / 2, height - ChatGapBottom - cardH, cardW, cardH);
+    }
+
+    private void ArrangeChatComposer(Size finalSize)
+    {
+        var hidden = new Rect(0, finalSize.Height, 0, 0);
+        if (!ChatComposerShown)
+        {
+            _chatBackdrop.Arrange(hidden);
+            _chatCard.Arrange(hidden);
+            _chatAttachButton.Arrange(hidden);
+            _chatSendButton.Arrange(hidden);
+            return;
+        }
+
+        double areaH = ChatComposerHeight;
+        _chatBackdrop.Arrange(new Rect(0, finalSize.Height - areaH, finalSize.Width, areaH));
+        var card = ChatCardRect(finalSize.Width, finalSize.Height);
+        _chatCard.Arrange(card);
+
+        double y = card.Y + ChatCardPadTop;
+        double stripH = AttachmentStripHeight;
+        _attachStrip.Arrange(stripH > 0 ? new Rect(card.X + 4, y, Math.Max(0, card.Width - 8), stripH) : hidden);
+        y += stripH;
+        _inputTextBox.Arrange(new Rect(card.X + ChatCardPadX, y, Math.Max(0, card.Width - ChatCardPadX * 2), _chatInputHeight));
+        y += _chatInputHeight + 4;
+
+        double s = ChatButtonSize;
+        _chatAttachButton.Arrange(new Rect(card.X + 8, y, s, s));
+        double right = card.Right - 8 - s;
+        _chatSendButton.Arrange(new Rect(right, y, s, s));
+        if (_stopButton.IsVisible)
+        {
+            double stopW = _stopButton.DesiredSize.Width;
+            right -= stopW + 6;
+            _stopButton.Arrange(new Rect(right, y, stopW, s));
+        }
+        else
+        {
+            _stopButton.Arrange(hidden);
+        }
+        _expandButton.Arrange(new Rect(right - 4 - s, y, s, s));
+    }
+
     protected override Size ArrangeOverride(Size finalSize)
     {
-        if (_isExpanded)
+        ArrangeChatComposer(finalSize);
+        if (ChatComposerShown)
+        {
+            // Everything in the input row was placed inside the card
+        }
+        else if (_isExpanded)
         {
             // Expanded: panel at bottom, hide input row. Stop rides along in the panel's own
             // bottom-right button row, so the loose one is parked off-screen with the rest.
@@ -1151,11 +1443,14 @@ public class TerminalControl : Control, IDisposable
         }
 
         // Attachment thumbnails sit directly above whichever input is showing
-        double stripH = AttachmentStripHeight;
-        double stripY = Math.Max(0, finalSize.Height - InputAreaHeight - ExpandedPanelHeight);
-        _attachStrip.Arrange(stripH > 0
-            ? new Rect(0, stripY, finalSize.Width, stripH)
-            : new Rect(0, finalSize.Height, 0, 0));
+        if (!ChatComposerShown)
+        {
+            double stripH = AttachmentStripHeight;
+            double stripY = Math.Max(0, finalSize.Height - InputAreaHeight - ExpandedPanelHeight);
+            _attachStrip.Arrange(stripH > 0
+                ? new Rect(0, stripY, finalSize.Width, stripH)
+                : new Rect(0, finalSize.Height, 0, 0));
+        }
 
         // Always the bottom edge of the control, in both layouts. The input row is flush with
         // that edge either way, so the line stays inside it and never shifts when the input is
@@ -3346,6 +3641,7 @@ public class TerminalControl : Control, IDisposable
             if (_docViewPanel == null)
             {
                 _docViewPanel = new Controls.DocumentViewPanel(_isDark, _typeface);
+                _docViewPanel.SetFont(_typeface.FontFamily.Name, _fontSize);
                 VisualChildren.Add(_docViewPanel);
                 LogicalChildren.Add(_docViewPanel);
             }
@@ -3367,6 +3663,10 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.StopPolling();
             }
         }
+
+        ApplyInputChrome();
+        // The PTY was left alone while the chat view was up; it may have been resized since
+        if (!_isDocumentView) RecalcTerminalSize();
 
         InvalidateMeasure();
         InvalidateArrange();

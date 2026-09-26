@@ -35,21 +35,57 @@ public sealed record WikiLinkOptions(Action<string> Navigate, Func<string, bool>
 /// </summary>
 public static class MarkdownParser
 {
+    /// <summary>
+    /// Palette of the Claude desktop app's transcript, used when <c>chatStyle</c> is set: prose in
+    /// neutral ink, inline code as a tinted chip in a warm red, hairline-bordered code blocks and
+    /// tables. Also read by the chat view so its bubbles and cards match.
+    /// </summary>
+    public sealed record ChatPalette(Color Fg, Color Dim, Color Border, Color CodeBg, Color InlineCodeFg,
+        Color CodeFg, Color StringFg, Color CommentFg, Color TableHeaderBg)
+    {
+        public static ChatPalette For(bool isDark) => isDark
+            ? new(Color.FromRgb(240, 239, 236), Color.FromRgb(137, 135, 129), Color.FromRgb(45, 45, 45),
+                  Color.FromRgb(26, 26, 25), Color.FromRgb(236, 126, 126), Color.FromRgb(214, 214, 212),
+                  Color.FromRgb(152, 205, 130), Color.FromRgb(128, 127, 120), Color.FromRgb(33, 33, 33))
+            : new(Color.FromRgb(11, 11, 11), Color.FromRgb(137, 135, 129), Color.FromRgb(221, 221, 220),
+                  Color.FromRgb(255, 255, 255), Color.FromRgb(142, 38, 38), Color.FromRgb(40, 40, 40),
+                  Color.FromRgb(28, 128, 58), Color.FromRgb(125, 123, 118), Color.FromRgb(240, 240, 239));
+
+        /// <summary>Tint behind an inline code chip.</summary>
+        public static Color InlineCodeBg(bool isDark) => isDark ? Color.FromRgb(33, 33, 33) : Color.FromRgb(240, 240, 239);
+    }
+
+    /// <summary>Background for inline code runs while a chat-style parse is running (UI thread only).</summary>
+    private static IBrush? _inlineCodeBg;
+
     public static List<Control> Parse(string markdown, bool isDark, Typeface? codeTypeface = null,
-        double baseFontSize = 13, WikiLinkOptions? wiki = null)
+        double baseFontSize = 13, WikiLinkOptions? wiki = null, bool chatStyle = false)
+    {
+        if (!chatStyle)
+            return ParseCore(markdown, isDark, codeTypeface, baseFontSize, wiki, null);
+
+        _inlineCodeBg = new SolidColorBrush(ChatPalette.InlineCodeBg(isDark));
+        try { return ParseCore(markdown, isDark, codeTypeface, baseFontSize, wiki, ChatPalette.For(isDark)); }
+        finally { _inlineCodeBg = null; }
+    }
+
+    private static List<Control> ParseCore(string markdown, bool isDark, Typeface? codeTypeface,
+        double baseFontSize, WikiLinkOptions? wiki, ChatPalette? chat)
     {
         var controls = new List<Control>();
         if (string.IsNullOrEmpty(markdown)) return controls;
 
-        var fg = isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30);
-        var codeBg = isDark ? Color.FromRgb(40, 40, 44) : Color.FromRgb(240, 240, 245);
-        var codeFg = isDark ? Color.FromRgb(190, 220, 255) : Color.FromRgb(30, 60, 120);
-        var quoteBorder = isDark ? Color.FromRgb(0, 122, 255) : Color.FromRgb(0, 100, 200);
+        var fg = chat?.Fg ?? (isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30));
+        var codeBg = chat?.CodeBg ?? (isDark ? Color.FromRgb(40, 40, 44) : Color.FromRgb(240, 240, 245));
+        var codeFg = chat?.InlineCodeFg ?? (isDark ? Color.FromRgb(190, 220, 255) : Color.FromRgb(30, 60, 120));
+        var quoteBorder = chat?.Border ?? (isDark ? Color.FromRgb(0, 122, 255) : Color.FromRgb(0, 100, 200));
         var linkColor = isDark ? Color.FromRgb(100, 180, 255) : Color.FromRgb(0, 100, 200);
         // A wikilink pointing at a note that has not been written yet.
         var brokenLinkColor = isDark ? Color.FromRgb(230, 150, 110) : Color.FromRgb(175, 85, 20);
-        var headingColor = isDark ? Color.FromRgb(240, 240, 245) : Color.FromRgb(20, 20, 24);
-        var dimColor = isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(88, 88, 96);
+        var headingColor = chat?.Fg ?? (isDark ? Color.FromRgb(240, 240, 245) : Color.FromRgb(20, 20, 24));
+        var dimColor = chat?.Dim ?? (isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(88, 88, 96));
+        var markerColor = chat?.Fg ?? (isDark ? Color.FromRgb(0, 122, 255) : Color.FromRgb(0, 100, 200));
+        var ruleColor = chat?.Border ?? (isDark ? Color.FromRgb(60, 60, 65) : Color.FromRgb(200, 200, 205));
         var codeFont = codeTypeface ?? new Typeface("Cascadia Mono, Consolas, Courier New");
 
         var lines = markdown.Split('\n');
@@ -72,8 +108,10 @@ public static class MarkdownParser
             if (headingMatch.Success)
             {
                 int level = headingMatch.Groups[1].Value.Length;
-                double fontSize = level switch { 1 => baseFontSize * 1.7, 2 => baseFontSize * 1.4, 3 => baseFontSize * 1.2, _ => baseFontSize * 1.1 };
-                var fontWeight = level <= 2 ? FontWeight.Bold : FontWeight.SemiBold;
+                double fontSize = chat != null
+                    ? level switch { 1 => baseFontSize * 1.45, 2 => baseFontSize * 1.25, 3 => baseFontSize * 1.08, _ => baseFontSize }
+                    : level switch { 1 => baseFontSize * 1.7, 2 => baseFontSize * 1.4, 3 => baseFontSize * 1.2, _ => baseFontSize * 1.1 };
+                var fontWeight = level <= 2 || chat != null ? FontWeight.Bold : FontWeight.SemiBold;
 
                 var tb = new SelectableTextBlock
                 {
@@ -103,8 +141,9 @@ public static class MarkdownParser
                 if (i < lines.Length) i++; // skip closing ```
 
                 var codeText = string.Join("\n", codeLines);
-                var codeBlock = CreateCodeBlock(codeText, lang, isDark, codeBg, codeFg, codeFont, baseFontSize);
-                controls.Add(codeBlock);
+                controls.Add(chat != null
+                    ? CreateChatCodeBlock(codeText, lang, chat, codeFont, baseFontSize)
+                    : CreateCodeBlock(codeText, lang, isDark, codeBg, codeFg, codeFont, baseFontSize));
                 continue;
             }
 
@@ -134,7 +173,8 @@ public static class MarkdownParser
                 {
                     BorderBrush = new SolidColorBrush(quoteBorder),
                     BorderThickness = new Thickness(3, 0, 0, 0),
-                    Background = new SolidColorBrush(isDark ? Color.FromArgb(20, 100, 160, 255) : Color.FromArgb(15, 0, 100, 200)),
+                    Background = chat != null ? Brushes.Transparent
+                        : new SolidColorBrush(isDark ? Color.FromArgb(20, 100, 160, 255) : Color.FromArgb(15, 0, 100, 200)),
                     Padding = new Thickness(8, 4),
                     Margin = new Thickness(0, 4),
                     Child = quoteContent
@@ -149,8 +189,8 @@ public static class MarkdownParser
                 controls.Add(new Border
                 {
                     Height = 1,
-                    Background = new SolidColorBrush(isDark ? Color.FromRgb(60, 60, 65) : Color.FromRgb(200, 200, 205)),
-                    Margin = new Thickness(0, 8),
+                    Background = new SolidColorBrush(ruleColor),
+                    Margin = new Thickness(0, chat != null ? 14 : 8),
                 });
                 i++;
                 continue;
@@ -167,7 +207,7 @@ public static class MarkdownParser
                     var bullet = new TextBlock
                     {
                         Text = "\u2022",
-                        Foreground = new SolidColorBrush(isDark ? Color.FromRgb(0, 122, 255) : Color.FromRgb(0, 100, 200)),
+                        Foreground = new SolidColorBrush(markerColor),
                         FontSize = baseFontSize,
                         Margin = new Thickness(indent * 8 + 4, 0, 6, 0),
                         VerticalAlignment = VerticalAlignment.Top,
@@ -208,7 +248,7 @@ public static class MarkdownParser
                     var num = new TextBlock
                     {
                         Text = match.Groups[1].Value + ".",
-                        Foreground = new SolidColorBrush(isDark ? Color.FromRgb(0, 122, 255) : Color.FromRgb(0, 100, 200)),
+                        Foreground = new SolidColorBrush(markerColor),
                         FontSize = baseFontSize,
                         Width = 24,
                         TextAlignment = TextAlignment.Right,
@@ -247,7 +287,7 @@ public static class MarkdownParser
                     tableRows.Add(lines[i]);
                     i++;
                 }
-                var table = CreateTable(tableRows, isDark, fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki, baseFontSize);
+                var table = CreateTable(tableRows, isDark, fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki, baseFontSize, chat);
                 if (table != null)
                     controls.Add(table);
                 continue;
@@ -269,14 +309,16 @@ public static class MarkdownParser
                     i++;
                 }
 
-                var paraText = string.Join(" ", paraLines);
+                // The chat keeps the writer's line breaks, as the desktop app does; joining them
+                // with a space also wedges stray gaps into Japanese sentences.
+                var paraText = string.Join(chat != null ? "\n" : " ", paraLines);
                 var tb = new SelectableTextBlock
                 {
                     FontSize = baseFontSize,
                     Foreground = new SolidColorBrush(fg),
                     TextWrapping = TextWrapping.Wrap,
                     Margin = new Thickness(0, 2),
-                    LineHeight = 20,
+                    LineHeight = chat != null ? Math.Round(baseFontSize * 1.625) : 20,
                 };
                 SetInlineText(tb, paraText, fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki);
                 controls.Add(tb);
@@ -361,12 +403,19 @@ public static class MarkdownParser
             {
                 // Inline code
                 var content = part[1..^1];
-                tb.Inlines!.Add(new Avalonia.Controls.Documents.Run(content)
+                var codeRun = new Avalonia.Controls.Documents.Run(content)
                 {
                     FontFamily = new FontFamily(codeFont.FontFamily.Name),
                     Foreground = new SolidColorBrush(codeFg),
-                    // Note: Run doesn't support Background directly in Avalonia
-                });
+                };
+                if (_inlineCodeBg != null)
+                {
+                    // A tinted chip, padded with narrow spaces so the tint clears the glyphs
+                    codeRun.Text = " " + content + " ";
+                    codeRun.Background = _inlineCodeBg;
+                    codeRun.FontSize = tb.FontSize * 0.9;
+                }
+                tb.Inlines!.Add(codeRun);
                 hasInlines = true;
             }
             else if (Regex.IsMatch(part, @"^\[.*?\]\(.*?\)$"))
@@ -549,7 +598,143 @@ public static class MarkdownParser
         };
     }
 
-    private static Control? CreateTable(List<string> rows, bool isDark, Color fg, Color codeBg, Color codeFg, Color linkColor, Color brokenLinkColor, Typeface codeFont, WikiLinkOptions? wiki, double baseFontSize = 13)
+    /// <summary>
+    /// A code block as the desktop app draws it: a hairline-bordered card with the language on
+    /// the left, a copy icon on the right and string literals / comments picked out in colour.
+    /// </summary>
+    private static Border CreateChatCodeBlock(string code, string language, ChatPalette pal,
+        Typeface codeFont, double baseFontSize)
+    {
+        var header = new DockPanel { Margin = new Thickness(12, 6, 6, 0) };
+
+        var copyIcon = new Avalonia.Controls.Shapes.Path
+        {
+            Data = Geometry.Parse("M5,5 H13 V13 H5 Z M3,10 H1 V1 H10 V3"),
+            Stroke = new SolidColorBrush(pal.Dim),
+            StrokeThickness = 1.2,
+            Width = 13, Height = 13,
+            Stretch = Stretch.Uniform,
+        };
+        var copyBtn = new Button
+        {
+            Content = copyIcon,
+            Padding = new Thickness(6),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        ToolTip.SetTip(copyBtn, Loc.Get("CopyCode", "Copy"));
+        var codeForCopy = code;
+        copyBtn.Click += async (_, _) =>
+        {
+            var topLevel = TopLevel.GetTopLevel(copyBtn);
+            if (topLevel?.Clipboard != null)
+                await topLevel.Clipboard.SetTextAsync(codeForCopy);
+            copyBtn.Content = new TextBlock { Text = "✓", FontSize = 12, Foreground = new SolidColorBrush(pal.Dim) };
+            await System.Threading.Tasks.Task.Delay(1500);
+            copyBtn.Content = copyIcon;
+        };
+        DockPanel.SetDock(copyBtn, Avalonia.Controls.Dock.Right);
+        header.Children.Add(copyBtn);
+        header.Children.Add(new TextBlock
+        {
+            Text = language,
+            FontSize = Math.Max(10, baseFontSize * 0.8),
+            Foreground = new SolidColorBrush(pal.Dim),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+
+        var codeText = new SelectableTextBlock
+        {
+            FontSize = baseFontSize * 0.9,
+            FontFamily = new FontFamily(codeFont.FontFamily.Name),
+            Foreground = new SolidColorBrush(pal.CodeFg),
+            Margin = new Thickness(16, 0, 16, 12),
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = Math.Round(baseFontSize * 1.45),
+        };
+        HighlightCode(codeText, code, pal);
+
+        var stack = new StackPanel();
+        stack.Children.Add(header);
+        stack.Children.Add(codeText);
+
+        return new Border
+        {
+            Background = new SolidColorBrush(pal.CodeBg),
+            BorderBrush = new SolidColorBrush(pal.Border),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Margin = new Thickness(0, 6),
+            Child = stack,
+        };
+    }
+
+    /// <summary>
+    /// Language-agnostic colouring: string literals in green (except JSON keys, which stay in
+    /// ink), line comments dimmed. Enough to read structure at a glance without a real lexer.
+    /// Very long blocks are left plain so a huge paste never stalls the UI thread.
+    /// </summary>
+    private static void HighlightCode(TextBlock tb, string code, ChatPalette pal)
+    {
+        if (code.Length > 20000) { tb.Text = code; return; }
+
+        var inlines = tb.Inlines!;
+        var plain = new System.Text.StringBuilder();
+        void Flush()
+        {
+            if (plain.Length == 0) return;
+            inlines.Add(new Avalonia.Controls.Documents.Run(plain.ToString()));
+            plain.Clear();
+        }
+        void Add(string text, Color color, bool italic = false)
+        {
+            Flush();
+            inlines.Add(new Avalonia.Controls.Documents.Run(text)
+            {
+                Foreground = new SolidColorBrush(color),
+                FontStyle = italic ? FontStyle.Italic : FontStyle.Normal,
+            });
+        }
+
+        int i = 0;
+        while (i < code.Length)
+        {
+            char c = code[i];
+            if (c is '"' or '\'' or '`')
+            {
+                int j = i + 1;
+                while (j < code.Length && code[j] != c && code[j] != '\n')
+                    j += code[j] == '\\' && j + 1 < code.Length ? 2 : 1;
+                if (j < code.Length && code[j] == c)
+                {
+                    int k = j + 1;
+                    while (k < code.Length && code[k] is ' ' or '\t') k++;
+                    bool isKey = c == '"' && k < code.Length && code[k] == ':';
+                    var literal = code[i..(j + 1)];
+                    if (isKey) plain.Append(literal); else Add(literal, pal.StringFg);
+                    i = j + 1;
+                    continue;
+                }
+            }
+            bool lineComment = (c == '/' && i + 1 < code.Length && code[i + 1] == '/')
+                || (c == '#' && (i == 0 || code[i - 1] is '\n' or ' ' or '\t'));
+            if (lineComment)
+            {
+                int end = code.IndexOf('\n', i);
+                if (end < 0) end = code.Length;
+                Add(code[i..end], pal.CommentFg, italic: true);
+                i = end;
+                continue;
+            }
+            plain.Append(c);
+            i++;
+        }
+        Flush();
+    }
+
+    private static Control? CreateTable(List<string> rows, bool isDark, Color fg, Color codeBg, Color codeFg, Color linkColor, Color brokenLinkColor, Typeface codeFont, WikiLinkOptions? wiki, double baseFontSize = 13, ChatPalette? chat = null)
     {
         if (rows.Count < 2) return null;
 
@@ -577,6 +762,50 @@ public static class MarkdownParser
             grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
         for (int r = 0; r < parsedRows.Count; r++)
             grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+
+        if (chat != null)
+        {
+            // Desktop style: one rounded outline, a tinted header row and hairlines between
+            // rows only.
+            grid.Margin = new Thickness(0);
+            var line = new SolidColorBrush(chat.Border);
+            for (int r = 0; r < parsedRows.Count; r++)
+            {
+                for (int c = 0; c < colCount; c++)
+                {
+                    var cellText = new SelectableTextBlock
+                    {
+                        FontSize = baseFontSize * 0.95,
+                        FontWeight = r == 0 ? FontWeight.SemiBold : FontWeight.Normal,
+                        Foreground = new SolidColorBrush(fg),
+                        TextWrapping = TextWrapping.Wrap,
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    SetInlineText(cellText, c < parsedRows[r].Length ? parsedRows[r][c] : "",
+                        fg, codeBg, codeFg, linkColor, brokenLinkColor, codeFont, wiki);
+                    var cell = new Border
+                    {
+                        Background = r == 0 ? new SolidColorBrush(chat.TableHeaderBg) : Brushes.Transparent,
+                        BorderBrush = line,
+                        BorderThickness = new Thickness(0, 0, 0, r < parsedRows.Count - 1 ? 1 : 0),
+                        Padding = new Thickness(12, 7),
+                        Child = cellText,
+                    };
+                    Grid.SetRow(cell, r);
+                    Grid.SetColumn(cell, c);
+                    grid.Children.Add(cell);
+                }
+            }
+            return new Border
+            {
+                BorderBrush = line,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                ClipToBounds = true,
+                Margin = new Thickness(0, 6),
+                Child = grid,
+            };
+        }
 
         for (int r = 0; r < parsedRows.Count; r++)
         {
