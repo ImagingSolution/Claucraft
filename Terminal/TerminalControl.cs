@@ -2773,6 +2773,62 @@ public class TerminalControl : Control, IDisposable
         _pty?.WriteInput("\r");
     }
 
+    /// <summary>
+    /// Keys the chat view's answers into the CLI's AskUserQuestion selector. Measured against
+    /// Claude Code 2.1.283, where each question opens with the caret on option 1:
+    /// - a digit picks that option; on a single-select question it also moves to the next one
+    ///   (with only one single-select question it submits outright), on multi-select it toggles
+    /// - the free-text row sits after the options: arrow down onto it and type, and it is ticked
+    /// - multi-select ends with a Next/Submit row under the free-text row; Enter there moves on
+    /// - Right arrow leaves a question unanswered
+    /// - after the last question comes a review page whose default is "Submit answers"
+    /// </summary>
+    private async void AnswerAskUserQuestion(IReadOnlyList<Services.AskUserQuestionItem> questions, IReadOnlyList<Controls.AskReply> replies)
+    {
+        const string down = "\x1b[B", right = "\x1b[C";
+        var keys = new List<string>();
+        for (int i = 0; i < questions.Count && i < replies.Count; i++)
+        {
+            var q = questions[i];
+            var r = replies[i];
+            int n = q.Options.Count;
+            var other = r.OtherText?.Replace("\r", " ").Replace("\n", " ");
+            if (r.Skipped)
+            {
+                keys.Add(right);
+            }
+            else if (!q.MultiSelect)
+            {
+                if (other == null && r.Selected.Count > 0)
+                    keys.Add((r.Selected[0] + 1).ToString());
+                else
+                {
+                    for (int k = 0; k < n; k++) keys.Add(down);
+                    keys.Add(other ?? "");
+                    keys.Add("\r");
+                }
+            }
+            else
+            {
+                foreach (var idx in r.Selected) keys.Add((idx + 1).ToString());
+                for (int k = 0; k < n; k++) keys.Add(down);
+                if (other != null) keys.Add(other);
+                keys.Add(down);
+                keys.Add("\r");
+            }
+        }
+        bool submitsItself = questions.Count == 1 && !questions[0].MultiSelect;
+        if (!submitsItself) keys.Add("\r");
+
+        foreach (var key in keys)
+        {
+            _pty?.WriteInput(key);
+            // Paced as measured: keys arriving in one burst read to the CLI as a paste
+            await Task.Delay(AskKeyDelayMs);
+        }
+    }
+
+    private const int AskKeyDelayMs = 120;
     private const int AttachmentSubmitDelayMs = 300;
     private const int SubmitDelayMs = 150;
 
@@ -3668,6 +3724,8 @@ public class TerminalControl : Control, IDisposable
             {
                 _docViewPanel = new Controls.DocumentViewPanel(_isDark, _typeface);
                 _docViewPanel.SetFont(_typeface.FontFamily.Name, _fontSize);
+                _docViewPanel.AskAnswered += (questions, replies) => AnswerAskUserQuestion(questions, replies);
+                _docViewPanel.AskCancelled += () => _pty?.WriteInput("\x1b");
                 VisualChildren.Add(_docViewPanel);
                 LogicalChildren.Add(_docViewPanel);
             }

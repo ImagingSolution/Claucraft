@@ -9,6 +9,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Claucraft.Services;
 
 namespace Claucraft.Controls;
@@ -39,6 +40,9 @@ public static class ChatTheme
     public static double BodySize(double terminalFontSize) => terminalFontSize;
 }
 
+/// <summary>The reader's answer to one AskUserQuestion question: option indexes and typed text.</summary>
+public record AskReply(bool Skipped, IReadOnlyList<int> Selected, string? OtherText);
+
 /// <summary>
 /// The chat view: a Claude session's JSONL transcript rendered the way the desktop app shows a
 /// conversation - user prompts as grey bubbles on the right, Claude's replies as plain Markdown
@@ -66,6 +70,14 @@ public class DocumentViewPanel : Panel
     private readonly List<string> _keys = new();
     private readonly List<Control?> _views = new();
     private readonly HashSet<string> _expandedGroups = new();
+    // What the reader has picked on an open question, by tool_use id, so a rebuild keeps it
+    private readonly Dictionary<string, AskState> _askStates = new();
+
+    /// <summary>The reader submitted the open question: one reply per question, in order.</summary>
+    public event Action<IReadOnlyList<AskUserQuestionItem>, IReadOnlyList<AskReply>>? AskAnswered;
+
+    /// <summary>The reader dismissed the open question.</summary>
+    public event Action? AskCancelled;
 
     private string? _currentSessionPath;
     private int _lastLineCount;
@@ -358,7 +370,7 @@ public class DocumentViewPanel : Panel
     {
         var tools = m.Tools == null ? "" : string.Join("\u001F", m.Tools.Select(t => t.Name + ":" + t.Detail));
         var answers = m.AskUser == null ? "" : string.Join("\u001F", m.AskUser.Answers.Select(a => a.Key + "=" + a.Value));
-        return $"{(int)m.Role}|{m.IsToolUse}|{m.IsToolRejection}|{m.Images?.Count ?? 0}|{tools}|{answers}|{m.Text}";
+        return $"{(int)m.Role}|{m.IsToolUse}|{m.IsToolRejection}|{m.Images?.Count ?? 0}|{tools}|{answers}|{m.PendingAskId}|{m.Text}";
     }
 
     private void UpdateHeader(string path, List<ConversationMessage> messages)
@@ -420,6 +432,7 @@ public class DocumentViewPanel : Panel
 
     private Control? CreateMessageView(ConversationMessage msg, string key, ConversationMessage? previous)
     {
+        if (msg.PendingAskId != null && msg.AskUser != null) return CreateAskPromptView(msg.PendingAskId, msg.AskUser);
         if (msg.AskUser != null) return CreateAskUserView(msg);
         if (msg.IsToolRejection) return CreateToolRejectionLine(msg);
         if (msg.Role == MessageRole.User) return CreateUserView(msg, previous);
@@ -772,6 +785,36 @@ public class DocumentViewPanel : Panel
         return container;
     }
 
+    /// <summary>
+    /// Splits a recorded answer into the options it picked and any typed text. The CLI joins
+    /// a multi-select answer with ", " (typed text last), so labels are matched as whole
+    /// segments, longest first, in case a label itself contains ", ".
+    /// </summary>
+    private static (HashSet<string> Picked, string? Typed) SplitAnswer(AskUserQuestionItem question, string? answer)
+    {
+        var picked = new HashSet<string>();
+        if (string.IsNullOrEmpty(answer)) return (picked, null);
+        if (question.Options.Any(o => o.Label == answer))
+        {
+            picked.Add(answer);
+            return (picked, null);
+        }
+        if (!question.MultiSelect) return (picked, answer);
+
+        var rest = ", " + answer + ", ";
+        foreach (var label in question.Options.Select(o => o.Label)
+                     .Where(l => l.Length > 0).OrderByDescending(l => l.Length))
+        {
+            var seg = ", " + label + ", ";
+            int at = rest.IndexOf(seg, StringComparison.Ordinal);
+            if (at < 0) continue;
+            picked.Add(label);
+            rest = rest.Remove(at, seg.Length - 2);
+        }
+        var typed = rest.Trim().Trim(',').Trim();
+        return (picked, typed.Length > 0 ? typed : null);
+    }
+
     private Control CreateQuestionCard(
         AskUserQuestionItem question,
         Dictionary<string, string> answers,
@@ -803,15 +846,15 @@ public class DocumentViewPanel : Panel
         });
 
         answers.TryGetValue(question.Question, out var selectedAnswer);
-        bool answerMatchesOption = question.Options.Any(o => o.Label == selectedAnswer);
+        var (picked, typedAnswer) = SplitAnswer(question, selectedAnswer);
 
         foreach (var option in question.Options)
         {
-            bool isSelected = selectedAnswer != null && selectedAnswer == option.Label;
+            bool isSelected = picked.Contains(option.Label);
             var labelRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             labelRow.Children.Add(new TextBlock
             {
-                Text = isSelected ? "●" : "○",
+                Text = question.MultiSelect ? (isSelected ? "■" : "□") : (isSelected ? "●" : "○"),
                 FontSize = _baseFontSize - 2,
                 Foreground = Brush(isSelected ? accent : pal.Dim),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -848,7 +891,7 @@ public class DocumentViewPanel : Panel
         }
 
         // A typed answer that is none of the options
-        if (selectedAnswer != null && !answerMatchesOption)
+        if (!string.IsNullOrEmpty(typedAnswer))
         {
             stack.Children.Add(new Border
             {
@@ -857,7 +900,7 @@ public class DocumentViewPanel : Panel
                 Padding = new Thickness(8, 5),
                 Child = new SelectableTextBlock
                 {
-                    Text = "✎ " + selectedAnswer,
+                    Text = "✎ " + typedAnswer,
                     FontSize = _baseFontSize * 0.95,
                     Foreground = Brush(pal.Fg),
                     TextWrapping = TextWrapping.Wrap,
@@ -896,6 +939,398 @@ public class DocumentViewPanel : Panel
             HorizontalAlignment = HorizontalAlignment.Left,
             Child = stack,
         };
+    }
+
+    // ── Open AskUserQuestion ──
+
+    /// <summary>
+    /// The question the CLI is waiting on, drawn the way the desktop app asks it: one question
+    /// per page, the options as rows, a free-text "Other", and Back / Skip / Next-or-Submit.
+    /// Nothing reaches the CLI until Submit; the answers are then keyed into its selector.
+    /// </summary>
+    private Control CreateAskPromptView(string askId, AskUserData data)
+    {
+        var questions = data.Questions;
+        if (!_askStates.TryGetValue(askId, out var state) || state.Count != questions.Count)
+            _askStates[askId] = state = new AskState(questions.Count);
+
+        var card = new Border
+        {
+            Background = Brush(ChatTheme.Surface(_isDark)),
+            BorderBrush = Brush(ChatTheme.Outline(_isDark)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(12, 10, 12, 12),
+            Margin = new Thickness(0, 4),
+            BoxShadow = new BoxShadows(new BoxShadow { OffsetY = 2, Blur = 10, Color = Color.FromArgb(_isDark ? (byte)60 : (byte)22, 0, 0, 0) }),
+        };
+        void Render() => card.Child = BuildAskPage(questions, state, Render);
+        Render();
+        return card;
+    }
+
+    private Control BuildAskPage(List<AskUserQuestionItem> questions, AskState state, Action rerender)
+    {
+        var pal = Palette;
+        int page = state.Page = Math.Clamp(state.Page, 0, questions.Count - 1);
+        var q = questions[page];
+        bool last = page == questions.Count - 1;
+        bool live = !state.Sent;
+        var root = new StackPanel();
+
+        // Header: "1/2", the question, collapse and cancel
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto") };
+        header.Children.Add(new Border
+        {
+            Background = Brush(_isDark ? Color.FromArgb(70, 217, 119, 87) : Color.FromRgb(250, 228, 200)),
+            CornerRadius = new CornerRadius(5),
+            Padding = new Thickness(6, 1),
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = $"{page + 1}/{questions.Count}",
+                FontSize = _baseFontSize * 0.8,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = Brush(_isDark ? Color.FromRgb(240, 185, 150) : Color.FromRgb(150, 85, 30)),
+            },
+        });
+        var title = new TextBlock
+        {
+            Text = q.Question,
+            FontSize = _baseFontSize * 0.95,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brush(pal.Fg),
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(title, 1);
+        header.Children.Add(title);
+        var collapse = AskIconButton(state.Collapsed ? "M1,6 L6,1 L11,6" : "M1,1 L6,6 L11,1", Loc.Get("AskCollapse"), true, () =>
+        {
+            state.Collapsed = !state.Collapsed;
+            rerender();
+        });
+        Grid.SetColumn(collapse, 2);
+        header.Children.Add(collapse);
+        var close = AskIconButton("M1,1 L10,10 M10,1 L1,10", Loc.Get("AskCancel"), live, () =>
+        {
+            state.Sent = true;
+            rerender();
+            AskCancelled?.Invoke();
+        });
+        Grid.SetColumn(close, 3);
+        header.Children.Add(close);
+        root.Children.Add(header);
+        if (state.Collapsed) return root;
+
+        // Every mark on the page is redrawn from the state, so a click never rebuilds the
+        // page (which would take the focus out of the Other box)
+        var marks = new List<Action>();
+        void RefreshMarks() { foreach (var m in marks) m(); }
+
+        var list = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 0) };
+        for (int i = 0; i < q.Options.Count; i++)
+        {
+            int index = i;
+            var opt = q.Options[i];
+            var text = new StackPanel { Spacing = 1, VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock
+            {
+                Text = opt.Label,
+                FontSize = _baseFontSize * 0.95,
+                Foreground = Brush(pal.Fg),
+                TextWrapping = TextWrapping.Wrap,
+            });
+            if (!string.IsNullOrWhiteSpace(opt.Description))
+                text.Children.Add(new TextBlock
+                {
+                    Text = opt.Description,
+                    FontSize = _baseFontSize * 0.82,
+                    Foreground = Brush(pal.Dim),
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            var row = AskOptionRow(text, q.MultiSelect, () => state.Selected[page].Contains(index), live, marks, () =>
+            {
+                if (q.MultiSelect)
+                {
+                    if (!state.Selected[page].Remove(index)) state.Selected[page].Add(index);
+                    RefreshMarks();
+                    return;
+                }
+                state.Selected[page].Clear();
+                state.Selected[page].Add(index);
+                state.OtherOn[page] = false;
+                state.Skipped[page] = false;
+                // A single choice is the answer: move on, as the CLI does
+                if (!last) { state.Page++; rerender(); }
+                else RefreshMarks();
+            });
+            list.Children.Add(row);
+        }
+
+        // "Other": a row of its own with a text box under it
+        var otherBox = new TextBox
+        {
+            Text = state.Other[page],
+            Watermark = Loc.Get("AskOtherPlaceholder"),
+            FontSize = _baseFontSize * 0.88,
+            Foreground = Brush(pal.Fg),
+            Background = Brush(ChatTheme.Surface(_isDark)),
+            BorderBrush = Brush(ChatTheme.Outline(_isDark)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 5),
+            MinHeight = 0,
+            Margin = new Thickness(0, 8, 0, 0),
+            IsEnabled = live,
+        };
+        var otherContent = new StackPanel();
+        otherContent.Children.Add(new TextBlock
+        {
+            Text = Loc.Get("AskOther"),
+            FontSize = _baseFontSize * 0.95,
+            Foreground = Brush(pal.Fg),
+        });
+        otherContent.Children.Add(otherBox);
+        list.Children.Add(AskOptionRow(otherContent, q.MultiSelect, () => state.OtherOn[page], live, marks, () =>
+        {
+            state.OtherOn[page] = q.MultiSelect ? !state.OtherOn[page] : true;
+            if (!q.MultiSelect) state.Selected[page].Clear();
+            if (state.OtherOn[page]) otherBox.Focus();
+            RefreshMarks();
+        }));
+        otherBox.TextChanged += (_, _) =>
+        {
+            state.Other[page] = otherBox.Text ?? "";
+            if (!string.IsNullOrWhiteSpace(otherBox.Text) && !state.OtherOn[page])
+            {
+                state.OtherOn[page] = true;
+                if (!q.MultiSelect) state.Selected[page].Clear();
+            }
+            RefreshMarks();
+        };
+        root.Children.Add(list);
+
+        // Footer: Back on the left; Skip and Next / Submit on the right
+        void Submit()
+        {
+            state.Sent = true;
+            var replies = new List<AskReply>();
+            for (int k = 0; k < questions.Count; k++)
+            {
+                bool answered = !state.Skipped[k] && state.IsAnswered(k);
+                string? other = state.OtherOn[k] && !string.IsNullOrWhiteSpace(state.Other[k]) ? state.Other[k].Trim() : null;
+                replies.Add(answered
+                    ? new AskReply(false, state.Selected[k].ToList(), other)
+                    : new AskReply(true, Array.Empty<int>(), null));
+            }
+            rerender();
+            AskAnswered?.Invoke(questions, replies);
+        }
+
+        var footer = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto"), Margin = new Thickness(0, 12, 0, 0) };
+        if (page > 0)
+            footer.Children.Add(AskTextButton(Loc.Get("AskBack"), false, () => live, () => { state.Page--; rerender(); }));
+        if (questions.Count > 1)
+        {
+            var skip = AskTextButton(Loc.Get("AskSkip"), false, () => live, () =>
+            {
+                state.Skipped[page] = true;
+                if (last) Submit();
+                else { state.Page++; rerender(); }
+            });
+            skip.Margin = new Thickness(0, 0, 6, 0);
+            Grid.SetColumn(skip, 2);
+            footer.Children.Add(skip);
+        }
+        var primaryText = state.Sent ? Loc.Get("AskSending") : Loc.Get(last ? "AskSubmit" : "AskNext");
+        var primary = AskTextButton(primaryText, true, () => live && state.IsAnswered(page), () =>
+        {
+            state.Skipped[page] = false;
+            if (last) Submit();
+            else { state.Page++; rerender(); }
+        });
+        marks.Add(() => ((Action)primary.Tag!)());
+        Grid.SetColumn(primary, 3);
+        footer.Children.Add(primary);
+        root.Children.Add(footer);
+
+        RefreshMarks();
+        return root;
+    }
+
+    /// <summary>
+    /// One choice: a grey row that turns white and outlined when picked, with a round (single)
+    /// or square (multi) mark on the right.
+    /// </summary>
+    private Border AskOptionRow(Control content, bool multi, Func<bool> isOn, bool live, List<Action> marks, Action onClick)
+    {
+        var mark = new Border
+        {
+            Width = 16,
+            Height = 16,
+            CornerRadius = new CornerRadius(multi ? 3 : 8),
+            BorderThickness = new Thickness(1.2),
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(12, 2, 0, 0),
+        };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        grid.Children.Add(content);
+        Grid.SetColumn(mark, 1);
+        grid.Children.Add(mark);
+        var row = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(10, 7),
+            Child = grid,
+            Cursor = live ? new Cursor(StandardCursorType.Hand) : Cursor.Default,
+        };
+        var blue = _isDark ? Color.FromRgb(74, 144, 245) : Color.FromRgb(37, 99, 235);
+        bool hover = false;
+        void Apply()
+        {
+            bool on = isOn();
+            row.Background = Brush(on ? ChatTheme.Surface(_isDark)
+                : hover && live ? ChatTheme.Outline(_isDark) : ChatTheme.Hover(_isDark));
+            row.BorderBrush = on ? Brush(ChatTheme.Outline(_isDark)) : Brushes.Transparent;
+            mark.Background = on ? Brush(blue) : Brush(ChatTheme.Surface(_isDark));
+            mark.BorderBrush = Brush(on ? blue : _isDark ? Color.FromRgb(95, 95, 94) : Color.FromRgb(190, 190, 188));
+            mark.Child = !on ? null : multi
+                ? new Avalonia.Controls.Shapes.Path
+                {
+                    Data = Geometry.Parse("M1,5 L4,8 L10,1"),
+                    Stroke = Brushes.White,
+                    StrokeThickness = 1.8,
+                    Width = 10,
+                    Height = 8,
+                    Stretch = Stretch.Uniform,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                }
+                : new Border { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), Background = Brushes.White };
+        }
+        marks.Add(Apply);
+        row.PointerEntered += (_, _) => { hover = true; Apply(); };
+        row.PointerExited += (_, _) => { hover = false; Apply(); };
+        row.PointerPressed += (_, e) =>
+        {
+            // Clicks inside the Other box are typing, not a toggle
+            if (!live || e.Source is Visual v && v.FindAncestorOfType<TextBox>(includeSelf: true) != null) return;
+            if (!e.GetCurrentPoint(row).Properties.IsLeftButtonPressed) return;
+            onClick();
+        };
+        return row;
+    }
+
+    /// <summary>
+    /// A footer button. Drawn as a Border rather than a Button so the theme's hover and
+    /// disabled looks do not repaint it; its Tag re-evaluates whether it is enabled.
+    /// </summary>
+    private Border AskTextButton(string text, bool primary, Func<bool> isEnabled, Action onClick)
+    {
+        var label = new TextBlock { Text = text, FontSize = _baseFontSize * 0.85, FontWeight = primary ? FontWeight.SemiBold : FontWeight.Normal };
+        var button = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(10, 3),
+            Child = label,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        var fg = Palette.Fg;
+        var bg = ChatTheme.Background(_isDark);
+        void Apply()
+        {
+            bool on = isEnabled();
+            button.Cursor = on ? new Cursor(StandardCursorType.Hand) : Cursor.Default;
+            if (primary)
+            {
+                var fill = on ? fg : _isDark ? Color.FromRgb(80, 80, 79) : Color.FromRgb(170, 170, 168);
+                button.Background = Brush(fill);
+                button.BorderBrush = Brush(fill);
+                label.Foreground = Brush(bg);
+            }
+            else
+            {
+                button.Background = Brush(ChatTheme.Surface(_isDark));
+                button.BorderBrush = Brush(ChatTheme.Outline(_isDark));
+                label.Foreground = Brush(on ? fg : Palette.Dim);
+            }
+        }
+        button.Tag = (Action)Apply;
+        Apply();
+        button.PointerPressed += (_, e) =>
+        {
+            if (!isEnabled() || !e.GetCurrentPoint(button).Properties.IsLeftButtonPressed) return;
+            e.Handled = true;
+            onClick();
+        };
+        return button;
+    }
+
+    private Border AskIconButton(string geometry, string tip, bool enabled, Action onClick)
+    {
+        var button = new Border
+        {
+            Width = 24,
+            Height = 24,
+            CornerRadius = new CornerRadius(5),
+            Margin = new Thickness(4, 0, 0, 0),
+            Background = Brushes.Transparent,
+            VerticalAlignment = VerticalAlignment.Center,
+            Cursor = enabled ? new Cursor(StandardCursorType.Hand) : Cursor.Default,
+            Opacity = enabled ? 1 : 0.4,
+            Child = new Avalonia.Controls.Shapes.Path
+            {
+                Data = Geometry.Parse(geometry),
+                Stroke = Brush(Palette.Fg),
+                StrokeThickness = 1.4,
+                Width = 10,
+                Height = 10,
+                Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+        ToolTip.SetTip(button, tip);
+        if (!enabled) return button;
+        button.PointerEntered += (_, _) => button.Background = Brush(ChatTheme.Hover(_isDark));
+        button.PointerExited += (_, _) => button.Background = Brushes.Transparent;
+        button.PointerPressed += (_, e) =>
+        {
+            if (!e.GetCurrentPoint(button).Properties.IsLeftButtonPressed) return;
+            e.Handled = true;
+            onClick();
+        };
+        return button;
+    }
+
+    /// <summary>What the reader has picked so far on an open question, one slot per question.</summary>
+    private sealed class AskState
+    {
+        public int Page;
+        public bool Sent;
+        public bool Collapsed;
+        public readonly List<SortedSet<int>> Selected = new();
+        public readonly List<string> Other = new();
+        public readonly List<bool> OtherOn = new();
+        public readonly List<bool> Skipped = new();
+        public int Count => Selected.Count;
+
+        public AskState(int count)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                Selected.Add(new SortedSet<int>());
+                Other.Add("");
+                OtherOn.Add(false);
+                Skipped.Add(false);
+            }
+        }
+
+        public bool IsAnswered(int q) => Selected[q].Count > 0 || (OtherOn[q] && !string.IsNullOrWhiteSpace(Other[q]));
     }
 
     // ── Scrolling ──

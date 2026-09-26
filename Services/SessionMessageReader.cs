@@ -32,7 +32,9 @@ public record ConversationMessage(
     AskUserData? AskUser = null,
     bool IsToolRejection = false,
     IReadOnlyList<ToolCall>? Tools = null,
-    IReadOnlyList<ChatImage>? Images = null
+    IReadOnlyList<ChatImage>? Images = null,
+    // Set on an AskUserQuestion the CLI is still waiting on: the tool_use id it will answer
+    string? PendingAskId = null
 );
 
 /// <summary>
@@ -47,6 +49,7 @@ public static class SessionMessageReader
     {
         var messages = new List<ConversationMessage>();
         if (!File.Exists(jsonlPath)) return messages;
+        var pendingAsks = new HashSet<string>();
 
         try
         {
@@ -59,9 +62,16 @@ public static class SessionMessageReader
                 var line = reader.ReadLine();
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
+                // Any tool_result for a question - answered, cancelled or rejected - settles it
+                if (pendingAsks.Count > 0 && line.Contains("\"tool_result\""))
+                    pendingAsks.RemoveWhere(id => line.Contains(id));
+
                 var msg = ParseLine(line, toolUseIdToName);
                 if (msg != null)
+                {
                     messages.Add(msg);
+                    if (msg.PendingAskId != null) pendingAsks.Add(msg.PendingAskId);
+                }
             }
         }
         catch (Exception ex)
@@ -69,7 +79,19 @@ public static class SessionMessageReader
             System.Diagnostics.Debug.WriteLine($"[SessionMessageReader] ReadSession error: {ex.Message}");
         }
 
-        return ConsolidateMessages(messages);
+        var result = ConsolidateMessages(messages);
+        // A question is only still open while nothing but status lines follows it; one left
+        // behind by an interrupted session is never going to be answered
+        bool laterContent = false;
+        for (int k = result.Count - 1; k >= 0; k--)
+        {
+            var id = result[k].PendingAskId;
+            if (id != null && (laterContent || !pendingAsks.Contains(id)))
+                result.RemoveAt(k);
+            else if (result[k].Role != MessageRole.System)
+                laterContent = true;
+        }
+        return result;
     }
 
     /// <summary>
@@ -495,6 +517,7 @@ public static class SessionMessageReader
         string? toolName = null;
         bool isToolUse = false;
         bool isThinking = false;
+        ConversationMessage? pendingAsk = null;
 
         foreach (var item in contentProp.EnumerateArray())
         {
@@ -541,8 +564,21 @@ public static class SessionMessageReader
                         toolUseIdToName[id] = toolName;
                 }
 
-                // AskUserQuestion shows up as its own question card once answered
-                if (toolName != null && toolName != "AskUserQuestion")
+                // AskUserQuestion shows up as its own question card; until it is answered the
+                // card is the interactive one
+                if (toolName == "AskUserQuestion")
+                {
+                    if (item.TryGetProperty("id", out var askId) && askId.GetString() is string askIdStr
+                        && item.TryGetProperty("input", out var input)
+                        && input.TryGetProperty("questions", out var qs))
+                    {
+                        var questions = ParseQuestions(qs);
+                        if (questions.Count > 0)
+                            pendingAsk = new ConversationMessage(MessageRole.Assistant, "", timestamp, toolName, false, false,
+                                new AskUserData(questions, new Dictionary<string, string>(), null), PendingAskId: askIdStr);
+                    }
+                }
+                else if (toolName != null)
                     tools.Add(new ToolCall(toolName, DescribeToolInput(toolName, item)));
             }
         }
@@ -553,7 +589,7 @@ public static class SessionMessageReader
         // Suppress text accompanying tool_use (narration like "Now modify...", etc.)
         if (isToolUse)
         {
-            if (tools.Count == 0) return null;
+            if (tools.Count == 0) return pendingAsk;
             return new ConversationMessage(MessageRole.Assistant, $"[Tool: {toolName}]", timestamp, toolName, true, false,
                 Tools: tools);
         }
@@ -591,35 +627,40 @@ public static class SessionMessageReader
         return new ConversationMessage(MessageRole.System, progressText, timestamp, null, true, false);
     }
 
+    private static List<AskUserQuestionItem> ParseQuestions(JsonElement questionsProp)
+    {
+        var questions = new List<AskUserQuestionItem>();
+        if (questionsProp.ValueKind != JsonValueKind.Array) return questions;
+        foreach (var q in questionsProp.EnumerateArray())
+        {
+            var question = q.TryGetProperty("question", out var qProp) ? qProp.GetString() ?? "" : "";
+            var header = q.TryGetProperty("header", out var hProp) ? hProp.GetString() ?? "" : "";
+            var multiSelect = q.TryGetProperty("multiSelect", out var msProp) && msProp.ValueKind == JsonValueKind.True;
+
+            var options = new List<AskUserOption>();
+            if (q.TryGetProperty("options", out var optsProp) && optsProp.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var opt in optsProp.EnumerateArray())
+                {
+                    var label = opt.TryGetProperty("label", out var lProp) ? lProp.GetString() ?? "" : "";
+                    var desc = opt.TryGetProperty("description", out var dProp) ? dProp.GetString() ?? "" : "";
+                    options.Add(new AskUserOption(label, desc));
+                }
+            }
+            questions.Add(new AskUserQuestionItem(question, header, options, multiSelect));
+        }
+        return questions;
+    }
+
     private static ConversationMessage? ParseAskUserAnswer(JsonElement toolUseResult, DateTime? timestamp)
     {
         try
         {
-            var questions = new List<AskUserQuestionItem>();
+            var questions = toolUseResult.TryGetProperty("questions", out var questionsProp)
+                ? ParseQuestions(questionsProp)
+                : new List<AskUserQuestionItem>();
             var answers = new Dictionary<string, string>();
             Dictionary<string, string>? notes = null;
-
-            if (toolUseResult.TryGetProperty("questions", out var questionsProp) && questionsProp.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var q in questionsProp.EnumerateArray())
-                {
-                    var question = q.TryGetProperty("question", out var qProp) ? qProp.GetString() ?? "" : "";
-                    var header = q.TryGetProperty("header", out var hProp) ? hProp.GetString() ?? "" : "";
-                    var multiSelect = q.TryGetProperty("multiSelect", out var msProp) && msProp.GetBoolean();
-
-                    var options = new List<AskUserOption>();
-                    if (q.TryGetProperty("options", out var optsProp) && optsProp.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var opt in optsProp.EnumerateArray())
-                        {
-                            var label = opt.TryGetProperty("label", out var lProp) ? lProp.GetString() ?? "" : "";
-                            var desc = opt.TryGetProperty("description", out var dProp) ? dProp.GetString() ?? "" : "";
-                            options.Add(new AskUserOption(label, desc));
-                        }
-                    }
-                    questions.Add(new AskUserQuestionItem(question, header, options, multiSelect));
-                }
-            }
 
             if (toolUseResult.TryGetProperty("answers", out var answersProp) && answersProp.ValueKind == JsonValueKind.Object)
             {
