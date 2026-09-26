@@ -203,6 +203,14 @@ public static class Loc
         ["AllowAction"] = new() { ["English"] = "Yes, allow", ["日本語"] = "はい、許可" },
         ["AlwaysAllow"] = new() { ["English"] = "Always allow", ["日本語"] = "常に許可" },
         ["DenyAction"] = new() { ["English"] = "No, deny", ["日本語"] = "いいえ、拒否" },
+        ["AllowAndAcceptEdits"] = new() { ["English"] = "Allow, and auto-accept edits from now on", ["日本語"] = "許可し、以後の編集は自動承認" },
+        ["PlanApproval"] = new() { ["English"] = "Approve the plan?", ["日本語"] = "プランを承認しますか？" },
+        ["PlanAutoAccept"] = new() { ["English"] = "Approve (auto-accept edits)", ["日本語"] = "承認（編集は自動承認）" },
+        ["PlanAutoMode"] = new() { ["English"] = "Approve (run in auto mode)", ["日本語"] = "承認（auto mode で実行）" },
+        ["PlanManualApprove"] = new() { ["English"] = "Approve (confirm each edit)", ["日本語"] = "承認（編集は都度確認）" },
+        ["PlanFeedbackHint"] = new() { ["English"] = "Or tell Claude what to change", ["日本語"] = "または、変更してほしい点を入力" },
+        ["PlanSendFeedback"] = new() { ["English"] = "Send", ["日本語"] = "送信" },
+        ["MenuCancel"] = new() { ["English"] = "Cancel (Esc)", ["日本語"] = "キャンセル (Esc)" },
         ["ToggleDocView"] = new() { ["English"] = "Toggle Chat View", ["日本語"] = "チャットビュー切替" },
 
         // ── AI Provider ──

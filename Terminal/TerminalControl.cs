@@ -3880,54 +3880,127 @@ public class TerminalControl : Control, IDisposable
     {
         if (!EnablePermissionOverlay) return;
 
-        bool found = IsPermissionPromptOnScreen();
+        var prompt = ReadChoicePrompt();
+        // A plain menu is already answerable from the keyboard in the terminal view; the card is
+        // for the chat view, which hides the terminal
+        if (prompt?.Kind == ChoiceKind.Menu && !_isDocumentView) prompt = null;
 
-        if (found && _permissionOverlay == null)
-        {
-            ShowPermissionOverlay(ReadPermissionPromptText());
-        }
-        else if (!found && _permissionOverlay != null)
-        {
-            HidePermissionOverlay();
-        }
+        // Rebuilt only when the prompt itself changes, not on every caret move. A card that was
+        // just answered stays down until its prompt leaves the screen, rather than popping back up
+        // while the CLI is still taking the keys in.
+        var signature = prompt?.Signature;
+        if (signature == _choiceSignature) return;
+        HidePermissionOverlay();
+        _choiceSignature = signature;
+        if (prompt != null)
+            ShowPermissionOverlay(prompt, prompt.Kind == ChoiceKind.Permission ? ReadPermissionPromptText() : null);
     }
 
+    private string? _choiceSignature;
+
+    private enum ChoiceKind { Permission, Plan, Menu }
+
+    private sealed record ChoiceOption(int Number, string Label, bool TakesText);
+
+    /// <param name="Context">The prompt's rows above its options - the command or file being
+    /// asked about - so two prompts with the same question still read as different ones.</param>
+    private sealed record ChoicePrompt(ChoiceKind Kind, string Title, string Context,
+        IReadOnlyList<ChoiceOption> Options, int CaretNumber, string? Footer)
+    {
+        public string Signature => Kind + "\n" + Context + "\n"
+            + string.Join("\n", Options.Select(o => o.Number + ". " + o.Label));
+    }
+
+    // "❯ 1. Yes", "  2. Yes, and don't ask again", "↓ 10. Opus 4.6", inside a box or not. The
+    // caret prints as ">" through ConPTY.
+    private static readonly System.Text.RegularExpressions.Regex ChoiceRowRegex = new(
+        @"^[\s│|]*(?<caret>[❯>])?\s*[↑↓]?\s*(?<n>\d{1,2})[.)]\s+(?<label>\S.*?)\s*[│|]?$",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>True when the CLI is sitting on a numbered selector of any kind.</summary>
+    private bool IsPermissionPromptOnScreen() => ReadChoicePrompt() != null;
+
     /// <summary>
-    /// True only when the CLI is sitting on a numbered permission prompt.
+    /// Reads the numbered selector the CLI is showing, if any. Measured against Claude Code
+    /// 2.1.283:
+    /// - permission prompts ask "Do you want to …?" and option 1 is always Yes
+    /// - plan approval asks "… Would you like to proceed?"; its last option is a text field
+    ///   that takes the feedback in place of its label
+    /// - menus such as /model end with "Esc to cancel", and the caret starts on the current
+    ///   setting rather than on option 1
     ///
-    /// The buttons write "1", "2" or "3" straight into the pty, so a wrong match does not just
-    /// show a stray card - it answers whatever prompt is really there. Three things have to
-    /// agree, and each rules out a prompt this used to be confused with:
-    ///
-    /// - Every permission prompt opens with "Do you want to " (…proceed? / …allow this
-    ///   connection? / …&lt;verb&gt; &lt;file&gt;?). "Esc to cancel" used to count as well, which is
-    ///   what put this card over an AskUserQuestion list - the CLI prints that under most of
-    ///   its selectors.
-    /// - Option 1 of a permission prompt is always Yes. A question's first option is anything.
-    /// - "Enter to select" belongs to the multi-question selector, never to a permission
-    ///   prompt, so seeing it settles the matter on its own.
+    /// The last run of numbered rows is the selector; numbered lines higher up are Claude's
+    /// reply. A selector always shows its caret, which is what tells it apart from a list that
+    /// merely ends the reply. AskUserQuestion lists are left to the chat view's own card.
     /// </summary>
-    private bool IsPermissionPromptOnScreen()
+    private ChoicePrompt? ReadChoicePrompt()
     {
         int totalRows = _buffer.Scrollback.Count + _buffer.Rows;
-        bool question = false, yesChoice = false;
+        var rows = new List<string>();
+        for (int i = Math.Max(0, totalRows - 30); i < totalRows; i++)
+            rows.Add(GetRowText(i).TrimEnd());
 
-        for (int i = Math.Max(0, totalRows - 14); i < totalRows; i++)
+        foreach (var row in rows)
+            if (row.Contains("Enter to select") || row.Contains("Type something")) return null;
+
+        int last = -1;
+        for (int i = rows.Count - 1; i >= 0 && last < 0; i--)
+            if (ChoiceRowRegex.IsMatch(rows[i])) last = i;
+        if (last < 0) return null;
+
+        // Walk up through consecutive numbers. A long label wraps onto a row of its own, so a
+        // couple of unnumbered rows between two options do not end the run.
+        var options = new List<ChoiceOption>();
+        int caret = -1, firstRow = last, gap = 0;
+        for (int i = last; i >= 0; i--)
         {
-            var text = GetRowText(i).TrimEnd();
-            if (text.Length == 0) continue;
-
-            if (text.Contains("Enter to select")) return false;
-            if (text.Contains("Do you want")) question = true;
-
-            // "❯ 1. Yes", "  1. Yes, and don't ask again", "1. Yes" — the marker is a leading
-            // "1." once the box drawing and the selection caret are stripped off.
-            var bare = text.TrimStart(' ', '│', '|', '❯', '>', '*');
-            if ((bare.StartsWith("1.") || bare.StartsWith("1)")) && bare.Contains("Yes"))
-                yesChoice = true;
+            var m = ChoiceRowRegex.Match(rows[i]);
+            int n = m.Success ? int.Parse(m.Groups["n"].Value) : -1;
+            if (m.Success && (options.Count == 0 || n == options[^1].Number - 1))
+            {
+                // Menus pad their columns with runs of spaces, which read as holes in a button
+                var label = System.Text.RegularExpressions.Regex.Replace(m.Groups["label"].Value, @"\s{2,}", " — ");
+                options.Add(new ChoiceOption(n, label, false));
+                if (m.Groups["caret"].Success) caret = n;
+                firstRow = i;
+                gap = 0;
+            }
+            else if (!m.Success && rows[i].Trim().Length > 0 && ++gap <= 2) continue;
+            else break;
         }
+        options.Reverse();
+        if (options.Count < 2 || caret < 0) return null;
 
-        return question && yesChoice;
+        // The prompt's own rows above its options, up to the rule that opens it
+        var context = new List<string>();
+        for (int i = firstRow - 1; i >= 0 && context.Count < 12; i--)
+        {
+            var t = rows[i].Trim(' ', '│', '|');
+            if (t.Length > 0 && t.All(c => c is '─' or '━' or '▔' or '-' or '╭' or '╮' or '╌')) break;
+            if (t.Length > 0) context.Insert(0, t);
+        }
+        string? footer = null;
+        for (int i = last + 1; i < rows.Count && footer == null; i++)
+            if (rows[i].Contains("Esc to cancel")) footer = rows[i].Trim(' ', '│', '|');
+
+        bool yesFirst = options[0].Number == 1 && options[0].Label.StartsWith("Yes");
+        var question = context.LastOrDefault(t => t.Contains("Do you want") || t.Contains("Would you like"));
+        ChoiceKind kind;
+        if (yesFirst && question != null && question.Contains("Would you like to proceed"))
+        {
+            kind = ChoiceKind.Plan;
+            // The feedback row: its label is the placeholder, or whatever has been typed into it
+            options[^1] = options[^1] with { TakesText = !options[^1].Label.StartsWith("Yes") };
+        }
+        else if (yesFirst && question != null && question.Contains("Do you want"))
+            kind = ChoiceKind.Permission;
+        else if (footer != null)
+            kind = ChoiceKind.Menu;
+        else
+            return null;
+
+        var title = kind == ChoiceKind.Menu ? context.FirstOrDefault() ?? "" : question ?? "";
+        return new ChoicePrompt(kind, title, string.Join("\n", context), options, caret, footer);
     }
 
     /// <summary>Grabs the text of the permission prompt so it can be explained in plain words.</summary>
@@ -3943,67 +4016,84 @@ public class TerminalControl : Control, IDisposable
         return sb.ToString();
     }
 
-    private void ShowPermissionOverlay(string promptText)
+    /// <summary>
+    /// Keys the chosen option in. Selectors move by arrow from wherever the caret is, so the
+    /// screen is read again first: if the prompt has moved on, the keys would pick something in
+    /// whatever replaced it.
+    /// </summary>
+    private async void ChooseOption(ChoicePrompt prompt, ChoiceOption option, string? text)
+    {
+        HidePermissionOverlay();
+        var now = ReadChoicePrompt();
+        if (now == null || now.Signature != prompt.Signature) return;
+
+        int delta = option.Number - now.CaretNumber;
+        var arrow = delta > 0 ? "\x1b[B" : "\x1b[A";
+        for (int k = 0; k < Math.Abs(delta); k++)
+        {
+            _pty?.WriteInput(arrow);
+            await Task.Delay(AskKeyDelayMs);
+        }
+        if (!string.IsNullOrEmpty(text))
+        {
+            _pty?.WriteInput(text.Replace("\r", " ").Replace("\n", " "));
+            await Task.Delay(AskKeyDelayMs);
+        }
+        _pty?.WriteInput("\r");
+    }
+
+    /// <summary>
+    /// The CLI's own words for the options the card knows, in the user's language. The rest
+    /// keep the CLI's text: a menu's options are names, and a new wording is better shown as is
+    /// than guessed at.
+    /// </summary>
+    private static string ChoiceButtonText(ChoiceKind kind, ChoiceOption o)
+    {
+        var l = o.Label;
+        if (kind == ChoiceKind.Permission)
+        {
+            if (l == "Yes") return Services.Loc.Get("AllowAction", "Yes, allow");
+            if (l.StartsWith("No")) return Services.Loc.Get("DenyAction", "No, deny");
+            // Edit prompts: option 2 turns on accept-edits mode instead of remembering a rule
+            if (l.Contains("accept edits") || l.Contains("all edits"))
+                return Services.Loc.Get("AllowAndAcceptEdits", "Allow, and auto-accept edits from now on");
+            if (l.StartsWith("Yes, and")) return Services.Loc.Get("AlwaysAllow", "Always allow");
+        }
+        else if (kind == ChoiceKind.Plan)
+        {
+            if (l.StartsWith("Yes, auto-accept")) return Services.Loc.Get("PlanAutoAccept", "Approve (auto-accept edits)");
+            if (l.StartsWith("Yes, manually")) return Services.Loc.Get("PlanManualApprove", "Approve (confirm each edit)");
+            if (l.StartsWith("Yes, and use auto mode")) return Services.Loc.Get("PlanAutoMode", "Approve (run in auto mode)");
+        }
+        return l.Length > 70 ? l[..67] + "…" : l;
+    }
+
+    private Button MakeChoiceButton(string text, string tip, Color? fill, bool stretch)
+    {
+        var btn = new Button
+        {
+            Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap },
+            Background = new SolidColorBrush(fill ?? (_isDark ? Color.FromRgb(60, 60, 65) : Color.FromRgb(200, 200, 205))),
+            Foreground = fill != null ? Brushes.White
+                : new SolidColorBrush(_isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(40, 40, 45)),
+            Padding = new Thickness(16, 6),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(6),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Margin = stretch ? new Thickness(0, 2) : new Thickness(4, 0),
+            HorizontalAlignment = stretch ? HorizontalAlignment.Stretch : HorizontalAlignment.Left,
+            HorizontalContentAlignment = stretch ? HorizontalAlignment.Left : HorizontalAlignment.Center,
+        };
+        ToolTip.SetTip(btn, tip);
+        return btn;
+    }
+
+    private void ShowPermissionOverlay(ChoicePrompt prompt, string? promptText)
     {
         if (_permissionOverlay != null) return;
 
-        var yesBtn = new Button
-        {
-            Content = Services.Loc.Get("AllowAction", "Yes, allow"),
-            Background = new SolidColorBrush(Color.FromRgb(0, 122, 255)),
-            Foreground = Brushes.White,
-            Padding = new Thickness(16, 6),
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(6),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Margin = new Thickness(4, 0),
-        };
-        yesBtn.Click += (_, _) => { _pty?.WriteInput("1\n"); HidePermissionOverlay(); };
-
-        var alwaysBtn = new Button
-        {
-            Content = Services.Loc.Get("AlwaysAllow", "Always allow"),
-            Background = new SolidColorBrush(Color.FromRgb(48, 209, 88)),
-            Foreground = Brushes.White,
-            Padding = new Thickness(16, 6),
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(6),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Margin = new Thickness(4, 0),
-        };
-        alwaysBtn.Click += (_, _) => { _pty?.WriteInput("2\n"); HidePermissionOverlay(); };
-
-        var noBtn = new Button
-        {
-            Content = Services.Loc.Get("DenyAction", "No, deny"),
-            Background = new SolidColorBrush(_isDark ? Color.FromRgb(60, 60, 65) : Color.FromRgb(200, 200, 205)),
-            Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(210, 210, 215) : Color.FromRgb(40, 40, 45)),
-            Padding = new Thickness(16, 6),
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(6),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Margin = new Thickness(4, 0),
-        };
-        noBtn.Click += (_, _) => { _pty?.WriteInput("3\n"); HidePermissionOverlay(); };
-
-        var label = new TextBlock
-        {
-            Text = Services.Loc.Get("PermissionRequired", "Permission Required"),
-            FontSize = 14,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30)),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 8),
-        };
-
-        var buttonPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        buttonPanel.Children.Add(yesBtn);
-        buttonPanel.Children.Add(alwaysBtn);
-        buttonPanel.Children.Add(noBtn);
+        var primary = new SolidColorBrush(_isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30));
+        var secondary = new SolidColorBrush(_isDark ? Color.FromRgb(152, 152, 158) : Color.FromRgb(85, 85, 93));
 
         var content = new StackPanel
         {
@@ -4011,10 +4101,25 @@ public class TerminalControl : Control, IDisposable
             VerticalAlignment = VerticalAlignment.Center,
             MaxWidth = 560,
         };
-        content.Children.Add(label);
+        content.Children.Add(new TextBlock
+        {
+            Text = prompt.Kind switch
+            {
+                ChoiceKind.Permission => Services.Loc.Get("PermissionRequired", "Permission Required"),
+                ChoiceKind.Plan => Services.Loc.Get("PlanApproval", "Approve the plan?"),
+                _ => prompt.Title,
+            },
+            FontSize = 14,
+            FontWeight = FontWeight.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Foreground = primary,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 8),
+        });
 
         // Say in plain words what the CLI is asking permission for, and how risky it is.
-        var explanation = Services.CommandExplainer.Explain(promptText);
+        var explanation = promptText != null ? Services.CommandExplainer.Explain(promptText) : null;
         if (explanation != null)
         {
             var riskColor = explanation.Risk switch
@@ -4050,7 +4155,7 @@ public class TerminalControl : Control, IDisposable
                 FontWeight = FontWeight.SemiBold,
                 TextWrapping = TextWrapping.Wrap,
                 TextAlignment = TextAlignment.Center,
-                Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(220, 220, 225) : Color.FromRgb(28, 28, 30)),
+                Foreground = primary,
                 Margin = new Thickness(0, 0, 0, 2),
             });
 
@@ -4062,13 +4167,105 @@ public class TerminalControl : Control, IDisposable
                     FontSize = 11,
                     TextWrapping = TextWrapping.Wrap,
                     TextAlignment = TextAlignment.Center,
-                    Foreground = new SolidColorBrush(_isDark ? Color.FromRgb(152, 152, 158) : Color.FromRgb(85, 85, 93)),
+                    Foreground = secondary,
                     Margin = new Thickness(0, 0, 0, 10),
                 });
             }
         }
 
-        content.Children.Add(buttonPanel);
+        if (prompt.Kind == ChoiceKind.Menu)
+        {
+            // A menu can run to a dozen names: one per row, the current pick marked, scrolling
+            // past a screenful
+            var list = new StackPanel();
+            foreach (var o in prompt.Options)
+            {
+                var btn = MakeChoiceButton($"{o.Number}. {o.Label}", o.Label, null, true);
+                if (o.Number == prompt.CaretNumber)
+                {
+                    btn.BorderBrush = new SolidColorBrush(Color.FromRgb(0, 122, 255));
+                    btn.BorderThickness = new Thickness(1.5);
+                }
+                btn.Click += (_, _) => ChooseOption(prompt, o, null);
+                list.Children.Add(btn);
+            }
+            content.Children.Add(new ScrollViewer { Content = list, MaxHeight = 320 });
+
+            if (prompt.Footer != null)
+            {
+                content.Children.Add(new TextBlock
+                {
+                    Text = prompt.Footer,
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap,
+                    TextAlignment = TextAlignment.Center,
+                    Foreground = secondary,
+                    Margin = new Thickness(0, 8, 0, 6),
+                });
+            }
+            var cancel = MakeChoiceButton(Services.Loc.Get("MenuCancel", "Cancel (Esc)"), "Esc", null, false);
+            cancel.HorizontalAlignment = HorizontalAlignment.Center;
+            cancel.Click += (_, _) => { HidePermissionOverlay(); _pty?.WriteInput("\x1b"); };
+            content.Children.Add(cancel);
+        }
+        else
+        {
+            var buttonPanel = new WrapPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            ChoiceOption? textOption = null;
+            int shown = 0;
+            foreach (var o in prompt.Options)
+            {
+                if (o.TakesText) { textOption = o; continue; }
+                Color? fill = shown switch
+                {
+                    0 => Color.FromRgb(0, 122, 255),
+                    1 => Color.FromRgb(48, 209, 88),
+                    _ => null,
+                };
+                var btn = MakeChoiceButton(ChoiceButtonText(prompt.Kind, o), o.Label, fill, false);
+                btn.Margin = new Thickness(4, 2);
+                btn.Click += (_, _) => ChooseOption(prompt, o, null);
+                buttonPanel.Children.Add(btn);
+                shown++;
+            }
+            content.Children.Add(buttonPanel);
+
+            if (textOption != null)
+            {
+                var box = new TextBox
+                {
+                    Watermark = Services.Loc.Get("PlanFeedbackHint", "Or tell Claude what to change"),
+                    AcceptsReturn = false,
+                    TextWrapping = TextWrapping.Wrap,
+                    MinWidth = 320,
+                    MaxWidth = 440,
+                };
+                var send = MakeChoiceButton(Services.Loc.Get("PlanSendFeedback", "Send"), textOption.Label, null, false);
+                void SendFeedback()
+                {
+                    var text = box.Text?.Trim();
+                    if (!string.IsNullOrEmpty(text)) ChooseOption(prompt, textOption, text);
+                }
+                send.Click += (_, _) => SendFeedback();
+                box.KeyDown += (_, ke) =>
+                {
+                    if (ke.Key == Key.Enter) { ke.Handled = true; SendFeedback(); }
+                };
+                var row = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Margin = new Thickness(0, 10, 0, 0),
+                };
+                row.Children.Add(box);
+                row.Children.Add(send);
+                content.Children.Add(row);
+            }
+        }
 
         _permissionOverlay = new Border
         {
