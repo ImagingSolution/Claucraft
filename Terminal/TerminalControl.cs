@@ -5539,6 +5539,23 @@ public class TerminalControl : Control, IDisposable
     }
 
     /// <summary>
+    /// Chat view counterpart of typing a snippet into the console: every CR submits the text
+    /// before it as a prompt, and whatever follows the last CR is left in the box to edit.
+    /// </summary>
+    public async void SubmitSnippet(string text)
+    {
+        var parts = text.Split('\r');
+        for (int i = 0; i < parts.Length - 1; i++)
+        {
+            _inputTextBox.Text = parts[i];
+            if (!SubmitChatInput()) _pty?.WriteInput("\r");
+            // Let the previous submit's delayed CR land before the next prompt is typed
+            await Task.Delay(AttachmentSubmitDelayMs + 100);
+        }
+        SetInputText(parts[^1]);
+    }
+
+    /// <summary>
     /// Drag payload format used by the in-app Explorer tree: one full path per line.
     /// </summary>
     public static readonly DataFormat<string> ExplorerPathFormat =

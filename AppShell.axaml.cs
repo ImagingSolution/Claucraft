@@ -3754,7 +3754,7 @@ internal partial class AppShell : UserControl, IDockOwner
                 if (terminal.IsDocumentView && terminal.IsExpanded)
                     terminal.AppendToExpandedInput(snippetText);
                 else if (terminal.IsDocumentView)
-                    terminal.SetInputText(snippetText);
+                    terminal.SubmitSnippet(snippetText);
                 else if (terminal.IsExpanded)
                     terminal.AppendToExpandedInput(snippetText);
                 else
