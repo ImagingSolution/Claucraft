@@ -282,6 +282,7 @@ public class TerminalControl : Control, IDisposable
         _chatCard.IsVisible = chat;
         _chatAttachButton.IsVisible = chat;
         _chatSendButton.IsVisible = chat;
+        _chatChips.IsVisible = chat;
 
         if (!chat)
         {
@@ -437,6 +438,76 @@ public class TerminalControl : Control, IDisposable
         LogicalChildren.Add(_chatAttachButton);
         VisualChildren.Add(_chatSendButton);
         LogicalChildren.Add(_chatSendButton);
+
+        _chatModeChip = ChipButton(() => ComposerModeClicked?.Invoke());
+        _chatModelChip = ChipButton(() => ComposerModelClicked?.Invoke(_chatModelChip));
+        _chatEffortChip = ChipButton(() => ComposerEffortClicked?.Invoke(_chatEffortChip));
+        _chatChips = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 4,
+            IsVisible = false,
+            Children = { _chatModeChip, _chatModelChip, _chatEffortChip },
+        };
+        VisualChildren.Add(_chatChips);
+        LogicalChildren.Add(_chatChips);
+    }
+
+    // ── Composer chips: the mode, model and effort the status bar shows, next to the text ──
+
+    private StackPanel _chatChips = null!;
+    private Button _chatModeChip = null!;
+    private Button _chatModelChip = null!;
+    private Button _chatEffortChip = null!;
+
+    /// <summary>The mode chip was clicked; the shell cycles the mode as the status-bar badge does.</summary>
+    public event Action? ComposerModeClicked;
+
+    /// <summary>The model chip was clicked; the shell opens its model menu at the chip.</summary>
+    public event Action<Control>? ComposerModelClicked;
+
+    /// <summary>The effort chip was clicked; the shell opens its effort menu at the chip.</summary>
+    public event Action<Control>? ComposerEffortClicked;
+
+    private Button ChipButton(Action onClick)
+    {
+        var b = new Button
+        {
+            Height = ChatButtonSize,
+            Padding = new Thickness(8, 0),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            FontSize = 12,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Focusable = false,
+            IsVisible = false,
+        };
+        b.Click += (_, _) => onClick();
+        return b;
+    }
+
+    /// <summary>
+    /// Mirrors the status bar into the composer. A null or empty text hides that chip, the same
+    /// way the bar hides its readout for a CLI with no such notion.
+    /// </summary>
+    public void SetComposerChips(string? mode, Color? modeColor, string? model, string? effort)
+    {
+        var dim = new SolidColorBrush(Services.MarkdownParser.ChatPalette.For(_isDark).Dim);
+        var outline = new SolidColorBrush(Controls.ChatTheme.Outline(_isDark));
+        void Set(Button b, string? text, Color? color, string tipKey)
+        {
+            b.IsVisible = !string.IsNullOrEmpty(text);
+            b.Content = string.IsNullOrEmpty(text) || color != null ? text : text + " ▾";
+            b.Foreground = color is { } c ? new SolidColorBrush(c) : dim;
+            b.BorderBrush = color is { } c2 ? new SolidColorBrush(c2) : outline;
+            ToolTip.SetTip(b, Services.Loc.Get(tipKey));
+        }
+        Set(_chatModeChip, mode, modeColor, "ModeBadgeTooltip");
+        Set(_chatModelChip, model, null, "ModelTooltip");
+        Set(_chatEffortChip, effort, null, "EffortTooltip");
+        InvalidateMeasure();
     }
 
     /// <summary>Sends what the chat view's box holds, with any attached images. False if empty.</summary>
@@ -1378,6 +1449,7 @@ public class TerminalControl : Control, IDisposable
             _expandButton.Measure(new Size(ChatButtonSize, ChatButtonSize));
             _chatAttachButton.Measure(new Size(ChatButtonSize, ChatButtonSize));
             _chatSendButton.Measure(new Size(ChatButtonSize, ChatButtonSize));
+            _chatChips.Measure(new Size(double.PositiveInfinity, ChatButtonSize));
             _chatBackdrop.Measure(new Size(w, ChatComposerHeight));
             _chatCard.Measure(card.Size);
         }
@@ -1425,6 +1497,7 @@ public class TerminalControl : Control, IDisposable
             _chatCard.Arrange(hidden);
             _chatAttachButton.Arrange(hidden);
             _chatSendButton.Arrange(hidden);
+            _chatChips.Arrange(hidden);
             return;
         }
 
@@ -1442,6 +1515,7 @@ public class TerminalControl : Control, IDisposable
 
         double s = ChatButtonSize;
         _chatAttachButton.Arrange(new Rect(card.X + 8, y, s, s));
+        _chatChips.Arrange(new Rect(card.X + 8 + s + 6, y, _chatChips.DesiredSize.Width, s));
         double right = card.Right - 8 - s;
         _chatSendButton.Arrange(new Rect(right, y, s, s));
         if (_stopButton.IsVisible)
@@ -3190,6 +3264,38 @@ public class TerminalControl : Control, IDisposable
 
         var picked = await storage.OpenFilePickerAsync(options);
         if (picked.Count == 0) return;
+
+        // The chat composer: images become thumbnails like a paste, anything else an @ reference
+        if (_isDocumentView && !_isExpanded)
+        {
+            var refs = new List<string>();
+            foreach (var file in picked)
+            {
+                var path = file.TryGetLocalPath();
+                if (string.IsNullOrEmpty(path)) continue;
+                if (Controls.ImageAttachmentStrip.IsImageFile(path))
+                    _attachStrip.Add(path, FileReference(path));
+                else
+                    refs.Add(FileReference(path));
+            }
+            if (refs.Count > 0)
+            {
+                var text = _inputTextBox.Text ?? "";
+                int caret = Math.Clamp(_inputTextBox.CaretIndex, 0, text.Length);
+                var snippet = (caret > 0 && !char.IsWhiteSpace(text[caret - 1]) ? " " : "") + string.Join(" ", refs) + " ";
+                _completionInserting = true;
+                try
+                {
+                    _inputTextBox.Text = text[..caret] + snippet + text[caret..];
+                    _inputTextBox.CaretIndex = caret + snippet.Length;
+                }
+                finally { _completionInserting = false; }
+            }
+            UpdateChatSendState();
+            InvalidateMeasure();
+            _inputTextBox.Focus();
+            return;
+        }
 
         var parts = new List<string>();
         foreach (var file in picked)
