@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using Avalonia.Media;
 
 namespace Claucraft.Services;
@@ -73,8 +74,31 @@ public static class MarkdownParser
 
         _inlineCodeBg = new SolidColorBrush(ChatPalette.InlineCodeBg(isDark));
         _inlineCodeBorder = new SolidColorBrush(ChatPalette.For(isDark).Border);
-        try { return ParseCore(markdown, isDark, codeTypeface, baseFontSize, wiki, ChatPalette.For(isDark)); }
+        try
+        {
+            var controls = ParseCore(markdown, isDark, codeTypeface, baseFontSize, wiki, ChatPalette.For(isDark));
+            foreach (var c in controls) ApplyChatSelection(c);
+            return controls;
+        }
         finally { _inlineCodeBg = null; _inlineCodeBorder = null; }
+    }
+
+    private static readonly IBrush ChatSelectionBg = new SolidColorBrush(Color.FromRgb(50, 102, 208));
+
+    /// <summary>
+    /// Selection as the desktop app shows it: solid blue with white text. The theme's default
+    /// is a dark translucent grey that leaves the text in its own colour, so ink and diff red
+    /// read poorly through it.
+    /// </summary>
+    private static void ApplyChatSelection(ILogical node)
+    {
+        if (node is SelectableTextBlock stb)
+        {
+            stb.SelectionBrush = ChatSelectionBg;
+            stb.SelectionForegroundBrush = Brushes.White;
+        }
+        foreach (var child in node.LogicalChildren)
+            ApplyChatSelection(child);
     }
 
     private static List<Control> ParseCore(string markdown, bool isDark, Typeface? codeTypeface,
@@ -216,15 +240,16 @@ public static class MarkdownParser
                     var itemText = Regex.Replace(lines[i], @"^\s*[-*+]\s", "");
                     int indent = lines[i].Length - lines[i].TrimStart().Length;
 
-                    var bullet = new TextBlock
+                    var bullet = new SelectableTextBlock
                     {
                         Text = "\u2022",
+                        Classes = { ChatSelection.ListMarkerClass },
                         Foreground = new SolidColorBrush(markerColor),
                         FontSize = baseFontSize,
                         Margin = new Thickness(indent * 8 + 4, 0, 6, 0),
                         VerticalAlignment = VerticalAlignment.Top,
                     };
-                    var itemContent = new ChipTextBlock
+                    var itemContent = new ChipSelectableTextBlock
                     {
                         FontSize = baseFontSize,
                         Foreground = new SolidColorBrush(fg),
@@ -257,9 +282,10 @@ public static class MarkdownParser
                     var match = Regex.Match(lines[i], @"^\s*(\d+)\.\s(.*)$");
                     if (!match.Success) { i++; continue; }
 
-                    var num = new TextBlock
+                    var num = new SelectableTextBlock
                     {
                         Text = match.Groups[1].Value + ".",
+                        Classes = { ChatSelection.ListMarkerClass },
                         Foreground = new SolidColorBrush(markerColor),
                         FontSize = baseFontSize,
                         Width = 24,
@@ -267,7 +293,7 @@ public static class MarkdownParser
                         Margin = new Thickness(4, 0, 6, 0),
                         VerticalAlignment = VerticalAlignment.Top,
                     };
-                    var itemContent = new ChipTextBlock
+                    var itemContent = new ChipSelectableTextBlock
                     {
                         FontSize = baseFontSize,
                         Foreground = new SolidColorBrush(fg),

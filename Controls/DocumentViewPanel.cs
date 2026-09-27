@@ -205,6 +205,7 @@ public class DocumentViewPanel : Panel
         };
         _scrollViewer.ScrollChanged += OnScrollChanged;
         Children.Add(_scrollViewer);
+        ChatSelection.Attach(_messagesStack, _scrollViewer);
 
         // Round "jump to latest" button, shown once the reader has scrolled away from the end
         _scrollDownButton = new Button

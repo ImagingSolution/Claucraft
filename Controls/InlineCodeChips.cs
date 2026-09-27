@@ -67,20 +67,6 @@ public static class InlineCodeChips
     }
 }
 
-/// <summary>A TextBlock that can draw <see cref="InlineCodeChips"/>.</summary>
-public sealed class ChipTextBlock : TextBlock, InlineCodeChips.IHost
-{
-    protected override Type StyleKeyOverride => typeof(TextBlock);
-    public IBrush? ChipBackground { get; set; }
-    public IBrush? ChipBorder { get; set; }
-
-    protected override void RenderTextLayout(DrawingContext context, Point origin)
-    {
-        InlineCodeChips.Draw(this, this, context, origin);
-        base.RenderTextLayout(context, origin);
-    }
-}
-
 /// <summary>A SelectableTextBlock that can draw <see cref="InlineCodeChips"/>.</summary>
 public sealed class ChipSelectableTextBlock : SelectableTextBlock, InlineCodeChips.IHost
 {
