@@ -4009,6 +4009,7 @@ public partial class TerminalControl : Control, IDisposable
         {
             OnSidePaneLayoutChanged();
         }
+        SyncSidePaneActivity();
 
         InvalidateMeasure();
         InvalidateArrange();

@@ -21,6 +21,7 @@ public partial class TerminalControl
 
     private ChatSidePane? _sidePane;
     private SidePaneTasksView? _tasksView;
+    private DiffViewerPanel? _diffView;
     private Border? _sidePaneSplitter;
     private Button _sidePaneToggle = null!;
     private bool _sidePaneOpen;
@@ -153,8 +154,16 @@ public partial class TerminalControl
             _tasksView?.Update(tasks, agents);
         };
 
+        _diffView = new DiffViewerPanel(_isDark, () => _workingDirectory, _typeface.FontFamily);
+        _diffView.CommentsSubmitted += text =>
+        {
+            var current = _inputTextBox.Text ?? "";
+            SetInputText(string.IsNullOrWhiteSpace(current) ? text : current.TrimEnd() + "\n" + text);
+        };
+
         _sidePane = new ChatSidePane(_isDark);
         _sidePane.SetContent(SidePaneTab.Tasks, _tasksView);
+        _sidePane.SetContent(SidePaneTab.Diff, _diffView);
         _sidePane.SelectSilently(_sidePaneTab);
         _sidePane.TabChanged += tab =>
         {
@@ -220,10 +229,15 @@ public partial class TerminalControl
             else RecalcTerminalSize();
         }
         UpdateSidePaneToggleLook();
+        SyncSidePaneActivity();
         InvalidateMeasure();
         InvalidateArrange();
         InvalidateVisual();
     }
+
+    /// <summary>Lets the tab that polls (the diff) run only while it can be seen.</summary>
+    private void SyncSidePaneActivity() =>
+        _diffView?.SetActive(SidePaneShown && _sidePaneTab == SidePaneTab.Diff);
 
     private void ResizeGrid(int cols, int rows)
     {
@@ -243,6 +257,7 @@ public partial class TerminalControl
     private void ApplySidePaneTheme()
     {
         _sidePane?.ApplyTheme(_isDark);
+        _diffView?.ApplyTheme(_isDark);
         if (_tasksView != null)
         {
             _tasksView.ApplyTheme(_isDark);
