@@ -767,7 +767,7 @@
                                     Margin="10,8" Click="OnAddSnippet">
                                 <StackPanel Orientation="Horizontal" Spacing="6"
                                             HorizontalAlignment="Center">
-                                    <PathIcon Data="M12 4V20M4 12H20" Width="12" Height="12"
+                                    <PathIcon Data="M11 4H13V11H20V13H13V20H11V13H4V11H11Z" Width="12" Height="12"
                                               Foreground="White" />
                                     <TextBlock x:Name="LblAddSnippet" Text="Add Snippet" VerticalAlignment="Center" />
                                 </StackPanel>
