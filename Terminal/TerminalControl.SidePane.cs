@@ -256,7 +256,7 @@ public partial class TerminalControl
         if (_sidePaneToggle == null) return;
         var pal = Services.MarkdownParser.ChatPalette.For(_isDark);
         if (_sidePaneToggle.Content is Avalonia.Controls.Shapes.Path icon)
-            icon.Stroke = new SolidColorBrush(_sidePaneOpen ? ChatTheme.Accent : pal.Dim);
+            icon.Stroke = new SolidColorBrush(_sidePaneOpen ? ChatTheme.Accent(_isDark) : pal.Dim);
     }
 
     private void ApplySidePaneTheme()

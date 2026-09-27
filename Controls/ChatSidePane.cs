@@ -149,7 +149,7 @@ public sealed class ChatSidePane : Panel
             // A tab shows once it has something to show; Terminal is drawn by the owner
             b.IsVisible = on || tab == SidePaneTab.Terminal || _contents.ContainsKey(tab);
             b.Foreground = on ? fg : dim;
-            b.BorderBrush = on ? new SolidColorBrush(ChatTheme.Accent) : Brushes.Transparent;
+            b.BorderBrush = on ? new SolidColorBrush(ChatTheme.Accent(_isDark)) : Brushes.Transparent;
             b.FontWeight = on ? FontWeight.SemiBold : FontWeight.Normal;
         }
     }

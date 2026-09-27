@@ -26,7 +26,7 @@ public static class ChatTheme
     public static Color Surface(bool isDark) => isDark ? Color.FromRgb(32, 32, 31) : Color.FromRgb(255, 255, 255);
     public static Color Outline(bool isDark) => isDark ? Color.FromRgb(55, 55, 54) : Color.FromRgb(223, 223, 222);
     public static Color Hover(bool isDark) => isDark ? Color.FromRgb(40, 40, 40) : Color.FromRgb(240, 240, 239);
-    public static readonly Color Accent = Color.FromRgb(217, 119, 87);
+    public static Color Accent(bool isDark) => isDark ? Color.FromRgb(74, 144, 245) : Color.FromRgb(37, 99, 235);
 
     /// <summary>
     /// Prose face. The app ships its own Anthropic Sans; Segoe UI stands in for the Latin and
@@ -808,7 +808,7 @@ public class DocumentViewPanel : Panel
 
     // ── Tasks and subagents ──
 
-    private static readonly Color AccentColor = Color.FromRgb(217, 119, 87);
+    private Color AccentColor => ChatTheme.Accent(_isDark);
     private static readonly Color DoneColor = Color.FromRgb(96, 165, 96);
 
     /// <summary>The reader asked to open a file a tool call worked on, in an editor window.</summary>
@@ -1004,6 +1004,7 @@ public class DocumentViewPanel : Panel
         var pal = Palette;
         Background = Brush(ChatTheme.Background(_isDark));
         _header.Background = Brush(ChatTheme.Background(_isDark));
+        _workingGlyph.Foreground = Brush(ChatTheme.Accent(_isDark));
         _header.BorderBrush = Brush(pal.Border);
         _titleText.Foreground = Brush(pal.Fg);
         _projectChip.Background = Brush(ChatTheme.UserBubble(_isDark));
@@ -1445,7 +1446,7 @@ public class DocumentViewPanel : Panel
             {
                 Text = "↗ " + Loc.Get("OpenInEditor"),
                 FontSize = _baseFontSize * 0.82,
-                Foreground = Brush(ChatTheme.Accent),
+                Foreground = Brush(ChatTheme.Accent(_isDark)),
                 Cursor = new Cursor(StandardCursorType.Hand),
             };
             openLink.PointerPressed += (_, e) =>
@@ -1814,8 +1815,8 @@ public class DocumentViewPanel : Panel
         Dictionary<string, string>? notes)
     {
         var pal = Palette;
-        var accent = ChatTheme.Accent;
-        var selectedBg = _isDark ? Color.FromArgb(40, 217, 119, 87) : Color.FromArgb(28, 217, 119, 87);
+        var accent = ChatTheme.Accent(_isDark);
+        var selectedBg = Color.FromArgb(_isDark ? (byte)40 : (byte)28, accent.R, accent.G, accent.B);
 
         var stack = new StackPanel { Spacing = 6 };
         if (!string.IsNullOrWhiteSpace(question.Header))
@@ -1985,7 +1986,7 @@ public class DocumentViewPanel : Panel
         var header = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto") };
         header.Children.Add(new Border
         {
-            Background = Brush(_isDark ? Color.FromArgb(70, 217, 119, 87) : Color.FromRgb(250, 228, 200)),
+            Background = Brush(_isDark ? Color.FromArgb(70, 74, 144, 245) : Color.FromRgb(219, 232, 254)),
             CornerRadius = new CornerRadius(5),
             Padding = new Thickness(6, 1),
             Margin = new Thickness(0, 0, 8, 0),
@@ -1995,7 +1996,7 @@ public class DocumentViewPanel : Panel
                 Text = $"{page + 1}/{questions.Count}",
                 FontSize = _baseFontSize * 0.8,
                 FontWeight = FontWeight.SemiBold,
-                Foreground = Brush(_isDark ? Color.FromRgb(240, 185, 150) : Color.FromRgb(150, 85, 30)),
+                Foreground = Brush(_isDark ? Color.FromRgb(170, 200, 250) : Color.FromRgb(30, 64, 175)),
             },
         });
         var title = new TextBlock
@@ -2397,7 +2398,6 @@ public class WorkingSpinnerGlyph : TextBlock
     public WorkingSpinnerGlyph()
     {
         FontFamily = GlyphFont;
-        Foreground = new SolidColorBrush(ChatTheme.Accent);
         TextAlignment = TextAlignment.Center;
         IsHitTestVisible = false;
         Text = Frames[0];

@@ -31,6 +31,7 @@ public sealed class BrowserPreviewPanel : DockPanel
     private readonly Button _external;
     private readonly Border _suggestBar;
     private readonly TextBlock _suggestText;
+    private readonly Button _openButton;
     private readonly Panel _body;
     private readonly TextBlock _message;
     private WebViewHost? _host;
@@ -77,7 +78,7 @@ public sealed class BrowserPreviewPanel : DockPanel
 
         _suggestText = new TextBlock { FontSize = 12, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
         var open = ToolButton(Loc.Get("PreviewOpen"), () => { if (_suggested != null) Navigate(_suggested); });
-        open.Background = new SolidColorBrush(ChatTheme.Accent);
+        _openButton = open;
         open.Foreground = Brushes.White;
         var dismiss = ToolButton("✕", () => { _dismissed = _suggested; _suggestBar!.IsVisible = false; });
         var sb = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
@@ -149,6 +150,7 @@ public sealed class BrowserPreviewPanel : DockPanel
     public void ApplyTheme(bool isDark)
     {
         _isDark = isDark;
+        _openButton.Background = new SolidColorBrush(ChatTheme.Accent(isDark));
         var fg = new SolidColorBrush(isDark ? Color.FromRgb(225, 225, 228) : Color.FromRgb(35, 35, 38));
         Background = new SolidColorBrush(ChatTheme.Background(isDark));
         _message.Foreground = new SolidColorBrush(isDark ? Color.FromRgb(150, 150, 155) : Color.FromRgb(105, 105, 110));

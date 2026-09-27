@@ -356,7 +356,7 @@ public partial class TerminalControl : Control, IDisposable
         bool ready = !string.IsNullOrWhiteSpace(_inputTextBox.Text) || _attachStrip.HasItems;
         var pal = Services.MarkdownParser.ChatPalette.For(_isDark);
         _chatSendButton.Background = new SolidColorBrush(ready
-            ? Controls.ChatTheme.Accent
+            ? Controls.ChatTheme.Accent(_isDark)
             : (_isDark ? Color.FromRgb(70, 69, 65) : Color.FromRgb(226, 224, 219)));
         if (_chatSendButton.Content is Avalonia.Controls.Shapes.Path arrow)
             arrow.Stroke = new SolidColorBrush(ready ? Colors.White : pal.Dim);
