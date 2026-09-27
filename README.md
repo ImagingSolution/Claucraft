@@ -4,11 +4,11 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) is the default, and Codex CLI, GitHub Copilot CLI, Antigravity CLI and Grok CLI can be picked per session. Run several sessions side by side in one window - or dragged out into windows of their own - each viewable as a raw terminal or as a desktop-app-style Chat View, with a project explorer, a git/GitHub panel, snippets, cost and usage readouts, and a dark/light theme.
 
-![MDI Windows](https://github.com/user-attachments/assets/ed655337-ba75-4975-95da-0d31454db6bf)
+![MDI Windows](screenshots/mdi-windows.png)
 
-![ReeView](https://github.com/user-attachments/assets/3bd58b27-8314-4d3b-9503-a9d3b6b37845)
+![Explorer](screenshots/explorer.png)
 
-![Snippets](https://github.com/user-attachments/assets/c4e2b938-7648-42b8-8a89-10873857d682)
+![Snippets](screenshots/snippets.gif)
 
 ## Features
 
