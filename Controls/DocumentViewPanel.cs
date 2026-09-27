@@ -66,6 +66,7 @@ public class DocumentViewPanel : Panel
     private Control? _pendingView;
     private int _pendingUserCount;
     private DateTime _pendingSince;
+    private string _pendingText = "";
     private static readonly TimeSpan PendingPromptTimeout = TimeSpan.FromSeconds(15);
     private readonly Control _workingView;
     private bool _isWorking;
@@ -324,7 +325,12 @@ public class DocumentViewPanel : Panel
         if (jsonlPath != _currentSessionPath) _hideFromUuid = null;
         _currentSessionPath = jsonlPath;
         _agentPath = null;
-        _pendingView = null;
+        // A first prompt creates the session file, so the file turns up only after the prompt
+        // was sent: keep its stand-in bubble and let the prompt's text in the new file retire it
+        if (_pendingView != null && DateTime.UtcNow - _pendingSince <= PendingPromptTimeout)
+            _pendingUserCount = int.MaxValue;
+        else
+            _pendingView = null;
         _autoScroll = true;
         ClearViews();
         Refresh(force: true);
@@ -341,17 +347,42 @@ public class DocumentViewPanel : Panel
         // A prompt goes to the session, so show the session it lands in
         if (_agentPath != null) ShowAgent(null, "");
         // Slash commands are not always written to the transcript as a prompt
-        if (string.IsNullOrWhiteSpace(text) || text.TrimStart().StartsWith('/') || _currentSessionPath == null) return;
+        // No session file yet (a new session's first prompt) still gets its bubble at once
+        if (string.IsNullOrWhiteSpace(text) || text.TrimStart().StartsWith('/')) return;
 
         _pendingUserCount = _keys.Count(k => k.StartsWith("0|"));
         _pendingSince = DateTime.UtcNow;
+        _pendingText = text.Trim();
         var msg = new ConversationMessage(MessageRole.User, text, DateTime.Now, null, false, false);
-        _pendingView = CreateUserView(msg, _keys.Count > 0 ? msg : null);
-        _messagesStack.Children.Add(_pendingView);
+        var view = CreateUserView(msg, _keys.Count > 0 ? msg : null);
+        _pendingView = view;
+        _messagesStack.Children.Add(view);
         PlaceWorkingView();
         SetEmptyState(null);
         _autoScroll = true;
         ScrollToBottom();
+
+        // The poll retires the bubble, but without a session file there is no poll
+        DispatcherTimer.RunOnce(() =>
+        {
+            if (!ReferenceEquals(_pendingView, view)) return;
+            RemovePendingView();
+            _pendingView = null;
+            PlaceWorkingView();
+            SetEmptyState(_messagesStack.Children.Count == 0 ? "" : null);
+        }, PendingPromptTimeout + TimeSpan.FromSeconds(1));
+    }
+
+    /// <summary>Whether the transcript now holds the prompt the stand-in bubble shows.</summary>
+    private bool PendingPromptArrived(List<ConversationMessage> messages)
+    {
+        if (messages.Count(m => m.Role == MessageRole.User) > _pendingUserCount) return true;
+        // Counting works within one file; only a file loaded after the send needs the text
+        if (_pendingUserCount != int.MaxValue) return false;
+        var last = messages.LastOrDefault(m => m.Role == MessageRole.User && !m.IsToolUse);
+        // The transcript's copy may carry attachment paths the bubble left out
+        return last != null && _pendingText.Length > 0
+            && last.Text.Contains(_pendingText, StringComparison.Ordinal);
     }
 
     private void RemovePendingView()
@@ -477,6 +508,7 @@ public class DocumentViewPanel : Panel
     public void Clear()
     {
         ClearViews();
+        _pendingView = null;
         _currentSessionPath = null;
         _agentPath = null;
         _extrasPanel.Children.Clear();
@@ -580,8 +612,7 @@ public class DocumentViewPanel : Panel
         // Keep the stand-in bubble last until the transcript holds the prompt it stands for
         if (_pendingView != null)
         {
-            bool arrived = messages.Count(m => m.Role == MessageRole.User) > _pendingUserCount;
-            if (arrived || DateTime.UtcNow - _pendingSince > PendingPromptTimeout)
+            if (PendingPromptArrived(messages) ||DateTime.UtcNow - _pendingSince > PendingPromptTimeout)
                 _pendingView = null;
             else
                 _messagesStack.Children.Add(_pendingView);
