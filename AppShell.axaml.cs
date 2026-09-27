@@ -3424,6 +3424,7 @@ internal partial class AppShell : UserControl, IDockOwner
         // way to re-theme it is to build it again.
         CreateSourceControlPanel();
         CreateMemoryPanel();
+        if (_snippetsInitialized) LoadSnippetsPanel();
 
         // The theme is the application's, not this window's.
         Broadcast(s => s.AdoptSharedTheme());
@@ -3663,6 +3664,8 @@ internal partial class AppShell : UserControl, IDockOwner
     private void LoadSnippetsPanel()
     {
         _snippetsInitialized = true;
+        // Entries bake the theme's colours in when built, so a theme switch rebuilds the list.
+        SnippetsList.Children.Clear();
         var sorted = _snippetStore.Snippets.OrderBy(s => s.Order).ToList();
         foreach (var item in sorted)
         {
@@ -3710,7 +3713,8 @@ internal partial class AppShell : UserControl, IDockOwner
         var snBg = _isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(255, 255, 255);
         var snFg = _isDark ? Color.FromRgb(255, 255, 255) : Color.FromRgb(28, 28, 30);
         var snBorder = _isDark ? Color.FromRgb(58, 58, 60) : Color.FromRgb(200, 200, 205);
-        var snHandleBg = _isDark ? Color.FromRgb(44, 44, 46) : Color.FromRgb(235, 235, 240);
+        // Light: halfway between the side panel (SidePanelBg) and the text box, so the ends stand off the panel
+        var snHandleBg = _isDark ? Color.FromRgb(28, 28, 30) : Color.FromRgb(248, 248, 250);
         var snGripFg = _isDark ? Color.FromRgb(100, 100, 105) : Color.FromRgb(118, 118, 128);
 
         var textBox = new TextBox
@@ -8270,6 +8274,7 @@ internal partial class AppShell : UserControl, IDockOwner
             ApplyThemeToChildren();
             CreateSourceControlPanel();
             CreateMemoryPanel();
+            if (_snippetsInitialized) LoadSnippetsPanel();
         }
         finally { _followingShared = false; }
     }
