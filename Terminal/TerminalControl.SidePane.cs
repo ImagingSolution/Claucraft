@@ -23,6 +23,9 @@ public partial class TerminalControl
     private SidePaneTasksView? _tasksView;
     private DiffViewerPanel? _diffView;
     private FileEditorPanel? _fileView;
+    private BrowserPreviewPanel? _previewView;
+    private string? _lastLocalServerText;
+    private string _outputTail = "";
     private Border? _sidePaneSplitter;
     private Button _sidePaneToggle = null!;
     private bool _sidePaneOpen;
@@ -165,7 +168,11 @@ public partial class TerminalControl
         _fileView = new FileEditorPanel(_isDark, _typeface.FontFamily);
         _docViewPanel.FileOpenRequested += OpenFileInSidePane;
 
+        _previewView = new BrowserPreviewPanel(_isDark);
+        if (_lastLocalServerText != null) _previewView.OfferFromOutput(_lastLocalServerText);
+
         _sidePane = new ChatSidePane(_isDark);
+        _sidePane.SetContent(SidePaneTab.Preview, _previewView);
         _sidePane.SetContent(SidePaneTab.Files, _fileView);
         _sidePane.SetContent(SidePaneTab.Tasks, _tasksView);
         _sidePane.SetContent(SidePaneTab.Diff, _diffView);
@@ -260,6 +267,32 @@ public partial class TerminalControl
         OnSidePaneLayoutChanged();
     }
 
+    private static readonly System.Text.RegularExpressions.Regex AnsiEscape = new(
+        @"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Watches PTY output for a local dev server address so the Preview tab can offer it. Runs on
+    /// the reader thread; a short tail carries an address split across two reads.
+    /// </summary>
+    private void ScanForLocalServer(byte[] data)
+    {
+        var text = _outputTail + System.Text.Encoding.UTF8.GetString(data);
+        _outputTail = text.Length > 200 ? text[^200..] : text;
+        if (text.IndexOf("://", StringComparison.Ordinal) < 0) return;
+        var plain = AnsiEscape.Replace(text, "");
+        if (plain.IndexOf("localhost", StringComparison.OrdinalIgnoreCase) < 0
+            && plain.IndexOf("127.0.0.1", StringComparison.Ordinal) < 0
+            && plain.IndexOf("0.0.0.0", StringComparison.Ordinal) < 0
+            && plain.IndexOf("[::1]", StringComparison.Ordinal) < 0)
+            return;
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            _lastLocalServerText = plain;
+            _previewView?.OfferFromOutput(plain);
+        });
+    }
+
     private void ResizeGrid(int cols, int rows)
     {
         if (cols == _buffer.Cols && rows == _buffer.Rows) return;
@@ -280,6 +313,7 @@ public partial class TerminalControl
         _sidePane?.ApplyTheme(_isDark);
         _diffView?.ApplyTheme(_isDark);
         _fileView?.ApplyTheme(_isDark);
+        _previewView?.ApplyTheme(_isDark);
         if (_tasksView != null)
         {
             _tasksView.ApplyTheme(_isDark);

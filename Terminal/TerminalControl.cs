@@ -1334,6 +1334,7 @@ public partial class TerminalControl : Control, IDisposable
         _pty.OutputReceived += data =>
         {
             _parser.Process(new ReadOnlySpan<byte>(data));
+            ScanForLocalServer(data);
             _scrollOffset = 0;
             if (_promptNavBar is { IsVisible: true })
                 Dispatcher.UIThread.Post(HidePromptNavBar);
