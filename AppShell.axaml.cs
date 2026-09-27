@@ -450,6 +450,9 @@ internal partial class AppShell : UserControl, IDockOwner
         CreateMemoryPanel();
 
         RefreshGitInfo();
+        _badgeTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+        _badgeTimer.Tick += (_, _) => OnBadgeTimerTick();
+        _badgeTimer.Start();
         RefreshSessionList();
         FileTreeNode.UseShellIcons = _settings.UseShellIcons;
         RefreshFileTree();
@@ -617,7 +620,7 @@ internal partial class AppShell : UserControl, IDockOwner
         if (_updateDownload == null) LblUpdateCancel.Text = Loc.Get("Cancel");
 
         // Source control, tokens & cost, and the live status readouts
-        ToolTip.SetTip(BtnActivitySourceControl, Loc.Get("SourceControlTooltip"));
+        ApplySourceControlBadge();
         ToolTip.SetTip(StatusBranchName, Loc.Get("SourceControlTooltip"));
         ToolTip.SetTip(BtnBranchSwitch, Loc.Get("BranchSwitchTooltip"));
         LblWorktree.Text = Loc.Get("WorktreeSession");
@@ -4157,6 +4160,7 @@ internal partial class AppShell : UserControl, IDockOwner
         // A write inside the panel moves the branch or the working tree, which the status bar
         // and the file tree also read. Route it through the one refresh the window already has.
         panel.GitChanged += (_, _) => RefreshGitInfo();
+        panel.BranchStateRead += (_, e) => OnPanelBranchStateRead(e.Repo, e.State);
 
         _sourceControl = panel;
         SourceControlHost.Content = panel;
@@ -4216,6 +4220,7 @@ internal partial class AppShell : UserControl, IDockOwner
         _sourceControl?.SetRepository(_projectFolder);
         // Every project switch comes through here, and the memory notes are per project.
         _memory?.SetProject(_projectFolder);
+        UpdateSourceControlBadge();
 
         StatusRepoName.Text = "";
         StatusBranchName.Text = "";
@@ -4296,6 +4301,115 @@ internal partial class AppShell : UserControl, IDockOwner
         // returns immediately while another sidebar panel is up.
         _ = _sourceControl?.RefreshAsync();
         if (SlashPanel.IsVisible) RefreshSlashPanel();
+    }
+
+    // ── Unpulled-commit badge ──────────────────────────────────────────
+
+    /// <summary>
+    /// When each repository was last fetched for the badge. Shared by every window, so two
+    /// windows on one project fetch it once, and a project first switched to later in the run
+    /// still gets a fetch of its own the moment it is.
+    /// </summary>
+    private static readonly Dictionary<string, DateTime> BadgeFetchedAt = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The same five minutes the panel's own auto-fetch runs on.</summary>
+    private static readonly TimeSpan BadgeFetchInterval = TimeSpan.FromMinutes(5);
+
+    private DispatcherTimer? _badgeTimer;
+    private int _badgeGeneration;
+    /// <summary>The repository the badge is counting for, or null when the project is not in one.</summary>
+    private string? _badgeRepo;
+    private int _badgeCount;
+    /// <summary>
+    /// Orders the readings: one started before a fetch landed can finish after the one started
+    /// behind it, and must not put the pre-fetch count back.
+    /// </summary>
+    private int _badgeReadTicket;
+    private int _badgeShownTicket;
+
+    /// <summary>
+    /// Counts the commits the upstream has that the current branch does not, for the badge on
+    /// the Source Control button. The local reading comes first so a project switch shows at
+    /// once; a repository not yet fetched this run is then fetched and read again, which is
+    /// what makes the count mean something at startup.
+    /// </summary>
+    private async void UpdateSourceControlBadge()
+    {
+        int generation = ++_badgeGeneration;
+        var folder = _projectFolder;
+        var repo = string.IsNullOrEmpty(folder) ? null : await Task.Run(() => GitCli.FindRepoRoot(folder));
+        // A later switch owns the badge.
+        if (generation != _badgeGeneration) return;
+
+        _badgeRepo = repo;
+        if (repo == null)
+        {
+            SetSourceControlBadge(0);
+            return;
+        }
+
+        await ReadBadgeAsync(repo);
+        if (!BadgeFetchedAt.ContainsKey(repo)) await FetchBadgeAsync(repo);
+    }
+
+    /// <summary>
+    /// Quiet, like the panel's timer: an offline laptop or an expired credential leaves the
+    /// last count standing instead of raising a prompt nobody asked for.
+    /// </summary>
+    private async Task FetchBadgeAsync(string repo)
+    {
+        BadgeFetchedAt[repo] = DateTime.UtcNow;
+        var result = await GitWriteService.FetchAsync(repo, quiet: true);
+        if (result.Ok) await ReadBadgeAsync(repo);
+    }
+
+    private async Task ReadBadgeAsync(string repo)
+    {
+        int ticket = ++_badgeReadTicket;
+        var state = await GitWriteService.GetBranchStateAsync(repo);
+        if (ticket < _badgeShownTicket || !string.Equals(repo, _badgeRepo, StringComparison.OrdinalIgnoreCase)) return;
+
+        _badgeShownTicket = ticket;
+        SetSourceControlBadge(state.HasUpstream ? state.Behind : 0);
+    }
+
+    /// <summary>The panel's own fetches and pulls read the branch anyway; the badge takes that reading.</summary>
+    private void OnPanelBranchStateRead(string repo, BranchState state)
+    {
+        if (!string.Equals(repo, _badgeRepo, StringComparison.OrdinalIgnoreCase)) return;
+
+        _badgeShownTicket = ++_badgeReadTicket;
+        SetSourceControlBadge(state.HasUpstream ? state.Behind : 0);
+    }
+
+    /// <summary>
+    /// Keeps the count fresh while the panel is closed, on the auto-fetch setting's interval.
+    /// While the panel is up its own timer fetches and the badge follows its readings.
+    /// </summary>
+    private void OnBadgeTimerTick()
+    {
+        if (!_settings.GitAutoFetch || _activeSidePanel == SidebarPanel.SourceControl) return;
+
+        var repo = _badgeRepo;
+        if (repo == null) return;
+        if (BadgeFetchedAt.TryGetValue(repo, out var at) && DateTime.UtcNow - at < BadgeFetchInterval) return;
+
+        _ = FetchBadgeAsync(repo);
+    }
+
+    private void SetSourceControlBadge(int count)
+    {
+        _badgeCount = count;
+        ApplySourceControlBadge();
+    }
+
+    private void ApplySourceControlBadge()
+    {
+        SourceControlBadge.IsVisible = _badgeCount > 0;
+        SourceControlBadgeText.Text = _badgeCount > 99 ? "99+" : _badgeCount.ToString();
+        ToolTip.SetTip(BtnActivitySourceControl, _badgeCount > 0
+            ? Loc.Get("SourceControlTooltip") + "\n" + string.Format(Loc.Get("RemoteAheadFmt"), _badgeCount)
+            : Loc.Get("SourceControlTooltip"));
     }
 
     private async void RefreshSessionList()
@@ -9439,6 +9553,7 @@ internal partial class AppShell : UserControl, IDockOwner
         CloseWelcomePage();
         _insightTimer?.Stop();
         _scheduleTimer?.Stop();
+        _badgeTimer?.Stop();
 
         // The shells share these, so only the application's own writes them out: a dragged-out
         // window closing would otherwise save its own project folder over the main window's.

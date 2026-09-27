@@ -318,12 +318,29 @@
                             <PathIcon Data="M17.5 0H8.5L7 1.5V6H2.5L1 7.5V22.57L2.5 24H13.5L15 22.57V18H19.5L21 16.5V3.5L17.5 0ZM13.5 22.57H2.5V7.5H7V16.5L8.5 18H13.5V22.57ZM19.5 16.5H8.5V1.5H14.5V5.5H19.5V16.5ZM15.5 1.5L19.5 4.5H15.5V1.5Z"
                                       Width="20" Height="20" />
                         </Button>
-                        <Button x:Name="BtnActivitySourceControl" Classes="activity-btn"
-                                ToolTip.Tip="Source control (Ctrl+Shift+G)"
-                                Click="OnActivitySourceControl">
-                            <PathIcon Data="M21.007 8.222A3.738 3.738 0 0 0 15.045 5.2a3.737 3.737 0 0 0 1.156 6.583 2.988 2.988 0 0 1-2.668 1.67h-2.99a4.456 4.456 0 0 0-2.989 1.165V7.4a3.737 3.737 0 1 0-1.494 0v9.117a3.776 3.776 0 1 0 1.816.099 2.99 2.99 0 0 1 2.668-1.667h2.99a4.484 4.484 0 0 0 4.223-3.039 3.736 3.736 0 0 0 3.25-3.687zM4.565 3.738a2.242 2.242 0 1 1 4.484 0 2.242 2.242 0 0 1-4.484 0zm4.484 16.441a2.242 2.242 0 1 1-4.484 0 2.242 2.242 0 0 1 4.484 0zm8.221-9.715a2.242 2.242 0 1 1 0-4.485 2.242 2.242 0 0 1 0 4.485z"
-                                      Width="20" Height="20" />
-                        </Button>
+                        <!-- The badge sits beside the button, not inside it: the button is dimmed while
+                             another panel is up, and a count of unpulled commits must not be. -->
+                        <Panel>
+                            <Button x:Name="BtnActivitySourceControl" Classes="activity-btn"
+                                    ToolTip.Tip="Source control (Ctrl+Shift+G)"
+                                    Click="OnActivitySourceControl">
+                                <PathIcon Data="M21.007 8.222A3.738 3.738 0 0 0 15.045 5.2a3.737 3.737 0 0 0 1.156 6.583 2.988 2.988 0 0 1-2.668 1.67h-2.99a4.456 4.456 0 0 0-2.989 1.165V7.4a3.737 3.737 0 1 0-1.494 0v9.117a3.776 3.776 0 1 0 1.816.099 2.99 2.99 0 0 1 2.668-1.667h2.99a4.484 4.484 0 0 0 4.223-3.039 3.736 3.736 0 0 0 3.25-3.687zM4.565 3.738a2.242 2.242 0 1 1 4.484 0 2.242 2.242 0 0 1-4.484 0zm4.484 16.441a2.242 2.242 0 1 1-4.484 0 2.242 2.242 0 0 1 4.484 0zm8.221-9.715a2.242 2.242 0 1 1 0-4.485 2.242 2.242 0 0 1 0 4.485z"
+                                          Width="20" Height="20" />
+                            </Button>
+                            <!-- Same box as Button.activity-btn, so the badge can be placed against the icon. Anchored
+                                 by its right edge: a longer count grows over the icon, not past the bar. -->
+                            <Panel Width="48" Height="40" Margin="4,1" IsHitTestVisible="False">
+                                <Border x:Name="SourceControlBadge" IsVisible="False"
+                                        HorizontalAlignment="Right" VerticalAlignment="Center"
+                                        Margin="0,0,6,20" MinWidth="16" Height="16" Padding="4,0"
+                                        CornerRadius="8" Background="#FF3B30"
+                                        BorderBrush="{DynamicResource ActivityBarBg}" BorderThickness="1.5">
+                                    <TextBlock x:Name="SourceControlBadgeText" Text="0"
+                                               FontSize="10" FontWeight="Bold" Foreground="White"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                            </Panel>
+                        </Panel>
                         <Button x:Name="BtnActivityWindows" Classes="activity-btn"
                                 ToolTip.Tip="Windows"
                                 Click="OnActivityWindows">

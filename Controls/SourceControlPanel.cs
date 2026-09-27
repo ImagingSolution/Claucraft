@@ -156,6 +156,12 @@ public sealed class SourceControlPanel : UserControl
     /// <summary>Raised after a write, so the window can bring its own git readouts up to date.</summary>
     public event EventHandler? GitChanged;
 
+    /// <summary>
+    /// Raised each time a reload reads the branch, so the activity bar's badge follows the
+    /// panel's own fetches and pulls without reading the same state a second time.
+    /// </summary>
+    public event EventHandler<(string Repo, BranchState State)>? BranchStateRead;
+
     public SourceControlPanel(bool isDark, Typeface mono, AppSettings settings,
         CliProviderService cli, SourceControlHost host)
     {
@@ -677,6 +683,7 @@ public sealed class SourceControlPanel : UserControl
         BuildIgnoreList();
         _graph.SetGraph(CommitGraphLayout.Build(commits), _changes.Count > 0, keepSelection: true);
         ApplyState();
+        if (branchTask.IsCompletedSuccessfully) BranchStateRead?.Invoke(this, (repo, _branch));
 
         _ = RefreshPullRequestsAsync(generation);
     }
