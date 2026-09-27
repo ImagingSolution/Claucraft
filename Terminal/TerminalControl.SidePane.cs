@@ -22,6 +22,7 @@ public partial class TerminalControl
     private ChatSidePane? _sidePane;
     private SidePaneTasksView? _tasksView;
     private DiffViewerPanel? _diffView;
+    private FileEditorPanel? _fileView;
     private Border? _sidePaneSplitter;
     private Button _sidePaneToggle = null!;
     private bool _sidePaneOpen;
@@ -161,7 +162,11 @@ public partial class TerminalControl
             SetInputText(string.IsNullOrWhiteSpace(current) ? text : current.TrimEnd() + "\n" + text);
         };
 
+        _fileView = new FileEditorPanel(_isDark, _typeface.FontFamily);
+        _docViewPanel.FileOpenRequested += OpenFileInSidePane;
+
         _sidePane = new ChatSidePane(_isDark);
+        _sidePane.SetContent(SidePaneTab.Files, _fileView);
         _sidePane.SetContent(SidePaneTab.Tasks, _tasksView);
         _sidePane.SetContent(SidePaneTab.Diff, _diffView);
         _sidePane.SelectSilently(_sidePaneTab);
@@ -236,8 +241,24 @@ public partial class TerminalControl
     }
 
     /// <summary>Lets the tab that polls (the diff) run only while it can be seen.</summary>
-    private void SyncSidePaneActivity() =>
+    private void SyncSidePaneActivity()
+    {
         _diffView?.SetActive(SidePaneShown && _sidePaneTab == SidePaneTab.Diff);
+        _fileView?.SetActive(SidePaneShown && _sidePaneTab == SidePaneTab.Files);
+    }
+
+    /// <summary>Opens a file in the pane's editor, bringing up Chat View and the pane as needed.</summary>
+    public void OpenFileInSidePane(string path)
+    {
+        if (!_isDocumentView) ToggleDocumentView();
+        EnsureSidePane();
+        if (_fileView == null || _sidePane == null) return;
+        _fileView.Open(path);
+        _sidePaneTab = SidePaneTab.Files;
+        _sidePane.SelectSilently(SidePaneTab.Files);
+        _sidePaneOpen = true;
+        OnSidePaneLayoutChanged();
+    }
 
     private void ResizeGrid(int cols, int rows)
     {
@@ -258,6 +279,7 @@ public partial class TerminalControl
     {
         _sidePane?.ApplyTheme(_isDark);
         _diffView?.ApplyTheme(_isDark);
+        _fileView?.ApplyTheme(_isDark);
         if (_tasksView != null)
         {
             _tasksView.ApplyTheme(_isDark);

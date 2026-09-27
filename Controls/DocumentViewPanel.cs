@@ -757,6 +757,9 @@ public class DocumentViewPanel : Panel
     /// <summary>The session's tasks and subagents, re-sent on every refresh of the main transcript.</summary>
     public event Action<IReadOnlyList<ChatTask>, IReadOnlyList<SubagentInfo>>? ExtrasUpdated;
 
+    /// <summary>The reader asked to open a file a tool call worked on, in the side pane's editor.</summary>
+    public event Action<string>? FileOpenRequested;
+
     /// <summary>Opens a subagent's transcript from outside the panel, e.g. the side pane's Tasks tab.</summary>
     public void OpenAgent(string transcriptPath, string title) => ShowAgent(transcriptPath, title);
 
@@ -1385,6 +1388,24 @@ public class DocumentViewPanel : Panel
 
         string? Str(string name) => hasInput && input.TryGetProperty(name, out var v)
             && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+
+        var targetFile = Str("file_path") ?? Str("notebook_path");
+        if (FileOpenRequested != null && !string.IsNullOrEmpty(targetFile) && System.IO.File.Exists(targetFile))
+        {
+            var openLink = new TextBlock
+            {
+                Text = "↗ " + Loc.Get("ChatOpenFileInPane"),
+                FontSize = _baseFontSize * 0.82,
+                Foreground = Brush(ChatTheme.Accent),
+                Cursor = new Cursor(StandardCursorType.Hand),
+            };
+            openLink.PointerPressed += (_, e) =>
+            {
+                FileOpenRequested?.Invoke(targetFile);
+                e.Handled = true;
+            };
+            stack.Children.Add(openLink);
+        }
 
         switch (tool.Name)
         {

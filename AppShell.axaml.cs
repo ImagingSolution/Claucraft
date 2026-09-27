@@ -541,6 +541,7 @@ internal partial class AppShell : UserControl, IDockOwner
         MenuTreeOpen.Header = Loc.Get("Open");
         MenuTreeOpenWith.Header = Loc.Get("OpenWith");
         MenuTreeOpenInEditor.Header = Loc.Get("OpenInEditor");
+        MenuTreeOpenInSidePane.Header = Loc.Get("OpenInSidePane");
         MenuTreeShowInExplorer.Header = Loc.Get("ShowInExplorer");
         MenuTreeCopyPath.Header = Loc.Get("CopyPath");
         MenuTreeCopyFilename.Header = Loc.Get("CopyFilename");
@@ -3182,6 +3183,15 @@ internal partial class AppShell : UserControl, IDockOwner
         var node = GetSelectedTreeNode();
         if (node == null || node.IsDirectory) return;
         OpenFileEditorWindow(node.FullPath);
+    }
+
+    private void OnTreeOpenInSidePane(object? sender, RoutedEventArgs e)
+    {
+        var node = GetSelectedTreeNode();
+        if (node == null || node.IsDirectory) return;
+        // Without a session window there is no Chat View to hold the pane
+        if (_activeChild == null) { OpenFileEditorWindow(node.FullPath); return; }
+        _activeChild.Terminal.OpenFileInSidePane(node.FullPath);
     }
 
     private void OnTreeShowInExplorer(object? sender, RoutedEventArgs e)
