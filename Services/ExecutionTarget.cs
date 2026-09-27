@@ -167,9 +167,14 @@ public sealed record ExecutionTarget(ExecutionKind Kind, string Name, string Rem
         int colon = text.IndexOf(':');
         var host = colon < 0 ? text : text[..colon];
         var folder = colon < 0 ? "" : text[(colon + 1)..].Trim();
-        if (host.Length == 0 || host.StartsWith('-') || host.Any(char.IsWhiteSpace)) return null;
+        // Handed to ssh.exe as its destination argument, so it must be a plain [user@]host or an
+        // ssh_config alias: nothing that ssh could read as an option or a URI.
+        if (!SshDestination.IsMatch(host)) return null;
         return new ExecutionTarget(ExecutionKind.Ssh, host, folder);
     }
+
+    private static readonly Regex SshDestination =
+        new(@"^([A-Za-z0-9_.][A-Za-z0-9_.-]*@)?[A-Za-z0-9_.][A-Za-z0-9_.-]*$");
 
     // ── Discovery ──
 

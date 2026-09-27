@@ -484,6 +484,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         // Asks GitHub for a newer release and raises the notice in the corner if there is one.
         StartUpdateCheck();
+        StartScheduler();
     }
 
     /// <summary>
@@ -4668,6 +4669,7 @@ internal partial class AppShell : UserControl, IDockOwner
         var targets = _settings.RecentSshTargets
             .Concat(ExecutionTarget.ListSshConfigHosts())
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(t => ExecutionTarget.ParseSsh(t) != null)
             .Take(8);
         foreach (var t in targets)
         {
@@ -4684,6 +4686,11 @@ internal partial class AppShell : UserControl, IDockOwner
             if (!string.IsNullOrWhiteSpace(text)) LaunchOnTarget(ExecutionKind.Ssh, text!);
         };
         MenuNewClaude.Items.Add(ssh);
+
+        MenuNewClaude.Items.Add(new Separator());
+        var schedule = new MenuItem { Header = Loc.Get("ScheduleMenu") };
+        schedule.Click += (_, _) => ShowScheduleDialog();
+        MenuNewClaude.Items.Add(schedule);
 
         // Picked up for next time, so a distro installed while the app runs appears
         _ = Task.Run(() => _wslDistros = ExecutionTarget.ListWslDistros());
@@ -7857,10 +7864,20 @@ internal partial class AppShell : UserControl, IDockOwner
             }
         };
 
-        return new ContextMenu
+        var menu = new ContextMenu
         {
             Items = { closeItem, closeOthersItem, closeRightItem, new Separator(), dupItem, exportItem }
         };
+
+        // Hands the running session to claude.ai / the mobile app; the CLI prints the link itself
+        if (_cli.ActiveId == "claude")
+        {
+            var remoteItem = new MenuItem { Header = Loc.Get("StartRemoteControl") };
+            remoteItem.Click += (_, _) => entry.Terminal.SendText("/remote-control\r");
+            menu.Items.Add(new Separator());
+            menu.Items.Add(remoteItem);
+        }
+        return menu;
     }
 
     // ── Workspace ──
@@ -9452,6 +9469,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         CloseWelcomePage();
         _insightTimer?.Stop();
+        _scheduleTimer?.Stop();
 
         // The shells share these, so only the application's own writes them out: a dragged-out
         // window closing would otherwise save its own project folder over the main window's.
