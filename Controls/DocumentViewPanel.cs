@@ -70,6 +70,8 @@ public class DocumentViewPanel : Panel
     private readonly List<string> _keys = new();
     private readonly List<Control?> _views = new();
     private readonly HashSet<string> _expandedGroups = new();
+    // Single calls opened inside a group, by tool_use id
+    private readonly HashSet<string> _expandedTools = new();
     // What the reader has picked on an open question, by tool_use id, so a rebuild keeps it
     private readonly Dictionary<string, AskState> _askStates = new();
 
@@ -373,9 +375,11 @@ public class DocumentViewPanel : Panel
 
     private static string KeyOf(ConversationMessage m)
     {
-        var tools = m.Tools == null ? "" : string.Join("\u001F", m.Tools.Select(t => t.Name + ":" + t.Detail));
+        // A call's result arriving changes its key, so the row loses its "running" mark
+        var tools = m.Tools == null ? "" : string.Join("\u001F",
+            m.Tools.Select(t => t.Name + ":" + t.Detail + ":" + (t.Result == null ? "-" : t.IsError ? "e" : "r")));
         var answers = m.AskUser == null ? "" : string.Join("\u001F", m.AskUser.Answers.Select(a => a.Key + "=" + a.Value));
-        return $"{(int)m.Role}|{m.IsToolUse}|{m.IsToolRejection}|{m.Images?.Count ?? 0}|{tools}|{answers}|{m.PendingAskId}|{m.Text}";
+        return $"{(int)m.Role}|{m.IsToolUse}|{m.IsThinking}|{m.IsToolRejection}|{m.Images?.Count ?? 0}|{tools}|{answers}|{m.PendingAskId}|{m.Narration}|{m.Text}";
     }
 
     private void UpdateHeader(string path, List<ConversationMessage> messages)
@@ -443,6 +447,7 @@ public class DocumentViewPanel : Panel
         if (msg.Role == MessageRole.User) return CreateUserView(msg, previous);
         if (msg.IsToolUse && msg.Tools is { Count: > 0 }) return CreateToolGroup(msg, key);
         if (string.IsNullOrWhiteSpace(msg.Text)) return null;
+        if (msg.IsThinking) return CreateThinkingView(msg, key);
         if (msg.Role == MessageRole.System) return CreateStatusLine(msg.Text, Palette.Dim);
         return CreateAssistantView(msg);
     }
@@ -609,6 +614,8 @@ public class DocumentViewPanel : Panel
     {
         var pal = Palette;
         var tools = msg.Tools!;
+        // Keyed by the first call, which stays put while results and later calls change the message
+        if (tools[0].Id != null) key = "g:" + tools[0].Id;
         bool expanded = _expandedGroups.Contains(key);
 
         var chevron = new TextBlock
@@ -648,28 +655,7 @@ public class DocumentViewPanel : Panel
             IsVisible = expanded,
         };
         foreach (var tool in tools)
-        {
-            var line = new SelectableTextBlock
-            {
-                FontSize = _baseFontSize * 0.88,
-                Foreground = Brush(pal.Dim),
-                TextWrapping = TextWrapping.Wrap,
-            };
-            line.Inlines!.Add(new Avalonia.Controls.Documents.Run(tool.Name)
-            {
-                FontWeight = FontWeight.SemiBold,
-                Foreground = Brush(pal.Fg),
-            });
-            if (!string.IsNullOrEmpty(tool.Detail))
-            {
-                line.Inlines.Add(new Avalonia.Controls.Documents.Run("  "));
-                line.Inlines.Add(new Avalonia.Controls.Documents.Run(tool.Detail)
-                {
-                    FontFamily = new FontFamily(_codeTypeface.FontFamily.Name),
-                });
-            }
-            details.Children.Add(line);
-        }
+            details.Children.Add(CreateToolRow(tool));
         var detailCard = new Border
         {
             BorderBrush = Brush(pal.Border),
@@ -693,9 +679,337 @@ public class DocumentViewPanel : Panel
         };
 
         var group = new StackPanel();
+        if (!string.IsNullOrWhiteSpace(msg.Narration))
+            group.Children.Add(new SelectableTextBlock
+            {
+                Text = msg.Narration,
+                FontSize = _baseFontSize * 0.95,
+                Foreground = Brush(pal.Dim),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 4),
+            });
         group.Children.Add(header);
         group.Children.Add(detailCard);
         return group;
+    }
+
+    /// <summary>
+    /// One call in an opened group: name, argument and a status mark, opening further into what
+    /// went in and what came back.
+    /// </summary>
+    private Control CreateToolRow(ToolCall tool)
+    {
+        var pal = Palette;
+        var errColor = _isDark ? Color.FromRgb(240, 120, 110) : Color.FromRgb(190, 60, 50);
+        string rowKey = tool.Id ?? tool.Name + ":" + tool.Detail;
+        bool open = _expandedTools.Contains(rowKey);
+
+        var line = new TextBlock
+        {
+            FontSize = _baseFontSize * 0.88,
+            Foreground = Brush(pal.Dim),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var chevron = new Avalonia.Controls.Documents.Run(open ? "⌄ " : "› ");
+        line.Inlines!.Add(chevron);
+        line.Inlines.Add(new Avalonia.Controls.Documents.Run(tool.Name)
+        {
+            FontWeight = FontWeight.SemiBold,
+            Foreground = Brush(pal.Fg),
+        });
+        if (!string.IsNullOrEmpty(tool.Detail))
+        {
+            line.Inlines.Add(new Avalonia.Controls.Documents.Run("  "));
+            line.Inlines.Add(new Avalonia.Controls.Documents.Run(tool.Detail)
+            {
+                FontFamily = new FontFamily(_codeTypeface.FontFamily.Name),
+            });
+        }
+        if (tool.IsError)
+            line.Inlines.Add(new Avalonia.Controls.Documents.Run("  ✗") { Foreground = Brush(errColor) });
+        else if (tool.Result == null)
+            line.Inlines.Add(new Avalonia.Controls.Documents.Run("  " + Loc.Get("ChatToolRunning")));
+
+        var rowHeader = new Border
+        {
+            Background = Brushes.Transparent,
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(4, 1),
+            Margin = new Thickness(-4, 0, 0, 0),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Child = line,
+        };
+        var body = new ContentControl { IsVisible = open, Margin = new Thickness(14, 4, 0, 6) };
+        if (open) body.Content = CreateToolBody(tool);
+
+        rowHeader.PointerEntered += (_, _) => rowHeader.Background = Brush(ChatTheme.Hover(_isDark));
+        rowHeader.PointerExited += (_, _) => rowHeader.Background = Brushes.Transparent;
+        rowHeader.PointerPressed += (_, e) =>
+        {
+            bool nowOpen = !body.IsVisible;
+            // Built on first open: a long session holds hundreds of calls
+            if (nowOpen && body.Content == null) body.Content = CreateToolBody(tool);
+            body.IsVisible = nowOpen;
+            chevron.Text = nowOpen ? "⌄ " : "› ";
+            if (nowOpen) _expandedTools.Add(rowKey); else _expandedTools.Remove(rowKey);
+            e.Handled = true;
+        };
+
+        var row = new StackPanel();
+        row.Children.Add(rowHeader);
+        row.Children.Add(body);
+        return row;
+    }
+
+    /// <summary>What a call did, shaped by its kind: a command and its output, an edit as a diff.</summary>
+    private Control CreateToolBody(ToolCall tool)
+    {
+        var stack = new StackPanel { Spacing = 6 };
+        System.Text.Json.JsonElement input = default;
+        bool hasInput = false;
+        System.Text.Json.JsonDocument? doc = null;
+        try
+        {
+            if (tool.InputJson != null)
+            {
+                doc = System.Text.Json.JsonDocument.Parse(tool.InputJson);
+                input = doc.RootElement;
+                hasInput = input.ValueKind == System.Text.Json.JsonValueKind.Object;
+            }
+        }
+        catch { }
+
+        string? Str(string name) => hasInput && input.TryGetProperty(name, out var v)
+            && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+
+        switch (tool.Name)
+        {
+            case "Bash":
+            case "PowerShell":
+                stack.Children.Add(CreateCodeBox((tool.Name == "Bash" ? "$ " : "PS> ") + (Str("command") ?? tool.Detail ?? ""), null));
+                AddResult(stack, tool);
+                break;
+            case "Edit":
+                stack.Children.Add(CreateDiffBox(Str("file_path"), new[] { (Str("old_string") ?? "", Str("new_string") ?? "") }));
+                if (tool.IsError) AddResult(stack, tool);
+                break;
+            case "MultiEdit":
+                var pairs = new List<(string, string)>();
+                if (hasInput && input.TryGetProperty("edits", out var edits) && edits.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    foreach (var ed in edits.EnumerateArray())
+                        pairs.Add((ed.TryGetProperty("old_string", out var o) ? o.GetString() ?? "" : "",
+                                   ed.TryGetProperty("new_string", out var n) ? n.GetString() ?? "" : ""));
+                stack.Children.Add(CreateDiffBox(Str("file_path"), pairs));
+                if (tool.IsError) AddResult(stack, tool);
+                break;
+            case "Write":
+                stack.Children.Add(CreateDiffBox(Str("file_path"), new[] { ("", Str("content") ?? "") }));
+                if (tool.IsError) AddResult(stack, tool);
+                break;
+            case "Read":
+            case "Grep":
+            case "Glob":
+                AddResult(stack, tool);
+                break;
+            default:
+                if (tool.InputJson != null)
+                {
+                    stack.Children.Add(CreateCaption(Loc.Get("ChatToolInput")));
+                    stack.Children.Add(CreateCodeBox(PrettyJson(tool.InputJson), null));
+                }
+                AddResult(stack, tool);
+                break;
+        }
+        doc?.Dispose();
+        return stack;
+    }
+
+    private void AddResult(StackPanel stack, ToolCall tool)
+    {
+        if (tool.Result == null) return;
+        var errColor = _isDark ? Color.FromRgb(240, 120, 110) : Color.FromRgb(190, 60, 50);
+        stack.Children.Add(CreateCaption(Loc.Get(tool.IsError ? "ChatToolError" : "ChatToolOutput")));
+        var text = string.IsNullOrWhiteSpace(tool.Result) ? Loc.Get("ChatToolNoOutput") : tool.Result.TrimEnd();
+        stack.Children.Add(CreateCodeBox(text, tool.IsError ? errColor : null));
+    }
+
+    private Control CreateCaption(string text) => new TextBlock
+    {
+        Text = text,
+        FontSize = _baseFontSize * 0.78,
+        FontWeight = FontWeight.SemiBold,
+        Foreground = Brush(Palette.Dim),
+    };
+
+    private static string PrettyJson(string json)
+    {
+        try
+        {
+            using var d = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(d.RootElement,
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                });
+        }
+        catch { return json; }
+    }
+
+    /// <summary>Monospace, selectable, height-capped box for commands and tool output.</summary>
+    private Control CreateCodeBox(string text, Color? foreground)
+    {
+        var pal = Palette;
+        return new Border
+        {
+            Background = Brush(ChatTheme.Surface(_isDark)),
+            BorderBrush = Brush(ChatTheme.Outline(_isDark)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 6),
+            Child = new ScrollViewer
+            {
+                MaxHeight = 320,
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                Content = new SelectableTextBlock
+                {
+                    Text = text,
+                    FontFamily = new FontFamily(_codeTypeface.FontFamily.Name),
+                    FontSize = _baseFontSize * 0.82,
+                    Foreground = Brush(foreground ?? pal.Fg),
+                },
+            },
+        };
+    }
+
+    /// <summary>
+    /// An edit as removed and added lines. Lines both sides share at the start and end are shown
+    /// once as context, so a one-line change in a long block reads as one line.
+    /// </summary>
+    private Control CreateDiffBox(string? filePath, IEnumerable<(string Old, string New)> edits)
+    {
+        var pal = Palette;
+        var addBg = _isDark ? Color.FromArgb(60, 60, 170, 90) : Color.FromArgb(70, 120, 210, 130);
+        var delBg = _isDark ? Color.FromArgb(60, 210, 70, 70) : Color.FromArgb(70, 240, 120, 120);
+        var mono = new FontFamily(_codeTypeface.FontFamily.Name);
+        var lines = new StackPanel();
+        int shown = 0;
+        const int MaxLines = 400;
+
+        void AddLine(string prefix, string text, Color? bg)
+        {
+            if (shown++ >= MaxLines) return;
+            lines.Children.Add(new Border
+            {
+                Background = bg.HasValue ? Brush(bg.Value) : Brushes.Transparent,
+                Child = new SelectableTextBlock
+                {
+                    Text = prefix + text,
+                    FontFamily = mono,
+                    FontSize = _baseFontSize * 0.82,
+                    Foreground = Brush(pal.Fg),
+                },
+            });
+        }
+
+        bool first = true;
+        foreach (var (oldText, newText) in edits)
+        {
+            if (!first) AddLine("", "⋯", null);
+            first = false;
+            var a = oldText.Length == 0 ? Array.Empty<string>() : oldText.Replace("\r\n", "\n").Split('\n');
+            var b = newText.Length == 0 ? Array.Empty<string>() : newText.Replace("\r\n", "\n").Split('\n');
+            int pre = 0;
+            while (pre < a.Length && pre < b.Length && a[pre] == b[pre]) pre++;
+            int suf = 0;
+            while (suf < a.Length - pre && suf < b.Length - pre && a[a.Length - 1 - suf] == b[b.Length - 1 - suf]) suf++;
+            for (int k = Math.Max(0, pre - 2); k < pre; k++) AddLine("  ", a[k], null);
+            for (int k = pre; k < a.Length - suf; k++) AddLine("- ", a[k], delBg);
+            for (int k = pre; k < b.Length - suf; k++) AddLine("+ ", b[k], addBg);
+            for (int k = a.Length - suf; k < Math.Min(a.Length, a.Length - suf + 2); k++) AddLine("  ", a[k], null);
+        }
+        if (shown > MaxLines) AddLine("", $"… (+{shown - MaxLines})", null);
+
+        var stack = new StackPanel { Spacing = 4 };
+        if (!string.IsNullOrEmpty(filePath))
+            stack.Children.Add(new TextBlock
+            {
+                Text = filePath,
+                FontFamily = mono,
+                FontSize = _baseFontSize * 0.78,
+                Foreground = Brush(pal.Dim),
+                TextTrimming = TextTrimming.PrefixCharacterEllipsis,
+            });
+        stack.Children.Add(new Border
+        {
+            Background = Brush(ChatTheme.Surface(_isDark)),
+            BorderBrush = Brush(ChatTheme.Outline(_isDark)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(0, 4),
+            ClipToBounds = true,
+            Child = new ScrollViewer
+            {
+                MaxHeight = 360,
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                Content = lines,
+            },
+        });
+        return stack;
+    }
+
+    /// <summary>A stored thought, folded to one quiet line that opens into the text.</summary>
+    private Control CreateThinkingView(ConversationMessage msg, string key)
+    {
+        var pal = Palette;
+        bool open = _expandedGroups.Contains(key);
+        var headerText = new TextBlock
+        {
+            Text = (open ? "⌄ " : "› ") + Loc.Get("ChatThinking"),
+            FontSize = _baseFontSize * 0.95,
+            FontStyle = FontStyle.Italic,
+            Foreground = Brush(pal.Dim),
+        };
+        var header = new Border
+        {
+            Background = Brushes.Transparent,
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(6, 3),
+            Margin = new Thickness(-6, 0, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Child = headerText,
+        };
+        var body = new Border
+        {
+            BorderBrush = Brush(pal.Border),
+            BorderThickness = new Thickness(2, 0, 0, 0),
+            Padding = new Thickness(10, 2, 0, 2),
+            IsVisible = open,
+            Child = new SelectableTextBlock
+            {
+                Text = msg.Text,
+                FontSize = _baseFontSize * 0.9,
+                Foreground = Brush(pal.Dim),
+                TextWrapping = TextWrapping.Wrap,
+            },
+        };
+        header.PointerEntered += (_, _) => header.Background = Brush(ChatTheme.Hover(_isDark));
+        header.PointerExited += (_, _) => header.Background = Brushes.Transparent;
+        header.PointerPressed += (_, e) =>
+        {
+            bool now = !body.IsVisible;
+            body.IsVisible = now;
+            headerText.Text = (now ? "⌄ " : "› ") + Loc.Get("ChatThinking");
+            if (now) _expandedGroups.Add(key); else _expandedGroups.Remove(key);
+            e.Handled = true;
+        };
+        var view = new StackPanel();
+        view.Children.Add(header);
+        view.Children.Add(body);
+        return view;
     }
 
     /// <summary>"ran 2 commands, read a file" in the UI language, grouped by what the tools do.</summary>

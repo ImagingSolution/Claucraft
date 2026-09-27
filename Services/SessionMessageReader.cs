@@ -13,8 +13,16 @@ public record AskUserOption(string Label, string Description);
 public record AskUserQuestionItem(string Question, string Header, List<AskUserOption> Options, bool MultiSelect);
 public record AskUserData(List<AskUserQuestionItem> Questions, Dictionary<string, string> Answers, Dictionary<string, string>? Notes);
 
-/// <summary>One tool call inside an assistant turn, with the argument that best says what it did.</summary>
-public record ToolCall(string Name, string? Detail);
+/// <summary>
+/// One tool call inside an assistant turn, with the argument that best says what it did. Its
+/// input is kept whole (up to a cap) and its result is filled in when the tool_result line that
+/// answers it is read.
+/// </summary>
+public record ToolCall(string Name, string? Detail, string? Id = null, string? InputJson = null)
+{
+    public string? Result { get; set; }
+    public bool IsError { get; set; }
+}
 
 /// <summary>An image attached to a user prompt: a file on disk or an inline base64 block.</summary>
 public record ChatImage(string? Path, string? Base64);
@@ -34,7 +42,11 @@ public record ConversationMessage(
     IReadOnlyList<ToolCall>? Tools = null,
     IReadOnlyList<ChatImage>? Images = null,
     // Set on an AskUserQuestion the CLI is still waiting on: the tool_use id it will answer
-    string? PendingAskId = null
+    string? PendingAskId = null,
+    // What Claude said alongside a run of tool calls ("Now let me check…")
+    string? Narration = null,
+    // The prompt's uuid in the transcript, so a bubble can be found again to rewind to
+    string? Uuid = null
 );
 
 /// <summary>
@@ -54,6 +66,7 @@ public static class SessionMessageReader
         try
         {
             var toolUseIdToName = new Dictionary<string, string>();
+            var calls = new Dictionary<string, ToolCall>();
             using var stream = new FileStream(jsonlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var reader = new StreamReader(stream, Encoding.UTF8);
 
@@ -62,11 +75,15 @@ public static class SessionMessageReader
                 var line = reader.ReadLine();
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                // Any tool_result for a question - answered, cancelled or rejected - settles it
-                if (pendingAsks.Count > 0 && line.Contains("\"tool_result\""))
-                    pendingAsks.RemoveWhere(id => line.Contains(id));
+                if (line.Contains("\"tool_result\""))
+                {
+                    // Any tool_result for a question - answered, cancelled or rejected - settles it
+                    if (pendingAsks.Count > 0)
+                        pendingAsks.RemoveWhere(id => line.Contains(id));
+                    if (calls.Count > 0) AttachToolResults(line, calls);
+                }
 
-                var msg = ParseLine(line, toolUseIdToName);
+                var msg = ParseLine(line, toolUseIdToName, calls);
                 if (msg != null)
                 {
                     messages.Add(msg);
@@ -130,8 +147,8 @@ public static class SessionMessageReader
                 continue;
             }
 
-            // Consolidate consecutive assistant text messages into one. A tool call ends the
-            // run, so a turn reads text / tools / text in the order it happened.
+            // Consolidate consecutive assistant text messages into one. A tool call or a
+            // thought ends the run, so a turn reads thought / text / tools in the order it happened.
             if (msg.Role == MessageRole.Assistant && !msg.IsToolUse && !msg.IsThinking)
             {
                 var textParts = new List<string> { msg.Text };
@@ -139,9 +156,9 @@ public static class SessionMessageReader
                 i++;
 
                 while (i < messages.Count && messages[i].Role == MessageRole.Assistant
-                    && !messages[i].IsToolUse && messages[i].AskUser == null)
+                    && !messages[i].IsToolUse && !messages[i].IsThinking && messages[i].AskUser == null)
                 {
-                    if (!messages[i].IsThinking && !string.IsNullOrWhiteSpace(messages[i].Text))
+                    if (!string.IsNullOrWhiteSpace(messages[i].Text))
                         textParts.Add(messages[i].Text);
                     i++;
                 }
@@ -155,24 +172,36 @@ public static class SessionMessageReader
             if (msg.IsToolUse && msg.Role == MessageRole.Assistant)
             {
                 var tools = new List<ToolCall>();
+                var narration = new List<string>();
                 var timestamp = msg.Timestamp;
                 while (i < messages.Count && messages[i].Role == MessageRole.Assistant
-                    && messages[i].AskUser == null
-                    && (messages[i].IsToolUse || messages[i].IsThinking))
+                    && messages[i].AskUser == null && messages[i].IsToolUse)
                 {
                     if (messages[i].Tools != null) tools.AddRange(messages[i].Tools!);
+                    if (!string.IsNullOrWhiteSpace(messages[i].Narration)) narration.Add(messages[i].Narration!);
                     i++;
                 }
                 if (tools.Count > 0)
                     result.Add(new ConversationMessage(MessageRole.Assistant, $"[Tools: {tools.Count}]",
-                        timestamp, tools[0].Name, true, false, Tools: tools));
+                        timestamp, tools[0].Name, true, false, Tools: tools,
+                        Narration: narration.Count > 0 ? string.Join("\n", narration) : null));
                 continue;
             }
 
-            // Thinking on its own carries nothing readable (the CLI stores it redacted)
+            // A thought is kept only when the CLI stored its text; redacted ones never get here.
+            // Consecutive thoughts read as one.
             if (msg.IsThinking)
             {
-                i++;
+                var parts = new List<string>();
+                var timestamp = msg.Timestamp;
+                while (i < messages.Count && messages[i].IsThinking)
+                {
+                    if (!string.IsNullOrWhiteSpace(messages[i].Text)) parts.Add(messages[i].Text);
+                    i++;
+                }
+                if (parts.Count > 0)
+                    result.Add(new ConversationMessage(MessageRole.Assistant, string.Join("\n\n", parts),
+                        timestamp, null, false, true));
                 continue;
             }
 
@@ -213,7 +242,7 @@ public static class SessionMessageReader
                 if (currentLine <= lastLineCount) continue;
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                var msg = ParseLine(line, toolUseIdToName);
+                var msg = ParseLine(line, toolUseIdToName, null);
                 if (msg != null)
                     newMessages.Add(msg);
             }
@@ -304,7 +333,44 @@ public static class SessionMessageReader
         return null;
     }
 
-    private static ConversationMessage? ParseLine(string line, Dictionary<string, string> toolUseIdToName)
+    /// <summary>Largest tool input kept for the detail view; a Write of a big file is cut here.</summary>
+    private const int MaxToolInputChars = 32_000;
+    /// <summary>Largest tool result kept for the detail view.</summary>
+    private const int MaxToolResultChars = 16_000;
+
+    private static string Cap(string s, int max) => s.Length <= max ? s : s[..max] + "\n…";
+
+    /// <summary>
+    /// Fills in the result of every tool call a user line answers. The CLI logs each result as a
+    /// tool_result block keyed by the tool_use id, its content a string or a list of text blocks.
+    /// </summary>
+    private static void AttachToolResults(string line, Dictionary<string, ToolCall> calls)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            if (!doc.RootElement.TryGetProperty("message", out var msg) || msg.ValueKind != JsonValueKind.Object
+                || !msg.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array)
+                return;
+            foreach (var item in content.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object
+                    || !item.TryGetProperty("type", out var t) || t.GetString() != "tool_result"
+                    || !item.TryGetProperty("tool_use_id", out var idEl) || idEl.GetString() is not string id
+                    || !calls.TryGetValue(id, out var call))
+                    continue;
+                string text = "";
+                if (item.TryGetProperty("content", out var c))
+                    text = c.ValueKind == JsonValueKind.String ? c.GetString() ?? "" : ExtractAllTextContent(c) ?? "";
+                call.Result = Cap(CleanMetadataTags(text), MaxToolResultChars);
+                call.IsError = item.TryGetProperty("is_error", out var err) && err.ValueKind == JsonValueKind.True;
+            }
+        }
+        catch { }
+    }
+
+    private static ConversationMessage? ParseLine(string line, Dictionary<string, string> toolUseIdToName,
+        Dictionary<string, ToolCall>? calls)
     {
         try
         {
@@ -368,7 +434,7 @@ public static class SessionMessageReader
             }
             else if (type == "assistant")
             {
-                return ParseAssistantMessage(root, timestamp, toolUseIdToName);
+                return ParseAssistantMessage(root, timestamp, toolUseIdToName, calls);
             }
             else if (type == "progress")
             {
@@ -418,8 +484,10 @@ public static class SessionMessageReader
 
         if (string.IsNullOrWhiteSpace(text) && images.Count == 0) return null;
 
+        var uuid = root.TryGetProperty("uuid", out var uuidProp) && uuidProp.ValueKind == JsonValueKind.String
+            ? uuidProp.GetString() : null;
         return new ConversationMessage(MessageRole.User, text, timestamp, null, false, false,
-            Images: images.Count > 0 ? images : null);
+            Images: images.Count > 0 ? images : null, Uuid: uuid);
     }
 
     /// <summary>An absolute Windows image path, optionally @-prefixed and quoted, as Claucraft writes it.</summary>
@@ -506,17 +574,18 @@ public static class SessionMessageReader
         return new SessionMeta(customTitle ?? aiTitle ?? summary, cwd);
     }
 
-    private static ConversationMessage? ParseAssistantMessage(JsonElement root, DateTime? timestamp, Dictionary<string, string> toolUseIdToName)
+    private static ConversationMessage? ParseAssistantMessage(JsonElement root, DateTime? timestamp,
+        Dictionary<string, string> toolUseIdToName, Dictionary<string, ToolCall>? calls)
     {
         if (!root.TryGetProperty("message", out var msgProp)) return null;
         if (!msgProp.TryGetProperty("content", out var contentProp)) return null;
         if (contentProp.ValueKind != JsonValueKind.Array) return null;
 
         var textParts = new List<string>();
+        var thinkingParts = new List<string>();
         var tools = new List<ToolCall>();
         string? toolName = null;
         bool isToolUse = false;
-        bool isThinking = false;
         ConversationMessage? pendingAsk = null;
 
         foreach (var item in contentProp.EnumerateArray())
@@ -542,12 +611,12 @@ public static class SessionMessageReader
             }
             else if (itemTypeStr == "thinking")
             {
-                isThinking = true;
+                // Usually stored redacted (empty text, signature only); kept when it is not
                 if (item.TryGetProperty("thinking", out var thinkEl))
                 {
                     var t = thinkEl.GetString();
-                    if (!string.IsNullOrEmpty(t))
-                        textParts.Add(t);
+                    if (!string.IsNullOrWhiteSpace(t))
+                        thinkingParts.Add(t);
                 }
             }
             else if (itemTypeStr == "tool_use")
@@ -579,24 +648,32 @@ public static class SessionMessageReader
                     }
                 }
                 else if (toolName != null)
-                    tools.Add(new ToolCall(toolName, DescribeToolInput(toolName, item)));
+                {
+                    string? id = item.TryGetProperty("id", out var cid) ? cid.GetString() : null;
+                    string? inputJson = item.TryGetProperty("input", out var inputEl)
+                        ? Cap(inputEl.GetRawText(), MaxToolInputChars) : null;
+                    var call = new ToolCall(toolName, DescribeToolInput(toolName, item), id, inputJson);
+                    tools.Add(call);
+                    if (id != null && calls != null) calls[id] = call;
+                }
             }
         }
 
-        // If only thinking content, mark as thinking
-        if (textParts.Count == 0 && !isToolUse) return null;
-
-        // Suppress text accompanying tool_use (narration like "Now modify...", etc.)
+        // Text said alongside tool calls rides with the group as its narration
         if (isToolUse)
         {
             if (tools.Count == 0) return pendingAsk;
             return new ConversationMessage(MessageRole.Assistant, $"[Tool: {toolName}]", timestamp, toolName, true, false,
-                Tools: tools);
+                Tools: tools, Narration: textParts.Count > 0 ? string.Join("\n", textParts) : null);
         }
+
+        if (textParts.Count == 0)
+            return thinkingParts.Count == 0 ? null
+                : new ConversationMessage(MessageRole.Assistant, string.Join("\n\n", thinkingParts), timestamp, null, false, true);
 
         var fullText = string.Join("\n", textParts);
         return new ConversationMessage(
-            MessageRole.Assistant, fullText, timestamp, toolName, isToolUse, isThinking);
+            MessageRole.Assistant, fullText, timestamp, toolName, isToolUse, false);
     }
 
     private static ConversationMessage? ParseProgressMessage(JsonElement root, DateTime? timestamp)
