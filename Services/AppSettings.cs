@@ -129,15 +129,6 @@ public class AppSettings
     /// </summary>
     public Dictionary<string, string> AgentDisplayNames { get; set; } = new();
 
-    /// <summary>
-    /// Names given to sessions in the sidebar, keyed by session id. Kept here rather than
-    /// written into the transcript, which belongs to the CLI.
-    /// </summary>
-    public Dictionary<string, string> SessionNames { get; set; } = new();
-
-    /// <summary>Session ids the sidebar hides until "Show archived" is on.</summary>
-    public List<string> ArchivedSessions { get; set; } = new();
-
     // ── Updates ──
 
     /// <summary>Ask GitHub for a newer release at startup and offer to install it.</summary>

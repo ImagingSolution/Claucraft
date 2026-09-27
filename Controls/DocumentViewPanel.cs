@@ -754,14 +754,8 @@ public class DocumentViewPanel : Panel
     private static readonly Color AccentColor = Color.FromRgb(217, 119, 87);
     private static readonly Color DoneColor = Color.FromRgb(96, 165, 96);
 
-    /// <summary>The session's tasks and subagents, re-sent on every refresh of the main transcript.</summary>
-    public event Action<IReadOnlyList<ChatTask>, IReadOnlyList<SubagentInfo>>? ExtrasUpdated;
-
-    /// <summary>The reader asked to open a file a tool call worked on, in the side pane's editor.</summary>
+    /// <summary>The reader asked to open a file a tool call worked on, in an editor window.</summary>
     public event Action<string>? FileOpenRequested;
-
-    /// <summary>Opens a subagent's transcript from outside the panel, e.g. the side pane's Tasks tab.</summary>
-    public void OpenAgent(string transcriptPath, string title) => ShowAgent(transcriptPath, title);
 
     /// <summary>Opens a subagent's transcript in place of the session, or goes back with null.</summary>
     private void ShowAgent(string? transcriptPath, string title)
@@ -788,8 +782,6 @@ public class DocumentViewPanel : Panel
             tasks = ChatTaskTracker.ExtractTasks(messages);
             agents = ChatTaskTracker.ExtractSubagents(_currentSessionPath, messages);
         }
-        // While a subagent is open the lists belong to the main session; keep the last ones
-        if (_agentPath == null) ExtrasUpdated?.Invoke(tasks, agents);
         var key = string.Join("\u001E",
             _isDark, _baseFontSize, _agentPath, _agentTitle, _tasksExpanded, _agentsExpanded,
             string.Join("\u001F", tasks.Select(t => $"{t.Id}|{t.Status}|{t.Subject}|{t.ActiveForm}")),
@@ -1394,7 +1386,7 @@ public class DocumentViewPanel : Panel
         {
             var openLink = new TextBlock
             {
-                Text = "↗ " + Loc.Get("ChatOpenFileInPane"),
+                Text = "↗ " + Loc.Get("OpenInEditor"),
                 FontSize = _baseFontSize * 0.82,
                 Foreground = Brush(ChatTheme.Accent),
                 Cursor = new Cursor(StandardCursorType.Hand),

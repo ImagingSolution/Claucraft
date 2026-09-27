@@ -443,6 +443,9 @@ public partial class TerminalControl : Control, IDisposable
         BuildSidePaneToggle();
     }
 
+    /// <summary>A file a tool call worked on was clicked in Chat View; the shell opens it in an editor window.</summary>
+    public event Action<string>? FileOpenRequested;
+
     /// <summary>Sends what the chat view's box holds, with any attached images. False if empty.</summary>
     private bool SubmitChatInput()
     {
@@ -3891,6 +3894,7 @@ public partial class TerminalControl : Control, IDisposable
                 _docViewPanel.IsAskOpen = IsAskSelectorOnScreen;
                 _docViewPanel.RewindRequested += target => RewindToPrompt(target);
                 _docViewPanel.SearchClosed += () => _inputTextBox.Focus();
+                _docViewPanel.FileOpenRequested += path => FileOpenRequested?.Invoke(path);
                 _docViewPanel.QueuedPromptRemoved += index =>
                 {
                     if (index < 0 || index >= _sendQueue.Count) return;
@@ -3936,7 +3940,6 @@ public partial class TerminalControl : Control, IDisposable
         {
             OnSidePaneLayoutChanged();
         }
-        SyncSidePaneActivity();
 
         InvalidateMeasure();
         InvalidateArrange();

@@ -20,9 +20,6 @@ public partial class TerminalControl
     private const double SidePaneMinWidth = 220;
 
     private ChatSidePane? _sidePane;
-    private SidePaneTasksView? _tasksView;
-    private DiffViewerPanel? _diffView;
-    private FileEditorPanel? _fileView;
     private BrowserPreviewPanel? _previewView;
     private string? _lastLocalServerText;
     private string _outputTail = "";
@@ -34,8 +31,6 @@ public partial class TerminalControl
     private bool _splitterDragging;
     // The PTY's size before the pane took the terminal over, put back when it lets go
     private (int cols, int rows)? _sizeBeforePane;
-    private IReadOnlyList<Services.ChatTask> _lastTasks = Array.Empty<Services.ChatTask>();
-    private IReadOnlyList<Services.SubagentInfo> _lastAgents = Array.Empty<Services.SubagentInfo>();
 
     /// <summary>The open tab's name, or "" when the pane is closed. Saved with the workspace.</summary>
     public string SidePaneState
@@ -148,34 +143,11 @@ public partial class TerminalControl
     {
         if (_sidePane != null || _docViewPanel == null) return;
 
-        _tasksView = new SidePaneTasksView(_isDark);
-        _tasksView.AgentOpened += (path, title) => _docViewPanel?.OpenAgent(path, title);
-        _tasksView.Update(_lastTasks, _lastAgents);
-        _docViewPanel.ExtrasUpdated += (tasks, agents) =>
-        {
-            _lastTasks = tasks;
-            _lastAgents = agents;
-            _tasksView?.Update(tasks, agents);
-        };
-
-        _diffView = new DiffViewerPanel(_isDark, () => _workingDirectory, _typeface.FontFamily);
-        _diffView.CommentsSubmitted += text =>
-        {
-            var current = _inputTextBox.Text ?? "";
-            SetInputText(string.IsNullOrWhiteSpace(current) ? text : current.TrimEnd() + "\n" + text);
-        };
-
-        _fileView = new FileEditorPanel(_isDark, _typeface.FontFamily);
-        _docViewPanel.FileOpenRequested += OpenFileInSidePane;
-
         _previewView = new BrowserPreviewPanel(_isDark);
         if (_lastLocalServerText != null) _previewView.OfferFromOutput(_lastLocalServerText);
 
         _sidePane = new ChatSidePane(_isDark);
         _sidePane.SetContent(SidePaneTab.Preview, _previewView);
-        _sidePane.SetContent(SidePaneTab.Files, _fileView);
-        _sidePane.SetContent(SidePaneTab.Tasks, _tasksView);
-        _sidePane.SetContent(SidePaneTab.Diff, _diffView);
         _sidePane.SelectSilently(_sidePaneTab);
         _sidePane.TabChanged += tab =>
         {
@@ -241,30 +213,9 @@ public partial class TerminalControl
             else RecalcTerminalSize();
         }
         UpdateSidePaneToggleLook();
-        SyncSidePaneActivity();
         InvalidateMeasure();
         InvalidateArrange();
         InvalidateVisual();
-    }
-
-    /// <summary>Lets the tab that polls (the diff) run only while it can be seen.</summary>
-    private void SyncSidePaneActivity()
-    {
-        _diffView?.SetActive(SidePaneShown && _sidePaneTab == SidePaneTab.Diff);
-        _fileView?.SetActive(SidePaneShown && _sidePaneTab == SidePaneTab.Files);
-    }
-
-    /// <summary>Opens a file in the pane's editor, bringing up Chat View and the pane as needed.</summary>
-    public void OpenFileInSidePane(string path)
-    {
-        if (!_isDocumentView) ToggleDocumentView();
-        EnsureSidePane();
-        if (_fileView == null || _sidePane == null) return;
-        _fileView.Open(path);
-        _sidePaneTab = SidePaneTab.Files;
-        _sidePane.SelectSilently(SidePaneTab.Files);
-        _sidePaneOpen = true;
-        OnSidePaneLayoutChanged();
     }
 
     private static readonly System.Text.RegularExpressions.Regex AnsiEscape = new(
@@ -311,14 +262,7 @@ public partial class TerminalControl
     private void ApplySidePaneTheme()
     {
         _sidePane?.ApplyTheme(_isDark);
-        _diffView?.ApplyTheme(_isDark);
-        _fileView?.ApplyTheme(_isDark);
         _previewView?.ApplyTheme(_isDark);
-        if (_tasksView != null)
-        {
-            _tasksView.ApplyTheme(_isDark);
-            _tasksView.Update(_lastTasks, _lastAgents);
-        }
         UpdateSidePaneToggleLook();
     }
 

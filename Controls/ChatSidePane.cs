@@ -11,7 +11,7 @@ using Claucraft.Services;
 namespace Claucraft.Controls;
 
 /// <summary>What the pane next to Chat View is showing.</summary>
-public enum SidePaneTab { Terminal, Diff, Files, Preview, Tasks }
+public enum SidePaneTab { Terminal, Preview }
 
 /// <summary>
 /// The pane to the right of Chat View: a strip of tabs over one content area. Every tab but
@@ -166,99 +166,5 @@ public sealed class ChatSidePane : Panel
         _strip.Arrange(new Rect(0, 0, finalSize.Width, StripHeight));
         _host.Arrange(new Rect(0, StripHeight, finalSize.Width, Math.Max(0, finalSize.Height - StripHeight)));
         return finalSize;
-    }
-}
-
-/// <summary>The Tasks tab: the session's task list and subagents, kept open beside the chat.</summary>
-public sealed class SidePaneTasksView : ScrollViewer
-{
-    private readonly StackPanel _stack = new() { Margin = new Thickness(14, 10), Spacing = 4 };
-    private bool _isDark;
-    private string _key = "";
-
-    /// <summary>A subagent row was clicked: its transcript path and title.</summary>
-    public event Action<string, string>? AgentOpened;
-
-    public SidePaneTasksView(bool isDark)
-    {
-        _isDark = isDark;
-        Content = _stack;
-        HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
-        Update(Array.Empty<ChatTask>(), Array.Empty<SubagentInfo>());
-    }
-
-    public void ApplyTheme(bool isDark)
-    {
-        _isDark = isDark;
-        _key = "";
-    }
-
-    public void Update(IReadOnlyList<ChatTask> tasks, IReadOnlyList<SubagentInfo> agents)
-    {
-        var key = string.Join("\u001E", _isDark,
-            string.Join("|", tasks.Select(t => t.Id + t.Subject + t.Status)),
-            string.Join("|", agents.Select(a => a.ToolUseId + a.Running + a.TranscriptPath)));
-        if (key == _key) return;
-        _key = key;
-
-        var fg = new SolidColorBrush(_isDark ? Color.FromRgb(225, 225, 228) : Color.FromRgb(35, 35, 38));
-        var dim = new SolidColorBrush(_isDark ? Color.FromRgb(150, 150, 155) : Color.FromRgb(110, 110, 115));
-        var accent = new SolidColorBrush(ChatTheme.Accent);
-        var done = new SolidColorBrush(Color.FromRgb(96, 165, 96));
-        _stack.Children.Clear();
-
-        TextBlock Heading(string text) => new()
-        {
-            Text = text, FontWeight = FontWeight.SemiBold, FontSize = 13, Foreground = fg,
-            Margin = new Thickness(0, 6, 0, 2),
-        };
-
-        int completed = tasks.Count(t => t.Status == ChatTaskStatus.Completed);
-        _stack.Children.Add(Heading(string.Format(Loc.Get("ChatTasks"), completed, tasks.Count)));
-        if (tasks.Count == 0)
-            _stack.Children.Add(new TextBlock { Text = Loc.Get("SidePaneNoTasks"), Foreground = dim, FontSize = 12 });
-        foreach (var t in tasks)
-        {
-            var (mark, brush) = t.Status switch
-            {
-                ChatTaskStatus.Completed => ("✓", done),
-                ChatTaskStatus.InProgress => ("◐", accent),
-                _ => ("○", dim),
-            };
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            row.Children.Add(new TextBlock { Text = mark, Foreground = brush, FontSize = 13 });
-            row.Children.Add(new TextBlock
-            {
-                Text = t.Status == ChatTaskStatus.InProgress && !string.IsNullOrEmpty(t.ActiveForm) ? t.ActiveForm : t.Subject,
-                Foreground = t.Status == ChatTaskStatus.Completed ? dim : fg,
-                FontSize = 13,
-                TextWrapping = TextWrapping.Wrap,
-                TextDecorations = t.Status == ChatTaskStatus.Completed ? TextDecorations.Strikethrough : null,
-                FontWeight = t.Status == ChatTaskStatus.InProgress ? FontWeight.SemiBold : FontWeight.Normal,
-            });
-            _stack.Children.Add(row);
-        }
-
-        _stack.Children.Add(Heading(string.Format(Loc.Get("ChatSubagents"), agents.Count)));
-        foreach (var a in agents)
-        {
-            var title = string.IsNullOrEmpty(a.Description) ? a.AgentType : a.AgentType + " — " + a.Description;
-            var b = new Button
-            {
-                Content = (a.Running ? "● " : "✓ ") + title + (a.Running ? "  " + Loc.Get("ChatSubagentRunning") : ""),
-                Foreground = a.Running ? accent : fg,
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                Padding = new Thickness(0, 2),
-                FontSize = 13,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                IsEnabled = a.TranscriptPath != null,
-                Cursor = new Cursor(StandardCursorType.Hand),
-            };
-            ToolTip.SetTip(b, Loc.Get(a.TranscriptPath != null ? "ChatSubagentOpen" : "ChatSubagentNoTranscript"));
-            var path = a.TranscriptPath;
-            b.Click += (_, _) => { if (path != null) AgentOpened?.Invoke(path, title); };
-            _stack.Children.Add(b);
-        }
     }
 }

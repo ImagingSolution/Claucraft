@@ -548,7 +548,6 @@ internal partial class AppShell : UserControl, IDockOwner
         MenuTreeOpen.Header = Loc.Get("Open");
         MenuTreeOpenWith.Header = Loc.Get("OpenWith");
         MenuTreeOpenInEditor.Header = Loc.Get("OpenInEditor");
-        MenuTreeOpenInSidePane.Header = Loc.Get("OpenInSidePane");
         MenuTreeShowInExplorer.Header = Loc.Get("ShowInExplorer");
         MenuTreeCopyPath.Header = Loc.Get("CopyPath");
         MenuTreeCopyFilename.Header = Loc.Get("CopyFilename");
@@ -1327,8 +1326,6 @@ internal partial class AppShell : UserControl, IDockOwner
                     break;
             }
         }
-
-        RefreshSessionsSection();
     }
 
     /// <summary>
@@ -1702,8 +1699,8 @@ internal partial class AppShell : UserControl, IDockOwner
         var menu = new ContextMenu { Items = { renameItem, deleteItem } };
 
         // The panel is rebuilt wholesale on a timer, which takes this menu's own row out of the
-        // tree and shuts the menu a moment after it opened. The session rows' menus hold it
-        // off the same way.
+        // tree and shuts the menu a moment after it opened. Nothing else in the panel opens a
+        // menu, so nothing else needs to hold the rebuild off.
         menu.Opened += (_, _) => _windowsMenuOpen = true;
         menu.Closed += (_, _) => _windowsMenuOpen = false;
         return menu;
@@ -1813,7 +1810,6 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         if (!WindowsPanel.IsVisible || _windowsMenuOpen) return;
 
-        RefreshSessionStates();
         var signature = SubagentSignature();
         bool ticking = signature.Length > 0
             && DateTime.Now - _subagentDrawn > TimeSpan.FromSeconds(1);
@@ -3200,15 +3196,6 @@ internal partial class AppShell : UserControl, IDockOwner
         OpenFileEditorWindow(node.FullPath);
     }
 
-    private void OnTreeOpenInSidePane(object? sender, RoutedEventArgs e)
-    {
-        var node = GetSelectedTreeNode();
-        if (node == null || node.IsDirectory) return;
-        // Without a session window there is no Chat View to hold the pane
-        if (_activeChild == null) { OpenFileEditorWindow(node.FullPath); return; }
-        _activeChild.Terminal.OpenFileInSidePane(node.FullPath);
-    }
-
     private void OnTreeShowInExplorer(object? sender, RoutedEventArgs e)
     {
         var node = GetSelectedTreeNode();
@@ -4329,7 +4316,6 @@ internal partial class AppShell : UserControl, IDockOwner
         var sessions = await SessionService.GetSessionsForProjectAsync(folder);
         CmbSessions.ItemsSource = sessions;
         SyncSessionSelection();
-        SetSidebarSessions(sessions, folder);
 
         // Same snapshot, same strings: whatever the box lists for a running session is what its
         // tab, title bar and Windows row say.
@@ -4616,33 +4602,29 @@ internal partial class AppShell : UserControl, IDockOwner
         }
 
         if (CmbSessions.SelectedItem is SessionInfo session)
-            ResumeSession(session);
-    }
-
-    /// <summary>Opens a window that resumes <paramref name="session"/> in the current project.</summary>
-    private void ResumeSession(SessionInfo session)
-    {
-        // A session runs in one place at a time. Resuming one already held elsewhere would
-        // start a CLI that exits on the spot, leaving the new window at "[Process exited]".
-        if (RunningSessionService.IsLive(session.Id, _projectFolder))
         {
-            ShowMessageDialog(Loc.Get("SessionBusyTitle"),
-                Loc.Get(RunningSessionService.IsHeldByAgent(session.Id, _projectFolder)
-                    ? "SessionBusyAgent"
-                    : "SessionBusyElsewhere"));
-            return;
+            // A session runs in one place at a time. Resuming one already held elsewhere would
+            // start a CLI that exits on the spot, leaving the new window at "[Process exited]".
+            if (RunningSessionService.IsLive(session.Id, _projectFolder))
+            {
+                ShowMessageDialog(Loc.Get("SessionBusyTitle"),
+                    Loc.Get(RunningSessionService.IsHeldByAgent(session.Id, _projectFolder)
+                        ? "SessionBusyAgent"
+                        : "SessionBusyElsewhere"));
+                return;
+            }
+
+            string cmd = _cli.BuildResumeCommand(session.Id, ActiveLaunchProfile());
+            var displayTitle = session.DisplayTitle ?? session.Summary;
+            string tabLabel = !string.IsNullOrEmpty(displayTitle)
+                ? (displayTitle.Length > 30 ? displayTitle[..30] + "..." : displayTitle)
+                : $"Session: {session.Id[..Math.Min(8, session.Id.Length)]}";
+            CreateNewChild(cmd, tabLabel, displayTitle, session.Id);
+
+            // Load cached diagrams for this project
+            if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
+                _children[_activeChildIndex].Terminal.LoadCachedDiagrams();
         }
-
-        string cmd = _cli.BuildResumeCommand(session.Id, ActiveLaunchProfile());
-        var displayTitle = session.DisplayTitle ?? session.Summary;
-        string tabLabel = !string.IsNullOrEmpty(displayTitle)
-            ? (displayTitle.Length > 30 ? displayTitle[..30] + "..." : displayTitle)
-            : $"Session: {session.Id[..Math.Min(8, session.Id.Length)]}";
-        CreateNewChild(cmd, tabLabel, displayTitle, session.Id);
-
-        // Load cached diagrams for this project
-        if (_activeChildIndex >= 0 && _activeChildIndex < _children.Count)
-            _children[_activeChildIndex].Terminal.LoadCachedDiagrams();
     }
 
     private void OnNewClaude(object? sender, RoutedEventArgs e)
@@ -8825,6 +8807,8 @@ internal partial class AppShell : UserControl, IDockOwner
             if (!ReferenceEquals(_activeLayoutItem, entry))
                 ActivateTerminal(entry);
         };
+
+        terminal.FileOpenRequested += OpenFileEditorWindow;
 
         terminal.TitleChanged += title =>
         {
