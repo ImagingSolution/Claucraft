@@ -41,15 +41,17 @@ public static class MarkdownParser
     /// tables. Also read by the chat view so its bubbles and cards match.
     /// </summary>
     public sealed record ChatPalette(Color Fg, Color Dim, Color Border, Color CodeBg, Color InlineCodeFg,
-        Color CodeFg, Color StringFg, Color CommentFg, Color TableHeaderBg)
+        Color CodeFg, Color StringFg, Color CommentFg, Color TableHeaderBg, Color DiffAddFg, Color DiffDelFg)
     {
         public static ChatPalette For(bool isDark) => isDark
             ? new(Color.FromRgb(240, 239, 236), Color.FromRgb(137, 135, 129), Color.FromRgb(45, 45, 45),
                   Color.FromRgb(26, 26, 25), Color.FromRgb(236, 126, 126), Color.FromRgb(214, 214, 212),
-                  Color.FromRgb(152, 205, 130), Color.FromRgb(128, 127, 120), Color.FromRgb(33, 33, 33))
+                  Color.FromRgb(152, 205, 130), Color.FromRgb(128, 127, 120), Color.FromRgb(33, 33, 33),
+                  Color.FromRgb(126, 204, 120), Color.FromRgb(240, 120, 115))
             : new(Color.FromRgb(11, 11, 11), Color.FromRgb(137, 135, 129), Color.FromRgb(221, 221, 220),
                   Color.FromRgb(255, 255, 255), Color.FromRgb(142, 38, 38), Color.FromRgb(40, 40, 40),
-                  Color.FromRgb(28, 128, 58), Color.FromRgb(125, 123, 118), Color.FromRgb(240, 240, 239));
+                  Color.FromRgb(28, 128, 58), Color.FromRgb(125, 123, 118), Color.FromRgb(240, 240, 239),
+                  Color.FromRgb(30, 130, 40), Color.FromRgb(200, 30, 30));
 
         /// <summary>Tint behind an inline code chip.</summary>
         public static Color InlineCodeBg(bool isDark) => isDark ? Color.FromRgb(33, 33, 33) : Color.FromRgb(240, 240, 239);
@@ -654,7 +656,8 @@ public static class MarkdownParser
             TextWrapping = TextWrapping.Wrap,
             LineHeight = Math.Round(baseFontSize * 1.45),
         };
-        HighlightCode(codeText, code, pal);
+        if (IsDiff(code, language)) HighlightDiff(codeText, code, pal);
+        else HighlightCode(codeText, code, pal);
 
         var stack = new StackPanel();
         stack.Children.Add(header);
@@ -676,6 +679,43 @@ public static class MarkdownParser
     /// ink), line comments dimmed. Enough to read structure at a glance without a real lexer.
     /// Very long blocks are left plain so a huge paste never stalls the UI thread.
     /// </summary>
+    /// <summary>
+    /// A block tagged diff/patch, or an untagged one that carries a unified-diff hunk header.
+    /// </summary>
+    private static bool IsDiff(string code, string language)
+    {
+        var lang = language.Trim().ToLowerInvariant();
+        if (lang is "diff" or "patch" or "udiff") return true;
+        if (lang.Length > 0) return false;
+        return code.StartsWith("@@ ") || code.Contains("\n@@ ")
+            || (code.StartsWith("--- ") && code.Contains("\n+++ "));
+    }
+
+    /// <summary>
+    /// Unified-diff colouring as the desktop app shows it: added lines green, removed lines red,
+    /// file headers dimmed, hunk headers and context lines in ink.
+    /// </summary>
+    private static void HighlightDiff(TextBlock tb, string code, ChatPalette pal)
+    {
+        if (code.Length > 20000) { tb.Text = code; return; }
+
+        var inlines = tb.Inlines!;
+        var lines = code.Split('\n');
+        for (int n = 0; n < lines.Length; n++)
+        {
+            var line = lines[n].TrimEnd('\r');
+            var text = n < lines.Length - 1 ? line + "\n" : line;
+            if (text.Length == 0) continue;
+            Color? color = line.StartsWith("+++ ") || line.StartsWith("--- ") ? pal.Dim
+                : line.StartsWith('+') ? pal.DiffAddFg
+                : line.StartsWith('-') ? pal.DiffDelFg
+                : null;
+            var run = new Avalonia.Controls.Documents.Run(text);
+            if (color is { } c) run.Foreground = new SolidColorBrush(c);
+            inlines.Add(run);
+        }
+    }
+
     private static void HighlightCode(TextBlock tb, string code, ChatPalette pal)
     {
         if (code.Length > 20000) { tb.Text = code; return; }
