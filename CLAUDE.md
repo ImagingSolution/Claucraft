@@ -45,7 +45,7 @@ The version in the tag must match the `FileVersion` baked into
 
 ## Architecture
 
-Windows MDI terminal app for Claude Code, built with .NET 8.0 / Avalonia 11.3.12. All UI runs on a single STA thread.
+Windows MDI terminal app for Claude Code, built with .NET 8.0 / Avalonia 12. All UI runs on a single STA thread.
 
 ### Terminal Pipeline
 
@@ -64,7 +64,7 @@ PseudoConsole (ConPTY P/Invoke)
 
 ### MDI Window Management
 
-`MainWindow` manages children via `List<MdiChildInfo>`. Each `MdiChildInfo` record holds the visual container (Border), TerminalControl, strip button (tab), and project folder context. Layout modes: Maximize, Tile, Cascade.
+`AppShell` (hosted by `MainWindow`) manages children via `List<MdiChildInfo>`. Each `MdiChildInfo` record holds the visual container (Border), title bar, TerminalControl, strip button (tab), and project folder context. Layout modes: Maximize, Tile, TileHorizontal, TileVertical.
 
 Switching active child triggers project context switching — the toolbar, explorer, session list, and git status all update to reflect that child's project folder.
 
@@ -72,7 +72,7 @@ Switching active child triggers project context switching — the toolbar, explo
 
 - **AppSettings** / **SnippetStore**: JSON persistence to `%APPDATA%\Claucraft/`
 - **SessionService**: Reads Claude Code JSONL session files from `~/.claude/projects/` (read-only)
-- **UsageTracker**: Reads `~/.claude/stats-cache.json` on a 30-second polling interval (read-only)
+- **UsageTracker**: Aggregates today's usage from the Claude Code session transcripts (via CostAnalytics) on a 30-second polling interval (read-only)
 - **Localization**: Static dictionary-based EN/JP localization via `Loc.Get("key")`
 
 ### Key Conventions
