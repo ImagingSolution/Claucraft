@@ -204,6 +204,9 @@
   <code>claude</code> CLI you already use — Claucraft does not replace it, it wraps it with project
   management, session history, git tooling and layout features built around running several
   sessions side by side.</p>
+  <p>Claucraft is an unofficial, independent project, not affiliated with, endorsed by, or sponsored
+  by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC. Claucraft does not bundle
+  Claude Code; it runs the copy you installed, signed in with your own account.</p>
   <table>
     <tr><th></th><th>Claude Desktop app</th><th>Claude Code CLI</th><th>VS Code extension</th><th>Claucraft</th></tr>
     <tr>
@@ -511,7 +514,12 @@
     model or effort mid-conversation compacts first when there is enough context worth saving,
     rather than throwing the prompt cache away silently.</li>
     <li><strong>Rate limits</strong> — usage against the plan's 5-hour and 7-day metering windows,
-    with time until each resets.</li>
+    with time until each resets. Claude sessions started from Claucraft get a status line that saves
+    the <code>rate_limits</code> Claude Code itself reports (Pro/Max plans, after the first reply); a
+    status line of your own keeps showing. <em>Get rate limits from Claude Code</em> under Live status
+    turns this off, together with the readout. While it is on, Claude Code hides its footer key hints
+    such as "? for shortcuts". A <code>claude_usage_cache.json</code> your own script leaves in the
+    temp folder is read as a fallback. Claucraft never uses your Claude sign-in itself.</li>
   </ul>
   <p>An idle session approaching its prompt-cache expiry shows a "compact now" banner, since the
   next message would otherwise re-read the whole conversation at full price.</p>

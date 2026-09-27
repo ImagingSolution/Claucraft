@@ -84,7 +84,7 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 - **Cache Expiry Warning** - An idle session close to its prompt-cache expiry gets a "compact now" banner, and switching model or effort mid-session compacts first when there is enough context worth saving
 - **Marginal Cost Readout** - What the last turn cost, and what the next one costs just to re-read the conversation, so a session that has grown expensive says so instead of being discovered on the invoice
 - **Usage in Plain Words** - "about 840 left, resets in 5h" instead of a bare message count, measured against the plan (Pro / Max 5x / Max 20x) chosen in Settings. Aggregated from the session transcripts themselves
-- **Rate Limit Readout** - Utilization and reset countdown for both the 5-hour and 7-day plan windows
+- **Rate Limit Readout** - Utilization and reset countdown for both the 5-hour and 7-day plan windows. Claude sessions started from Claucraft get a status line that saves the `rate_limits` Claude Code itself reports (Pro/Max, after the first reply); a status line of your own keeps showing. It can be turned off in Settings > Live status, at the cost of the readout, and while it is on Claude Code hides its footer key hints. A `claude_usage_cache.json` left in the temp folder by your own script is read as a fallback. Claucraft never uses your Claude sign-in itself
 - **Permission Prompts, Explained** - The approval overlay says what the command actually does and rates it read-only / changes files / deletes or reaches the network
 - **Error Diagnosis Banner** - Known failures (signed out, rate limited, usage limit, network down, outdated CLI) surface as a banner with the fix one click away, and advisory banners hide themselves again
 - **Stop Button** - A stop control on the input row of whichever window is working, for anyone who does not know Escape interrupts the AI
@@ -306,6 +306,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | Help pages | `%APPDATA%\Claucraft\Help\` |
 | Checkpoints | `%APPDATA%\Claucraft\checkpoints\` |
 | Session worktrees | `%LOCALAPPDATA%\Claucraft\worktrees\` |
+| Rate limits (from the status line) | `%LOCALAPPDATA%\Claucraft\rate-limits.json` |
 | Session index (read/write) | `~/.claude/projects/*/sessions-index.json` |
 | Session transcripts (read-only) | `~/.claude/projects/*/*.jsonl` |
 | Cached diagrams | `~/.claude/projects/*/diagrams/` |
@@ -313,6 +314,12 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | Background agents (read-only) | `~/.claude/jobs/` |
 | CLI settings and plugins (read-only) | `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/plugins/installed_plugins.json` |
 | Project MCP servers and skills (read-only) | `<project>/.mcp.json`, `<project>/.claude/settings.local.json`, `<project>/.claude/commands/*.md` |
+
+## Disclaimer
+
+Claucraft is an unofficial, independent project. It is not affiliated with, endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC; other product names mentioned here are trademarks of their respective owners.
+
+Claucraft does not bundle Claude Code. It runs the copy you installed, signed in with your own account.
 
 ## License
 
@@ -400,7 +407,7 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 - **キャッシュ期限の警告** - アイドル中のセッションがプロンプトキャッシュの期限に近づくと「今すぐ compact」バナーを表示。会話途中でモデルや effort を切り替えるときは、残す価値のあるコンテキストがあれば先に compact する
 - **限界コスト表示** - 直前のターンにかかった額と、次のターンが会話を読み直すだけでかかる額を表示。高くなったセッションが自分から知らせる
 - **使用量の人間語表示** - 単なるメッセージ数ではなく「残り約 840 回・リセットまで 5 時間」と表示。基準は設定で選んだプラン（Pro / Max 5x / Max 20x）で、集計元はセッション記録そのもの
-- **レート制限表示** - プランの5時間枠・7日枠それぞれの使用率とリセットまでの時間を表示
+- **レート制限表示** - プランの5時間枠・7日枠それぞれの使用率とリセットまでの時間を表示。Claucraft から起動した Claude セッションに status line を追加し、Claude Code 自身が報告する `rate_limits` を保存して表示します（Pro/Max、最初の応答以降）。ご自身の status line はそのまま表示されます。設定 > ライブステータスでオフにできます（表示も消えます）。オンの間、Claude Code はフッターのキー操作ヒントを表示しません。ご自身のスクリプトが一時フォルダに残す `claude_usage_cache.json` も予備として読みます（Claucraft 自身が Claude のサインイン情報を使うことはありません）
 - **権限プロンプトの解説** - 承認オーバーレイに、そのコマンドが何をするかの平易な説明と危険度（読み取りのみ / ファイルを変更 / 削除・ネットワーク）を表示
 - **エラー診断バナー** - 既知の失敗（サインアウト・レート制限・使用量上限・ネットワーク断・CLI が古い）を検出し、対処をワンクリックで実行できるバナーを表示。お知らせ系のバナーは自動で消える
 - **停止ボタン** - 作業中のウィンドウの入力行に停止ボタンを表示。Escape で中断できることを知らなくても止められる
@@ -622,6 +629,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | ヘルプページ | `%APPDATA%\Claucraft\Help\` |
 | チェックポイント | `%APPDATA%\Claucraft\checkpoints\` |
 | セッション用 worktree | `%LOCALAPPDATA%\Claucraft\worktrees\` |
+| レート制限（status line 経由） | `%LOCALAPPDATA%\Claucraft\rate-limits.json` |
 | セッションインデックス（読み書き） | `~/.claude/projects/*/sessions-index.json` |
 | セッション記録（読み取り専用） | `~/.claude/projects/*/*.jsonl` |
 | ダイアグラムのキャッシュ | `~/.claude/projects/*/diagrams/` |
@@ -629,6 +637,12 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | バックグラウンドセッション（読み取り専用） | `~/.claude/jobs/` |
 | CLI 設定・プラグイン（読み取り専用） | `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/plugins/installed_plugins.json` |
 | プロジェクトの MCP・スキル（読み取り専用） | `<project>/.mcp.json`, `<project>/.claude/settings.local.json`, `<project>/.claude/commands/*.md` |
+
+## 免責事項
+
+Claucraft は非公式の個人プロジェクトであり、Anthropic とは提携・承認・後援のいずれの関係もありません。Claude および Claude Code は Anthropic, PBC の商標です。その他の製品名は各社の商標です。
+
+Claucraft は Claude Code を同梱していません。利用者がインストールした Claude Code を、利用者自身のアカウントで起動します。
 
 ## ライセンス
 

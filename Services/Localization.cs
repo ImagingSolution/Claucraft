@@ -462,6 +462,8 @@ public static class Loc
         ["LiveStatus"] = new() { ["English"] = "Live status", ["日本語"] = "ライブ状態表示" },
         ["EnableLiveStatus"] = new() { ["English"] = "Show mode, activity and context left", ["日本語"] = "モード・作業内容・コンテキスト残量を表示する" },
         ["EnableErrorBanner"] = new() { ["English"] = "Explain errors in a banner", ["日本語"] = "エラーをバナーで解説する" },
+        ["RateLimitStatusLine"] = new() { ["English"] = "Get rate limits from Claude Code (adds a status line)", ["日本語"] = "Claude Code からレート制限を取得する（status line を追加）" },
+        ["RateLimitStatusLineTooltip"] = new() { ["English"] = "Claude sessions started from Claucraft get a status line that passes the plan's 5-hour and 7-day usage to the status bar (Pro/Max, after the first reply). A status line of your own keeps showing. While this is on, Claude Code hides its footer key hints such as \"? for shortcuts\". Applies to sessions started afterwards.", ["日本語"] = "Claucraft から起動した Claude セッションに status line を追加し、プランの5時間枠・7日枠の使用状況をステータスバーへ渡します（Pro/Max、最初の応答以降）。ご自身で設定した status line はそのまま表示されます。オンの間、Claude Code はフッターのキー操作ヒント（「? for shortcuts」など）を表示しません。以降に起動したセッションに適用されます。" },
         ["ModeBadgeTooltip"] = new() { ["English"] = "Current mode - click to cycle (Shift+Tab)", ["日本語"] = "現在のモード - クリックで切替 (Shift+Tab)" },
         ["ActivityThinking"] = new() { ["English"] = "Thinking…", ["日本語"] = "考えています…" },
         ["ActivityReading"] = new() { ["English"] = "Reading files…", ["日本語"] = "ファイルを読んでいます…" },

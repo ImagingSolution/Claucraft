@@ -1,11 +1,7 @@
 using System;
-using System.Diagnostics;
 using System.IO;
-using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace Claucraft.Services;
 
@@ -49,24 +45,36 @@ public sealed class RateLimitInfo
 /// local transcripts and measures them against an assumed daily cap, which is an approximation
 /// on both halves. These are the values the limit is enforced on.
 ///
-/// Two sources, cheapest first:
-///   1. The cache a statusline script leaves in %TEMP%. Claude Code's own status line refreshes
-///      it every five minutes, so when one is configured this costs nothing at all - no request,
-///      no credential access.
-///   2. The OAuth usage endpoint, using the token Claude Code stores. Only when the cache is
-///      missing or stale; the result is written back to the same file, so the two take turns
-///      keeping it warm.
+/// Two sources, first one fresh wins:
+///  1. What <see cref="StatusLineRelay"/> saved from the rate_limits Claude Code itself hands
+///     to its status line. Present once a session launched with the relay has had a reply.
+///  2. The cache a user's own statusline script may leave in %TEMP%.
+/// With neither, the readout simply stays hidden.
+///
+/// Claucraft deliberately never reads Claude Code's stored OAuth token or calls Anthropic's API
+/// itself: Anthropic's terms reserve Claude.ai credentials for Claude Code and Anthropic's own
+/// apps, and forbid third-party tools from collecting or using them. Both sources are data Claude
+/// Code or the user's own script already produced; this process only reads a file.
 ///
 /// Every failure path ends at null, and a null readout hides the display rather than reporting
-/// something wrong. The endpoint is internal to Claude Code and carries no compatibility promise,
-/// so "it quietly stops showing" is the intended behaviour if it ever changes shape.
+/// something wrong. The payload shape carries no compatibility promise, so "it quietly stops
+/// showing" is the intended behaviour if it ever changes.
 /// </summary>
 public sealed class RateLimitService : IDisposable
 {
-    private const string UsageUrl = "https://api.anthropic.com/api/oauth/usage";
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// How old a cache may be and still be shown. The status line only runs while a session is
+    /// drawing, so an idle machine lets the file age; the reset countdown stays exact regardless,
+    /// and only the percentage can drift, from use elsewhere.
+    /// </summary>
+    private static readonly TimeSpan LegacyCacheTtl = TimeSpan.FromMinutes(30);
 
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(3) };
+    /// <summary>
+    /// The relay's copy lives longer: its windows carry exact reset times, so a window past its
+    /// reset is dropped on its own. The cap only bounds drift from use outside Claucraft, one
+    /// five-hour window's worth.
+    /// </summary>
+    private static readonly TimeSpan RelayCacheTtl = TimeSpan.FromHours(5);
 
     private Timer? _timer;
     private int _busy;
@@ -76,20 +84,14 @@ public sealed class RateLimitService : IDisposable
     private RateLimitInfo? _latest;
     public RateLimitInfo? Current => _latest;
 
-    /// <summary>Where the status line script keeps its copy. Shared by design, not by accident.</summary>
-    private static string CachePath => Path.Combine(Path.GetTempPath(), "claude_usage_cache.json");
+    /// <summary>Where a user's own status line script keeps its copy. Shared by design, not by accident.</summary>
+    private static string LegacyCachePath => Path.Combine(Path.GetTempPath(), "claude_usage_cache.json");
 
-    private static string CredentialsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", ".credentials.json");
-
-    /// <summary>
-    /// Begin polling. The tick is a minute but the cache is good for five, so a fetch that
-    /// actually reaches the network happens once per cache expiry, not once per tick.
-    /// </summary>
+    /// <summary>Begin polling. Each tick is one small local file read.</summary>
     public void Start()
     {
         if (_timer != null) return;
-        _timer = new Timer(_ => _ = RefreshAsync(), null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
+        _timer = new Timer(_ => Refresh(), null, TimeSpan.Zero, TimeSpan.FromMinutes(1));
     }
 
     /// <summary>Stops polling and clears the readout. Used when the active CLI is not Claude.</summary>
@@ -102,14 +104,14 @@ public sealed class RateLimitService : IDisposable
         Updated?.Invoke(null);
     }
 
-    private async Task RefreshAsync()
+    private void Refresh()
     {
         if (Interlocked.Exchange(ref _busy, 1) == 1) return;
 
         try
         {
-            var json = ReadFreshCache() ?? await FetchAsync().ConfigureAwait(false);
-            _latest = json is null ? null : Parse(json);
+            _latest = Load(StatusLineRelay.CachePath, RelayCacheTtl)
+                      ?? Load(LegacyCachePath, LegacyCacheTtl);
         }
         catch
         {
@@ -124,86 +126,26 @@ public sealed class RateLimitService : IDisposable
         Updated?.Invoke(_latest);
     }
 
+    private static RateLimitInfo? Load(string path, TimeSpan ttl)
+    {
+        var json = ReadFreshCache(path, ttl);
+        return json is null ? null : Parse(json);
+    }
+
     /// <summary>The cached payload if someone refreshed it recently, otherwise null.</summary>
-    private static string? ReadFreshCache()
+    private static string? ReadFreshCache(string path, TimeSpan ttl)
     {
         try
         {
-            var file = new FileInfo(CachePath);
+            var file = new FileInfo(path);
             if (!file.Exists) return null;
-            if (DateTime.UtcNow - file.LastWriteTimeUtc > CacheTtl) return null;
-            return File.ReadAllText(CachePath);
+            if (DateTime.UtcNow - file.LastWriteTimeUtc > ttl) return null;
+            return File.ReadAllText(path);
         }
         catch
         {
-            // An unreadable or half-written cache just means we fetch instead.
+            // An unreadable or half-written cache just hides the readout until the next tick.
             return null;
-        }
-    }
-
-    private static async Task<string?> FetchAsync()
-    {
-        var token = ReadAccessToken();
-        if (string.IsNullOrEmpty(token)) return null;
-
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Get, UsageUrl);
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            request.Headers.Add("anthropic-beta", "oauth-2025-04-20");
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-            using var response = await Http.SendAsync(request).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                // 401 is the ordinary case: the stored token expired and Claude Code has not
-                // refreshed it yet. Nothing to report and nothing to fix from here.
-                Debug.WriteLine($"[RateLimitService] Usage endpoint returned {(int)response.StatusCode}");
-                return null;
-            }
-
-            var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-            WriteCache(json);
-            return json;
-        }
-        catch (Exception ex)
-        {
-            // Never let the message carry the request: the token travels in a header.
-            Debug.WriteLine($"[RateLimitService] Usage fetch failed: {ex.GetType().Name}");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// The OAuth access token Claude Code stores for itself. Read on demand and never kept in a
-    /// field - it is a live credential, and this process has no reason to hold one.
-    /// </summary>
-    private static string? ReadAccessToken()
-    {
-        try
-        {
-            if (!File.Exists(CredentialsPath)) return null;
-            using var doc = JsonDocument.Parse(File.ReadAllText(CredentialsPath));
-            if (!doc.RootElement.TryGetProperty("claudeAiOauth", out var oauth)) return null;
-            if (!oauth.TryGetProperty("accessToken", out var token)) return null;
-            return token.ValueKind == JsonValueKind.String ? token.GetString() : null;
-        }
-        catch
-        {
-            // No credentials file, a shape we do not recognise, or an API-key install.
-            return null;
-        }
-    }
-
-    private static void WriteCache(string json)
-    {
-        try
-        {
-            File.WriteAllText(CachePath, json);
-        }
-        catch
-        {
-            // The cache is an optimisation; failing to write one costs a request next tick.
         }
     }
 
@@ -228,18 +170,31 @@ public sealed class RateLimitService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads either shape: Claude Code's status line gives used_percentage and resets_at as Unix
+    /// seconds, the usage endpoint's cache gives utilization and an ISO timestamp.
+    /// </summary>
     private static RateLimitWindow? ReadWindow(JsonElement root, string name)
     {
         if (!root.TryGetProperty(name, out var w) || w.ValueKind != JsonValueKind.Object) return null;
 
         double utilization = 0;
-        if (w.TryGetProperty("utilization", out var u) && u.ValueKind == JsonValueKind.Number)
+        if ((w.TryGetProperty("used_percentage", out var u) || w.TryGetProperty("utilization", out u))
+            && u.ValueKind == JsonValueKind.Number)
             utilization = u.GetDouble();
 
         DateTimeOffset? resetsAt = null;
-        if (w.TryGetProperty("resets_at", out var r) && r.ValueKind == JsonValueKind.String
-            && DateTimeOffset.TryParse(r.GetString(), out var parsed))
-            resetsAt = parsed;
+        if (w.TryGetProperty("resets_at", out var r))
+        {
+            if (r.ValueKind == JsonValueKind.Number && r.TryGetInt64(out var epoch))
+                resetsAt = DateTimeOffset.FromUnixTimeSeconds(epoch);
+            else if (r.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(r.GetString(), out var parsed))
+                resetsAt = parsed;
+        }
+
+        // Past its reset the window has started over, and the saved percentage belongs to the old
+        // one. Claude Code drops such a window from its own payload for the same reason.
+        if (resetsAt is { } at && at <= DateTimeOffset.UtcNow) return null;
 
         return new RateLimitWindow
         {

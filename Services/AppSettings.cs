@@ -72,6 +72,12 @@ public class AppSettings
     /// <summary>Surface a banner with a suggested fix when a known CLI error shows up in the output.</summary>
     public bool EnableErrorBanner { get; set; } = true;
 
+    /// <summary>
+    /// Launch Claude sessions with a status line that hands the plan's rate limits to the status
+    /// bar. Costs Claude Code's footer key hints, hence the switch.
+    /// </summary>
+    public bool RateLimitStatusLine { get; set; } = true;
+
     /// <summary>Plan the usage readout is measured against: Pro, Max5x or Max20x.</summary>
     public string PlanTier { get; set; } = "Pro";
 

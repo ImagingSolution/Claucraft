@@ -109,6 +109,12 @@ public class CliProviderService
     public string? PreferredModel { get; set; }
     public string? PreferredEffort { get; set; }
 
+    /// <summary>
+    /// Launch Claude sessions with the status line relay, which is how the rate-limit readout
+    /// gets its figures. See <see cref="StatusLineRelay"/>.
+    /// </summary>
+    public bool RateLimitStatusLine { get; set; }
+
     public CliProvider? Find(string id) => _providers.FirstOrDefault(p => p.Id == id);
 
     /// <summary>Launch profiles the active CLI offers. Empty means the picker stays hidden.</summary>
@@ -152,7 +158,7 @@ public class CliProviderService
         var shell = ShellHost.For(p);
         var exe = QuoteExe(p.Exe, shell);
         var prompt = SanitizePrompt(initialPrompt);
-        var extra = AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs));
+        var extra = AppendStatusLine(AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs)));
 
         if (string.IsNullOrEmpty(prompt))
             return string.IsNullOrEmpty(extra) ? exe : $"{exe} {extra}";
@@ -223,7 +229,7 @@ public class CliProviderService
     {
         var p = Active;
         var exe = QuoteExe(p.Exe, ShellHost.For(p));
-        var extra = AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs));
+        var extra = AppendStatusLine(AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs)));
         var args = string.IsNullOrWhiteSpace(p.ContinueArgs) ? "" : p.ContinueArgs.Trim();
         return JoinCommand(exe, extra, args);
     }
@@ -236,7 +242,7 @@ public class CliProviderService
             return BuildContinueCommand(profile);
 
         var exe = QuoteExe(p.Exe, ShellHost.For(p));
-        var extra = AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs));
+        var extra = AppendStatusLine(AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs)));
         var args = p.ResumeArgs.Replace("{sessionId}", sessionId).Trim();
         return JoinCommand(exe, extra, args);
     }
@@ -257,6 +263,13 @@ public class CliProviderService
             sb.Append(sb.Length > 0 ? " " : "").Append("--effort ").Append(PreferredEffort);
         return sb.ToString();
     }
+
+    /// <summary>
+    /// Adds the status line relay for a local Claude launch. Not applied to BuildNewArgv: a WSL
+    /// or SSH session runs its CLI on another machine, where this executable's path means nothing.
+    /// </summary>
+    private string AppendStatusLine(string extra)
+        => RateLimitStatusLine && Active.Id == ClaudeId ? StatusLineRelay.ApplyToArgs(extra) : extra;
 
     /// <summary>Profile flags lead, provider args follow - the same order BuildNewCommand uses.</summary>
     private static string JoinCommand(string exe, string extra, string args)

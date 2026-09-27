@@ -389,6 +389,7 @@ internal partial class AppShell : UserControl, IDockOwner
             ActiveId = _settings.CliProviderId,
             PreferredModel = _settings.PreferredModel,
             PreferredEffort = _settings.PreferredEffort,
+            RateLimitStatusLine = _settings.RateLimitStatusLine,
         };
         // A retired CLI (e.g. gemini -> antigravity) is remapped on assignment; persist it
         // so the old id does not sit in appsettings.json forever.
@@ -638,6 +639,8 @@ internal partial class AppShell : UserControl, IDockOwner
         LblLiveStatus.Text = Loc.Get("LiveStatus");
         ChkEnableLiveStatus.Content = Loc.Get("EnableLiveStatus");
         ChkEnableErrorBanner.Content = Loc.Get("EnableErrorBanner");
+        ChkRateLimitStatusLine.Content = Loc.Get("RateLimitStatusLine");
+        ToolTip.SetTip(ChkRateLimitStatusLine, Loc.Get("RateLimitStatusLineTooltip"));
         LblPlanTier.Text = Loc.Get("PlanTier");
         LblOpenCostDashboard.Text = Loc.Get("CostDashboard");
         LblOpenUsageChart.Text = Loc.Get("PaletteUsageChart");
@@ -3371,6 +3374,7 @@ internal partial class AppShell : UserControl, IDockOwner
         ChkEnableCheckpoints.IsChecked = _settings.EnableCheckpoints;
         ChkEnableLiveStatus.IsChecked = _settings.EnableLiveStatus;
         ChkEnableErrorBanner.IsChecked = _settings.EnableErrorBanner;
+        ChkRateLimitStatusLine.IsChecked = _settings.RateLimitStatusLine;
         ChkCheckUpdate.IsChecked = _settings.CheckUpdateOnStartup;
         ChkGitAutoFetch.IsChecked = _settings.GitAutoFetch;
         FillCommitLanguageCombo();
@@ -6463,6 +6467,8 @@ internal partial class AppShell : UserControl, IDockOwner
 
         _settings.EnableLiveStatus = ChkEnableLiveStatus.IsChecked == true;
         _settings.EnableErrorBanner = ChkEnableErrorBanner.IsChecked == true;
+        _settings.RateLimitStatusLine = ChkRateLimitStatusLine.IsChecked == true;
+        _cli.RateLimitStatusLine = _settings.RateLimitStatusLine;
         _settings.Save();
 
         if (!_settings.EnableLiveStatus) ClearLiveStatus();
