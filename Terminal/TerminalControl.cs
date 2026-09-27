@@ -942,6 +942,21 @@ public partial class TerminalControl : Control, IDisposable
             return;
         }
 
+        // Terminal view: the CLI's ghost-text suggestion works as in the chat view - Tab takes it
+        // into the prompt for editing, Enter sends it
+        string? ghost = !_isDocumentView && e.KeyModifiers == KeyModifiers.None
+            && e.Key is Key.Tab or Key.Enter && !_hasSelection && !IsPermissionPromptOnScreen()
+            ? ReadPromptSuggestion() : null;
+        if (ghost != null && !_firstInputCaptured)
+            _firstInputBuffer.Append(ghost);
+        if (ghost != null && e.Key == Key.Tab)
+        {
+            PushUndo(UndoKind.Structural);
+            _pty?.WriteInput(ghost);
+            e.Handled = true;
+            return;
+        }
+
         // Enter: send text to PTY
         if (e.Key == Key.Enter)
         {
@@ -972,12 +987,17 @@ public partial class TerminalControl : Control, IDisposable
                 if (!string.IsNullOrWhiteSpace(summary))
                     TitleChanged?.Invoke(summary);
             }
-            PromptSubmitted?.Invoke(ReadSubmittedLine());
+            PromptSubmitted?.Invoke(ghost ?? ReadSubmittedLine());
             _inputStartPending = true;
             ClearUndo();
             // Attached images ride along with a prompt, never with an answer to a
             // permission question, which Enter also confirms
-            if (_attachStrip.HasItems && !IsPermissionPromptOnScreen())
+            if (ghost != null)
+            {
+                bool withImages = _attachStrip.HasItems;
+                WriteAndSubmit(withImages ? ghost + " " + _attachStrip.TakeReferences() : ghost, withImages);
+            }
+            else if (_attachStrip.HasItems && !IsPermissionPromptOnScreen())
                 WriteAndSubmit(" " + _attachStrip.TakeReferences(), true);
             else
                 _pty?.WriteInput("\r");
