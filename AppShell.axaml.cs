@@ -5949,7 +5949,26 @@ internal partial class AppShell : UserControl, IDockOwner
     private Control BuildExtensionHeader(ExtensionKind kind, string title,
         List<ExtensionItem> items, bool open)
     {
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto") };
+
+        // Adding, removing and health checks go through 'claude mcp', which only Claude Code has
+        if (kind == ExtensionKind.Mcp && _cli.ActiveId == "claude")
+        {
+            var manage = new Button
+            {
+                Content = new TextBlock { Text = Loc.Get("McpManage"), FontSize = 10 },
+                Padding = new Thickness(6, 1),
+                MinHeight = 0,
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Opacity = 0.7,
+                Cursor = new Cursor(StandardCursorType.Hand),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            manage.Click += (_, _) => ShowMcpManager();
+            Grid.SetColumn(manage, 3);
+            grid.Children.Add(manage);
+        }
 
         var chevron = new TextBlock
         {
