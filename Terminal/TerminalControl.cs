@@ -821,7 +821,9 @@ public class TerminalControl : Control, IDisposable
         // Ctrl+F: toggle search bar
         if (e.Key == Key.F && e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
-            if (_searchVisible) HideSearchBar(); else ShowSearchBar();
+            // Chat view searches the conversation, not the terminal grid behind it
+            if (_isDocumentView && _docViewPanel != null) _docViewPanel.ShowSearch();
+            else if (_searchVisible) HideSearchBar(); else ShowSearchBar();
             e.Handled = true;
             return;
         }
@@ -3758,6 +3760,7 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.AskCancelled += () => _pty?.WriteInput("\x1b");
                 _docViewPanel.IsAskOpen = IsAskSelectorOnScreen;
                 _docViewPanel.RewindRequested += target => RewindToPrompt(target);
+                _docViewPanel.SearchClosed += () => _inputTextBox.Focus();
                 _docViewPanel.QueuedPromptRemoved += index =>
                 {
                     if (index < 0 || index >= _sendQueue.Count) return;

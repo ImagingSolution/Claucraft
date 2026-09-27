@@ -116,6 +116,16 @@ public class DocumentViewPanel : Panel
     private string? _agentPath;
     private string _agentTitle = "";
 
+    // Find bar (Ctrl+F): matches are message indices, boxed on a layer over the transcript
+    private readonly Panel _scrollContent;
+    private readonly Canvas _highlightLayer;
+    private readonly Border _searchBar;
+    private readonly TextBox _searchBox;
+    private readonly TextBlock _searchCount;
+    private List<ConversationMessage> _viewMessages = new();
+    private readonly List<int> _matches = new();
+    private int _matchIndex = -1;
+
     private string? _currentSessionPath;
     private int _lastLineCount;
     private bool _autoScroll = true;
@@ -178,6 +188,11 @@ public class DocumentViewPanel : Panel
         var scrollContent = new Panel();
         scrollContent.Children.Add(_emptyLabel);
         scrollContent.Children.Add(_messagesStack);
+        _highlightLayer = new Canvas { IsHitTestVisible = false };
+        scrollContent.Children.Add(_highlightLayer);
+        _scrollContent = scrollContent;
+        // Boxes follow the bubbles when a reply grows or the window is resized
+        _messagesStack.LayoutUpdated += (_, _) => { if (_searchBar?.IsVisible == true) PlaceHighlights(); };
 
         _scrollViewer = new ScrollViewer
         {
@@ -210,6 +225,60 @@ public class DocumentViewPanel : Panel
         };
         Children.Add(_scrollDownButton);
 
+        _searchBox = new TextBox
+        {
+            Width = 240,
+            FontSize = 13,
+            PlaceholderText = Loc.Get("ChatSearchPlaceholder"),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _searchBox.TextChanged += (_, _) => UpdateMatches(jumpToNearest: true);
+        _searchBox.AddHandler(KeyDownEvent, OnSearchBoxKeyDown, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+        _searchCount = new TextBlock { FontSize = 12, MinWidth = 56, VerticalAlignment = VerticalAlignment.Center };
+        Button SearchButton(string glyph, string tipKey, Action onClick)
+        {
+            var b = new Button
+            {
+                Content = glyph,
+                FontSize = 12,
+                Padding = new Thickness(7, 3),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Cursor = new Cursor(StandardCursorType.Hand),
+                VerticalAlignment = VerticalAlignment.Center,
+                Focusable = false,
+            };
+            ToolTip.SetTip(b, Loc.Get(tipKey));
+            b.Click += (_, _) => onClick();
+            return b;
+        }
+        _searchBar = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(8, 4),
+            IsVisible = false,
+            Child = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                Children =
+                {
+                    _searchBox,
+                    _searchCount,
+                    SearchButton("▲", "ChatSearchPrev", () => StepMatch(-1)),
+                    SearchButton("▼", "ChatSearchNext", () => StepMatch(1)),
+                    SearchButton("✕", "ChatSearchClose", HideSearch),
+                },
+            },
+        };
+        Children.Add(_searchBar);
+        AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.F && e.KeyModifiers.HasFlag(KeyModifiers.Control)) { ShowSearch(); e.Handled = true; }
+            else if (e.Key == Key.F3 && _searchBar.IsVisible) { StepMatch(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : 1); e.Handled = true; }
+        }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+
         _workingView = new ClaudeSparkIndicator
         {
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -231,6 +300,7 @@ public class DocumentViewPanel : Panel
         double headerH = _header.DesiredSize.Height;
         _scrollViewer.Measure(new Size(availableSize.Width, Math.Max(0, availableSize.Height - headerH)));
         _scrollDownButton.Measure(new Size(32, 32));
+        _searchBar.Measure(availableSize);
         return availableSize;
     }
 
@@ -242,6 +312,8 @@ public class DocumentViewPanel : Panel
         _scrollViewer.MaxHeight = scrollH;
         _scrollViewer.Arrange(new Rect(0, headerH, finalSize.Width, scrollH));
         _scrollDownButton.Arrange(new Rect((finalSize.Width - 32) / 2, finalSize.Height - 32 - 12, 32, 32));
+        var sb = _searchBar.DesiredSize;
+        _searchBar.Arrange(new Rect(Math.Max(0, finalSize.Width - sb.Width - 24), headerH + 8, sb.Width, sb.Height));
         return finalSize;
     }
 
@@ -476,6 +548,7 @@ public class DocumentViewPanel : Panel
             UpdateHeader(path, messages);
         }
         _lastLineCount = CountLines(path);
+        _viewMessages = messages;
         UpdateExtras(messages);
         RemovePendingView();
         _messagesStack.Children.Remove(_workingView);
@@ -514,6 +587,7 @@ public class DocumentViewPanel : Panel
                 _messagesStack.Children.Add(_pendingView);
         }
         PlaceWorkingView();
+        if (_searchBar.IsVisible && changed) UpdateMatches(jumpToNearest: false);
 
         SetEmptyState(_messagesStack.Children.Count == 0 ? "" : null);
         return changed;
@@ -546,6 +620,133 @@ public class DocumentViewPanel : Panel
         _projectText.Text = project ?? "";
         _projectChip.IsVisible = !string.IsNullOrEmpty(project);
         ToolTip.SetTip(_projectChip, meta.Cwd);
+    }
+
+    // ── Find in conversation ──
+
+    public void ShowSearch()
+    {
+        _searchBar.IsVisible = true;
+        _searchBox.Focus();
+        _searchBox.SelectAll();
+        UpdateMatches(jumpToNearest: true);
+    }
+
+    /// <summary>The find bar closed, so the composer can take the keyboard back.</summary>
+    public event Action? SearchClosed;
+
+    private void HideSearch()
+    {
+        _searchBar.IsVisible = false;
+        _matches.Clear();
+        _matchIndex = -1;
+        _highlightLayer.Children.Clear();
+        SearchClosed?.Invoke();
+    }
+
+    private void OnSearchBoxKeyDown(object? sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Enter:
+            case Key.F3:
+                StepMatch(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : 1);
+                e.Handled = true;
+                break;
+            case Key.Escape:
+                HideSearch();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    // What the reader can see of a message: its text, what was said beside its tools, and the
+    // one-line summary of each call
+    private static string SearchableText(ConversationMessage m)
+    {
+        var sb = new System.Text.StringBuilder(m.Text);
+        if (m.Narration != null) sb.Append('\n').Append(m.Narration);
+        if (m.Tools != null)
+            foreach (var t in m.Tools) sb.Append('\n').Append(t.Name).Append(' ').Append(t.Detail);
+        if (m.AskUser != null)
+            foreach (var q in m.AskUser.Questions)
+            {
+                sb.Append('\n').Append(q.Question);
+                foreach (var o in q.Options) sb.Append('\n').Append(o.Label);
+            }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Finds the messages holding the query. A new query lands on the match nearest the end,
+    /// where the reader usually is; a transcript update keeps the current match where it was.
+    /// </summary>
+    private void UpdateMatches(bool jumpToNearest)
+    {
+        int keep = _matchIndex >= 0 && _matchIndex < _matches.Count ? _matches[_matchIndex] : -1;
+        _matches.Clear();
+        _matchIndex = -1;
+        var query = _searchBox.Text?.Trim() ?? "";
+        if (query.Length > 0)
+            for (int i = 0; i < _viewMessages.Count && i < _views.Count; i++)
+                if (_views[i] != null && SearchableText(_viewMessages[i]).Contains(query, StringComparison.CurrentCultureIgnoreCase))
+                    _matches.Add(i);
+
+        if (_matches.Count > 0)
+        {
+            _matchIndex = jumpToNearest || keep < 0 ? _matches.Count - 1 : Math.Max(0, _matches.IndexOf(keep));
+            if (jumpToNearest) BringMatchIntoView();
+        }
+        _searchCount.Text = query.Length == 0 ? ""
+            : _matches.Count == 0 ? Loc.Get("ChatSearchNone") : $"{_matchIndex + 1}/{_matches.Count}";
+        PlaceHighlights();
+    }
+
+    private void StepMatch(int delta)
+    {
+        if (_matches.Count == 0) return;
+        _matchIndex = (_matchIndex + delta + _matches.Count) % _matches.Count;
+        _searchCount.Text = $"{_matchIndex + 1}/{_matches.Count}";
+        BringMatchIntoView();
+        PlaceHighlights();
+    }
+
+    private void BringMatchIntoView()
+    {
+        if (_matchIndex < 0 || _views[_matches[_matchIndex]] is not { } view) return;
+        _autoScroll = false;
+        // Wait for a fresh view to be laid out before asking where it is
+        Dispatcher.UIThread.Post(() =>
+        {
+            var p = view.TranslatePoint(new Point(0, 0), _scrollContent);
+            if (p == null) return;
+            double target = p.Value.Y - Math.Max(0, (_scrollViewer.Viewport.Height - view.Bounds.Height) / 3);
+            _scrollViewer.Offset = new Vector(0, Math.Max(0, target));
+        }, DispatcherPriority.Background);
+    }
+
+    private void PlaceHighlights()
+    {
+        var pal = Palette;
+        int needed = _matches.Count;
+        while (_highlightLayer.Children.Count > needed) _highlightLayer.Children.RemoveAt(_highlightLayer.Children.Count - 1);
+        while (_highlightLayer.Children.Count < needed)
+            _highlightLayer.Children.Add(new Border { CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1.5) });
+        for (int k = 0; k < needed; k++)
+        {
+            var box = (Border)_highlightLayer.Children[k];
+            var view = _views[_matches[k]];
+            var p = view?.TranslatePoint(new Point(0, 0), _scrollContent);
+            if (view == null || p == null) { box.IsVisible = false; continue; }
+            bool current = k == _matchIndex;
+            box.IsVisible = true;
+            box.Width = view.Bounds.Width + 12;
+            box.Height = view.Bounds.Height + 8;
+            Canvas.SetLeft(box, p.Value.X - 6);
+            Canvas.SetTop(box, p.Value.Y - 4);
+            box.Background = new SolidColorBrush(AccentColor, current ? 0.14 : 0.06);
+            box.BorderBrush = current ? Brush(AccentColor) : Brushes.Transparent;
+        }
     }
 
     // ── Tasks and subagents ──
@@ -748,6 +949,11 @@ public class DocumentViewPanel : Panel
         _projectChip.Background = Brush(ChatTheme.UserBubble(_isDark));
         _projectText.Foreground = Brush(pal.Dim);
         _emptyLabel.Foreground = Brush(pal.Dim);
+        _searchBar.Background = Brush(ChatTheme.Surface(_isDark));
+        _searchBar.BorderBrush = Brush(ChatTheme.Outline(_isDark));
+        _searchCount.Foreground = Brush(pal.Dim);
+        foreach (var b in ((StackPanel)_searchBar.Child!).Children.OfType<Button>())
+            b.Foreground = Brush(pal.Fg);
 
         _scrollDownButton.Background = Brush(ChatTheme.Surface(_isDark));
         _scrollDownButton.BorderBrush = Brush(ChatTheme.Outline(_isDark));
