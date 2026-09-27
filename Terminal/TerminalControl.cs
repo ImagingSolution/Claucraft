@@ -18,7 +18,7 @@ using Avalonia.Threading;
 
 namespace Claucraft.Terminal;
 
-public class TerminalControl : Control, IDisposable
+public partial class TerminalControl : Control, IDisposable
 {
     private TerminalBuffer _buffer;
     private VtParser _parser;
@@ -252,6 +252,7 @@ public class TerminalControl : Control, IDisposable
 
         // Document view theme
         _docViewPanel?.UpdateTheme(_isDark);
+        ApplySidePaneTheme();
 
         InvalidateVisual();
     }
@@ -283,6 +284,8 @@ public class TerminalControl : Control, IDisposable
         _chatAttachButton.IsVisible = chat;
         _chatSendButton.IsVisible = chat;
         _chatChips.IsVisible = chat;
+        _sidePaneToggle.IsVisible = chat;
+        UpdateSidePaneToggleLook();
 
         if (!chat)
         {
@@ -451,6 +454,7 @@ public class TerminalControl : Control, IDisposable
         };
         VisualChildren.Add(_chatChips);
         LogicalChildren.Add(_chatChips);
+        BuildSidePaneToggle();
     }
 
     // ── Composer chips: the mode, model and effort the status bar shows, next to the text ──
@@ -556,7 +560,9 @@ public class TerminalControl : Control, IDisposable
     /// <summary>Pasted/dropped images waiting to go out with the next submit.</summary>
     private readonly Controls.ImageAttachmentStrip _attachStrip = new();
     private double AttachmentStripHeight => _attachStrip.HasItems ? Controls.ImageAttachmentStrip.StripHeight : 0;
-    private double TerminalAreaHeight => Math.Max(0, Bounds.Height - InputAreaHeight - ExpandedPanelHeight);
+    private double TerminalAreaHeight => TerminalInSidePane
+        ? SideTerminalRect.Height
+        : Math.Max(0, Bounds.Height - InputAreaHeight - ExpandedPanelHeight);
 
     public void SetFont(string fontFamily, double fontSize)
     {
@@ -1288,10 +1294,12 @@ public class TerminalControl : Control, IDisposable
 
     private void RecalcTerminalSize()
     {
-        if (_isDocumentView) return; // Don't resize PTY while in document view
-        if (_cellWidth <= 0 || _cellHeight <= 0 || Bounds.Width <= 0) return;
+        // The chat view leaves the PTY alone unless the grid is showing in its side pane
+        if (_isDocumentView && !TerminalInSidePane) return;
+        double viewW = TermViewWidth;
+        if (_cellWidth <= 0 || _cellHeight <= 0 || viewW <= 0) return;
         double termH = TerminalAreaHeight;
-        int newCols = Math.Max(10, (int)(Bounds.Width / _cellWidth));
+        int newCols = Math.Max(10, (int)(viewW / _cellWidth));
         int newRows = Math.Max(5, (int)(termH / _cellHeight));
         if (newCols != _buffer.Cols || newRows != _buffer.Rows)
         {
@@ -1441,7 +1449,7 @@ public class TerminalControl : Control, IDisposable
             // above gives up that much room
             // The width being measured for, not the last one arranged: going by Bounds, a window
             // that just got narrower lays out at its old width and clips the right-hand side
-            double w = double.IsFinite(availableSize.Width) ? availableSize.Width : Bounds.Width;
+            double w = ChatWidth(double.IsFinite(availableSize.Width) ? availableSize.Width : Bounds.Width);
             var card = ChatCardRect(w, 0);
             _inputTextBox.Measure(new Size(Math.Max(0, card.Width - ChatCardPadX * 2), double.PositiveInfinity));
             _chatInputHeight = Math.Clamp(_inputTextBox.DesiredSize.Height, ChatInputMinHeight, ChatInputMaxHeight);
@@ -1450,6 +1458,7 @@ public class TerminalControl : Control, IDisposable
             _chatAttachButton.Measure(new Size(ChatButtonSize, ChatButtonSize));
             _chatSendButton.Measure(new Size(ChatButtonSize, ChatButtonSize));
             _chatChips.Measure(new Size(double.PositiveInfinity, ChatButtonSize));
+            _sidePaneToggle.Measure(new Size(ChatButtonSize, ChatButtonSize));
             _chatBackdrop.Measure(new Size(w, ChatComposerHeight));
             _chatCard.Measure(card.Size);
         }
@@ -1473,9 +1482,10 @@ public class TerminalControl : Control, IDisposable
             double actualH = double.IsFinite(availableSize.Height) ? availableSize.Height : Bounds.Height;
             double docH = Math.Max(0, actualH - InputAreaHeight - ExpandedPanelHeight);
             _docViewPanel.Measure(new Size(
-                double.IsFinite(availableSize.Width) ? availableSize.Width : Bounds.Width,
+                ChatWidth(double.IsFinite(availableSize.Width) ? availableSize.Width : Bounds.Width),
                 docH));
         }
+        MeasureSidePane(availableSize);
         _permissionOverlay?.Measure(availableSize);
         return availableSize;
     }
@@ -1498,12 +1508,14 @@ public class TerminalControl : Control, IDisposable
             _chatAttachButton.Arrange(hidden);
             _chatSendButton.Arrange(hidden);
             _chatChips.Arrange(hidden);
+            _sidePaneToggle.Arrange(hidden);
             return;
         }
 
         double areaH = ChatComposerHeight;
-        _chatBackdrop.Arrange(new Rect(0, finalSize.Height - areaH, finalSize.Width, areaH));
-        var card = ChatCardRect(finalSize.Width, finalSize.Height);
+        double chatW = ChatWidth(finalSize.Width);
+        _chatBackdrop.Arrange(new Rect(0, finalSize.Height - areaH, chatW, areaH));
+        var card = ChatCardRect(chatW, finalSize.Height);
         _chatCard.Arrange(card);
 
         double y = card.Y + ChatCardPadTop;
@@ -1529,6 +1541,7 @@ public class TerminalControl : Control, IDisposable
             _stopButton.Arrange(hidden);
         }
         _expandButton.Arrange(new Rect(right - 4 - s, y, s, s));
+        _sidePaneToggle.Arrange(new Rect(right - 6 - s * 2, y, s, s));
     }
 
     protected override Size ArrangeOverride(Size finalSize)
@@ -1586,19 +1599,20 @@ public class TerminalControl : Control, IDisposable
             if (_isDocumentView)
             {
                 double docH = Math.Max(0, finalSize.Height - InputAreaHeight - ExpandedPanelHeight);
-                _docViewPanel.Arrange(new Rect(0, 0, finalSize.Width, docH));
+                _docViewPanel.Arrange(new Rect(0, 0, ChatWidth(finalSize.Width), docH));
             }
             else
             {
                 _docViewPanel.Arrange(new Rect(0, finalSize.Height, 0, 0));
             }
         }
+        ArrangeSidePane(finalSize);
 
         // Position permission overlay (centered, above input)
         if (_permissionOverlay != null)
         {
             double docH = Math.Max(0, finalSize.Height - InputAreaHeight - ExpandedPanelHeight);
-            _permissionOverlay.Arrange(new Rect(0, 0, finalSize.Width, docH));
+            _permissionOverlay.Arrange(new Rect(0, 0, ChatWidth(finalSize.Width), docH));
         }
 
         // Position search bar at top-right
@@ -1620,7 +1634,7 @@ public class TerminalControl : Control, IDisposable
 
     private bool IsOnScrollbar(Point pos)
     {
-        return _buffer.Scrollback.Count > 0 && pos.X >= Bounds.Width - ScrollbarWidth && pos.Y < TerminalAreaHeight;
+        return _buffer.Scrollback.Count > 0 && pos.X >= TermViewWidth - ScrollbarWidth && pos.Y < TerminalAreaHeight;
     }
 
     private (double y, double height) GetScrollbarThumb()
@@ -1668,7 +1682,7 @@ public class TerminalControl : Control, IDisposable
         base.OnPointerPressed(e);
 
         // Right-click on diagram: show context menu
-        if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed)
+        if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed && !_isDocumentView)
         {
             var pos = e.GetPosition(this);
             var diagramBlock = HitTestDiagram(pos);
@@ -1684,6 +1698,17 @@ public class TerminalControl : Control, IDisposable
         {
             Clicked?.Invoke();
             var pos = e.GetPosition(this);
+
+            // In the chat view the grid only takes clicks inside the side pane's terminal
+            if (_isDocumentView)
+            {
+                if (!TerminalInSidePane || !SideTerminalRect.Contains(pos))
+                {
+                    _inputTextBox.Focus();
+                    return;
+                }
+                pos = TermPoint(pos);
+            }
 
             // Click in input box area - let TextBox handle it
             if (pos.Y >= TerminalAreaHeight)
@@ -1739,7 +1764,7 @@ public class TerminalControl : Control, IDisposable
 
         if (_isScrollbarDragging)
         {
-            var pos = e.GetPosition(this);
+            var pos = TermPoint(e.GetPosition(this));
             var (_, thumbH) = GetScrollbarThumb();
             double trackH = TerminalAreaHeight - thumbH;
             if (trackH > 0)
@@ -1756,7 +1781,7 @@ public class TerminalControl : Control, IDisposable
 
         if (_isSelecting)
         {
-            var (row, col) = PointToCell(e.GetPosition(this));
+            var (row, col) = PointToCell(TermPoint(e.GetPosition(this)));
             _selEndRow = ScreenRowToAbsolute(row);
             _selEndCol = col;
             _hasSelection = (_selStartRow != _selEndRow || _selStartCol != _selEndCol);
@@ -3947,6 +3972,7 @@ public class TerminalControl : Control, IDisposable
                 };
                 VisualChildren.Add(_docViewPanel);
                 LogicalChildren.Add(_docViewPanel);
+                EnsureSidePane();
             }
 
             _docViewPanel.IsVisible = true;
@@ -3974,7 +4000,15 @@ public class TerminalControl : Control, IDisposable
 
         ApplyInputChrome();
         // The PTY was left alone while the chat view was up; it may have been resized since
-        if (!_isDocumentView) RecalcTerminalSize();
+        if (!_isDocumentView)
+        {
+            _sizeBeforePane = null;
+            RecalcTerminalSize();
+        }
+        else if (TerminalInSidePane)
+        {
+            OnSidePaneLayoutChanged();
+        }
 
         InvalidateMeasure();
         InvalidateArrange();
@@ -5282,7 +5316,8 @@ public class TerminalControl : Control, IDisposable
         }
 
         // Document view: let ScrollViewer inside DocumentViewPanel handle scrolling
-        if (_isDocumentView)
+        // (the side pane's terminal still scrolls here)
+        if (_isDocumentView && !(TerminalInSidePane && SideTerminalRect.Contains(e.GetPosition(this))))
         {
             // Don't handle - let the event bubble to the ScrollViewer
             return;
@@ -5349,22 +5384,39 @@ public class TerminalControl : Control, IDisposable
         {
             // Draw background for document view area
             var docBg = _isDark ? Color.FromRgb(30, 30, 34) : Color.FromRgb(250, 250, 252);
-            context.FillRectangle(new SolidColorBrush(docBg), new Rect(0, 0, Bounds.Width, termH));
+            context.FillRectangle(new SolidColorBrush(docBg), new Rect(0, 0, Bounds.Width, Math.Max(0, Bounds.Height - InputAreaHeight - ExpandedPanelHeight)));
+            if (!TerminalInSidePane) return;
+
+            // The side pane's Terminal tab: the same grid, drawn into the pane's content area
+            var side = SideTerminalRect;
+            using (context.PushClip(side))
+            using (context.PushTransform(Matrix.CreateTranslation(side.X, side.Y)))
+                RenderGrid(context, bgDefault, fgDefault, termH, drawSeparator: false);
             return;
         }
 
+        RenderGrid(context, bgDefault, fgDefault, termH, drawSeparator: true);
+    }
+
+    private void RenderGrid(DrawingContext context, Color bgDefault, Color fgDefault, double termH, bool drawSeparator)
+    {
+        double viewW = TermViewWidth;
+
         // Draw terminal background
-        context.FillRectangle(new SolidColorBrush(bgDefault), new Rect(0, 0, Bounds.Width, termH));
+        context.FillRectangle(new SolidColorBrush(bgDefault), new Rect(0, 0, viewW, termH));
 
         // Draw separator line above input box
-        var sepPen = new Pen(new SolidColorBrush(_isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200)), 0.5);
-        context.DrawLine(sepPen, new Point(0, termH), new Point(Bounds.Width, termH));
+        if (drawSeparator)
+        {
+            var sepPen = new Pen(new SolidColorBrush(_isDark ? Color.FromRgb(56, 56, 58) : Color.FromRgb(198, 198, 200)), 0.5);
+            context.DrawLine(sepPen, new Point(0, termH), new Point(viewW, termH));
+        }
 
         // Draw scrollbar
         if (_buffer.Scrollback.Count > 0)
         {
             var (thumbY, thumbH) = GetScrollbarThumb();
-            double barX = Bounds.Width - ScrollbarWidth;
+            double barX = viewW - ScrollbarWidth;
 
             byte scrollbarBase = _isDark ? (byte)255 : (byte)0;
             context.FillRectangle(new SolidColorBrush(Color.FromArgb(30, scrollbarBase, scrollbarBase, scrollbarBase)),
@@ -5566,7 +5618,7 @@ public class TerminalControl : Control, IDisposable
         if (startScreen >= _buffer.Rows) return;
 
         double drawY = Math.Max(0, startScreen * _cellHeight);
-        double drawW = Math.Min(_buffer.Cols * _cellWidth, Bounds.Width - ScrollbarWidth) - 20;
+        double drawW = Math.Min(_buffer.Cols * _cellWidth, TermViewWidth - ScrollbarWidth) - 20;
         double drawH = Math.Min(300, termH - drawY);
         if (drawH < 50) return;
 

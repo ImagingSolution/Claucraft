@@ -44,6 +44,12 @@ public class WorkspaceTab
 
     /// <summary>Whether the tab was showing Chat View rather than the terminal.</summary>
     public bool ChatView { get; set; }
+
+    /// <summary>The Chat View side pane's open tab, or empty when it was closed.</summary>
+    public string SidePane { get; set; } = "";
+
+    /// <summary>The share of the width the side pane took.</summary>
+    public double SidePaneRatio { get; set; }
 }
 
 /// <summary>Root object persisted to workspace.json.</summary>

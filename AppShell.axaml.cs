@@ -7796,6 +7796,8 @@ internal partial class AppShell : UserControl, IDockOwner
                 WorktreeOrigin = child.WorktreeOrigin ?? "",
                 Effort = child.Effort ?? "",
                 ChatView = child.Terminal.IsDocumentView,
+                SidePane = child.Terminal.SidePaneState,
+                SidePaneRatio = child.Terminal.SidePaneRatio,
             });
         }
 
@@ -7839,6 +7841,13 @@ internal partial class AppShell : UserControl, IDockOwner
                 CreateNewChild(_cli.BuildResumeCommand(tab.SessionId, ActiveLaunchProfile()), tab.TabTitle, tab.TabTitle, tab.SessionId, lease, tabEffort, tab.ChatView);
             else
                 CreateNewChild(_cli.BuildNewCommand(_settings.InitialPrompt, ActiveLaunchProfile()), tab.TabTitle, worktree: lease, effort: tabEffort, chatView: tab.ChatView);
+
+            if (_children.Count > 0)
+            {
+                var restored = _children[^1].Terminal;
+                if (tab.SidePaneRatio > 0) restored.SidePaneRatio = tab.SidePaneRatio;
+                restored.SidePaneState = tab.SidePane;
+            }
 
             if (tab.IsManualTitle && _children.Count > 0)
             {
