@@ -122,6 +122,55 @@ public static class SlashCommandCatalog
         }
     }
 
+    /// <summary>
+    /// Personal commands (~/.claude/commands/*.md) and the skills the CLI can run as a slash
+    /// command, from ~/.claude/skills and the project's .claude/skills (Claude Code only).
+    /// </summary>
+    public static IReadOnlyList<SlashCommand> ForUserAndSkills(string providerId, string? projectFolder)
+    {
+        if (providerId != CliProviderService.ClaudeId) return Array.Empty<SlashCommand>();
+        var result = new List<SlashCommand>();
+        var home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
+        try
+        {
+            var dir = Path.Combine(home, "commands");
+            if (Directory.Exists(dir))
+                foreach (var file in Directory.EnumerateFiles(dir, "*.md"))
+                {
+                    try
+                    {
+                        var d = ReadDescription(file);
+                        result.Add(new SlashCommand("/" + Path.GetFileNameWithoutExtension(file), d, d));
+                    }
+                    catch { }
+                }
+        }
+        catch { }
+
+        var skillRoots = new List<string> { Path.Combine(home, "skills") };
+        if (!string.IsNullOrWhiteSpace(projectFolder)) skillRoots.Add(Path.Combine(projectFolder, ".claude", "skills"));
+        foreach (var root in skillRoots)
+        {
+            try
+            {
+                if (!Directory.Exists(root)) continue;
+                foreach (var skillDir in Directory.EnumerateDirectories(root))
+                {
+                    var file = Path.Combine(skillDir, "SKILL.md");
+                    if (!File.Exists(file)) continue;
+                    try
+                    {
+                        var d = ReadDescription(file);
+                        result.Add(new SlashCommand("/" + Path.GetFileName(skillDir), d, d));
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+        return result;
+    }
+
     /// <summary>Pulls "description:" out of a leading YAML frontmatter block, else the first non-empty line.</summary>
     private static string ReadDescription(string filePath)
     {

@@ -424,6 +424,8 @@ public class TerminalControl : Control, IDisposable
             if (!_isDocumentView) return;
             UpdateChatSendState();
             InvalidateMeasure();
+            // The terminal's own prompt completes as it goes; the chat composer has to do it here
+            OnCompletionTextChanged(_inputTextBox, slashToo: true);
         };
 
         // Behind everything else: the card is drawn first and the input row lands on top of it
@@ -749,6 +751,13 @@ public class TerminalControl : Control, IDisposable
             _imeJustCommitted = false;
             _inputTextBox.Text = "";
             _inputTextBox.CaretIndex = 0;
+        }
+
+        if (_isDocumentView && _completionPopup is { IsOpen: true } && _completionTarget == _inputTextBox
+            && HandleCompletionKey(e))
+        {
+            e.Handled = true;
+            return;
         }
 
         // In document view: text stays in input box, allow editing freely
@@ -2936,12 +2945,39 @@ public class TerminalControl : Control, IDisposable
     /// the same one the CLI uses, so a completed reference is exactly what would have been
     /// typed by hand.
     /// </summary>
-    private void OnExpandedTextChanged()
+    private void OnExpandedTextChanged() => OnCompletionTextChanged(_expandedTextBox, slashToo: false);
+
+    /// <summary>The text box the open list completes into: the expanded editor or the chat composer.</summary>
+    private TextBox? _completionTarget;
+
+    /// <summary>Whether the open list is commands (a leading '/') rather than files.</summary>
+    private bool _completionSlash;
+
+    /// <summary>Supplies the slash commands for a project folder; set by the shell, which knows the provider.</summary>
+    public Func<string?, IReadOnlyList<Services.SlashCommand>>? SlashCommandSource { get; set; }
+
+    /// <summary>One row of the list: what goes into the box, and what the row shows.</summary>
+    private sealed record CompletionItem(string Insert, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private void OnCompletionTextChanged(TextBox box, bool slashToo)
     {
         if (_completionInserting) return;
 
-        var text = _expandedTextBox.Text ?? "";
-        int caret = Math.Clamp(_expandedTextBox.CaretIndex, 0, text.Length);
+        var text = box.Text ?? "";
+        int caret = Math.Clamp(box.CaretIndex, 0, text.Length);
+
+        // A '/' that opens the box and has not been typed past yet names a command
+        if (slashToo && text.StartsWith('/') && !text[..caret].Any(char.IsWhiteSpace) && caret > 0)
+        {
+            _completionTarget = box;
+            _completionSlash = true;
+            _completionAnchor = 0;
+            ShowSlashCompletion(text[1..caret]);
+            return;
+        }
 
         int at = FindCompletionAnchor(text, caret);
         if (at < 0)
@@ -2950,8 +2986,45 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
+        _completionTarget = box;
+        _completionSlash = false;
         _completionAnchor = at;
         _ = ShowCompletionAsync(text.Substring(at + 1, caret - at - 1));
+    }
+
+    private void ShowSlashCompletion(string query)
+    {
+        var commands = SlashCommandSource?.Invoke(_workingDirectory) ?? Array.Empty<Services.SlashCommand>();
+        bool japanese = Services.Loc.Language == "日本語";
+        // Names that start with the query first, then ones that merely contain it
+        var matches = commands
+            .Select(c => (c, name: c.Name.TrimStart('/')))
+            .Where(x => x.name.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(x => x.name, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
+            .OrderBy(x => x.name.StartsWith(query, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(x => x.name, StringComparer.OrdinalIgnoreCase)
+            .Take(12)
+            .Select(x =>
+            {
+                var desc = japanese && !string.IsNullOrEmpty(x.c.DescriptionJa) ? x.c.DescriptionJa : x.c.Description;
+                return new CompletionItem("/" + x.name, string.IsNullOrEmpty(desc) ? "/" + x.name : $"/{x.name}  —  {desc}");
+            })
+            .ToList();
+        if (matches.Count == 0)
+        {
+            CloseCompletion();
+            return;
+        }
+        OpenCompletion(matches);
+    }
+
+    private void OpenCompletion(List<CompletionItem> items)
+    {
+        EnsureCompletionPopup();
+        _completionPopup!.PlacementTarget = _completionTarget;
+        _completionList!.ItemsSource = items;
+        _completionList.SelectedIndex = 0;
+        _completionPopup.IsOpen = true;
     }
 
     /// <summary>
@@ -2991,10 +3064,7 @@ public class TerminalControl : Control, IDisposable
             return;
         }
 
-        EnsureCompletionPopup();
-        _completionList!.ItemsSource = matches;
-        _completionList.SelectedIndex = 0;
-        _completionPopup!.IsOpen = true;
+        OpenCompletion(matches.Select(p => new CompletionItem(p, p)).ToList());
     }
 
     private void EnsureCompletionPopup()
@@ -3060,26 +3130,28 @@ public class TerminalControl : Control, IDisposable
 
     private void AcceptCompletion()
     {
-        var path = _completionList?.SelectedItem as string;
-        if (path == null || _completionAnchor < 0)
+        var box = _completionTarget;
+        if (_completionList?.SelectedItem is not CompletionItem item || _completionAnchor < 0 || box == null)
         {
             CloseCompletion();
             return;
         }
 
-        var text = _expandedTextBox.Text ?? "";
-        int caret = Math.Clamp(_expandedTextBox.CaretIndex, 0, text.Length);
+        var text = box.Text ?? "";
+        int caret = Math.Clamp(box.CaretIndex, 0, text.Length);
         int start = _completionAnchor;
         if (start >= text.Length || caret < start) { CloseCompletion(); return; }
 
         // A path with a space in it has to survive the CLI's own argument splitting.
-        var inserted = "@" + (path.Contains(' ') ? "\"" + path + "\"" : path) + " ";
+        var path = item.Insert;
+        var inserted = _completionSlash ? path + " "
+            : "@" + (path.Contains(' ') ? "\"" + path + "\"" : path) + " ";
 
         _completionInserting = true;
         try
         {
-            _expandedTextBox.Text = text[..start] + inserted + text[caret..];
-            _expandedTextBox.CaretIndex = start + inserted.Length;
+            box.Text = text[..start] + inserted + text[caret..];
+            box.CaretIndex = start + inserted.Length;
         }
         finally
         {

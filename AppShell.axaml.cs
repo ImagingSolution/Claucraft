@@ -8465,6 +8465,11 @@ internal partial class AppShell : UserControl, IDockOwner
         string? workFolder = worktree?.Path ?? _projectFolder;
         var terminal = new TerminalControl { IsDarkTheme = _isDark };
         ApplyProviderToTerminal(terminal);
+        // The chat composer offers the same commands as the slash panel, plus personal ones and skills
+        terminal.SlashCommandSource = folder => SlashCommandCatalog.ForProvider(_cli.ActiveId)
+            .Concat(SlashCommandCatalog.ForProject(_cli.ActiveId, folder))
+            .Concat(SlashCommandCatalog.ForUserAndSkills(_cli.ActiveId, folder))
+            .ToList();
         terminal.SetFont(_settings.FontFamily, _settings.FontSize);
 
         // --- Title bar ---
