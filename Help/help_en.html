@@ -170,12 +170,16 @@
   <a href="#explorer">Explorer</a>
   <a href="#snippets">Snippets</a>
   <a href="#windows-panel">Windows Panel</a>
+  <a href="#memory-panel">Memory Panel</a>
   <a href="#settings">Settings</a>
 
   <div class="group-title">Terminal &amp; Editor Area</div>
   <a href="#mdi">MDI Terminal &amp; Editor Windows</a>
   <a href="#window-strip">Window Strip Toolbar</a>
   <a href="#workspaces">Saved Workspaces</a>
+
+  <div class="group-title">Chat View</div>
+  <a href="#chat-view">Chat View</a>
 
   <div class="group-title">Source Control</div>
   <a href="#source-control">Source Control Panel</a>
@@ -231,11 +235,18 @@
       <td>Per-project session list with search, one click to resume</td>
     </tr>
     <tr>
+      <td><strong>Chat interface</strong></td>
+      <td>The only view - full chat UI, no file or terminal access</td>
+      <td>None - raw terminal scrollback only</td>
+      <td>A chat-like panel embedded in the editor</td>
+      <td>Chat View toggles any window between raw terminal and desktop-app-style bubbles, still backed by the same CLI process and its permission prompts</td>
+    </tr>
+    <tr>
       <td><strong>Git integration</strong></td>
       <td>None</td>
       <td>Whatever the shell provides</td>
       <td>VS Code's built-in Source Control view</td>
-      <td>Built-in panel: fetch/pull/push/merge, risky-file check, AI commit messages, commit graph</td>
+      <td>Built-in panel: fetch/pull/push/merge, risky-file check, AI commit messages, commit graph, and PR CI status / review comments</td>
     </tr>
     <tr>
       <td><strong>Best fit</strong></td>
@@ -266,25 +277,43 @@
   context menu) to toggle <strong>New Session (Worktree)</strong>: when enabled, new sessions are
   started in their own git worktree, so two windows never edit the same files at once — Resume
   always reopens in the original project folder, where the session's history lives.</p>
+  <p>The same menu lists <strong>execution targets</strong> beyond the local machine: installed WSL
+  distros, recent and <code>~/.ssh/config</code> SSH hosts, and a free-form <code>host:/path</code>
+  entry. The CLI is then launched through <code>wsl.exe</code> or <code>ssh.exe</code> instead of
+  directly. WSL sessions read their transcript over <code>\\wsl.localhost</code>, so Chat View works
+  for them too; SSH sessions stay in the raw terminal view, since their transcript lives only on the
+  remote host. Remote sessions are left out of saved workspaces.</p>
+  <p><strong>Scheduled Tasks...</strong>, also on the New Session menu, opens a dialog for starting a
+  session automatically in a chosen project with a given prompt — once, every day, or every N
+  minutes — for as long as Claucraft is running. A slot that falls more than 30 minutes behind is
+  skipped rather than caught up.</p>
+  <p>A model and effort level can be pinned for every new session (Claude only) instead of switching
+  mid-conversation, which would throw away the prompt cache. That choice carries across new windows,
+  restores and launches.</p>
 </section>
 
 <section id="activity-bar">
   <h2>Activity Bar</h2>
   <p class="subtitle">The narrow strip of icons on the left edge of the window.</p>
   <img src="images/activity-bar.png" alt="Activity bar icons">
-  <p>Each icon switches the side panel shown next to it:</p>
+  <p>Each icon switches the side panel shown next to it, top to bottom:</p>
   <ul>
     <li><strong>Explorer</strong> (<kbd>Ctrl+Shift+E</kbd>) — the current project's file tree.</li>
-    <li><strong>Snippets</strong> — reusable text blocks you can insert into a session.</li>
+    <li><strong>Source Control</strong> (<kbd>Ctrl+Shift+G</kbd>) — git status and actions for the project.</li>
     <li><strong>Windows</strong> — a list of every open terminal, editor, diagram and memory window.</li>
-    <li><strong>Diagram Viewer</strong> — renders Mermaid/graph output from a session inline.</li>
-    <li><strong>Chat View</strong> — a readable, non-terminal rendering of the current conversation.</li>
-    <li><strong>Compact</strong> — runs <code>/compact</code> against the active session.</li>
+    <li><strong>Chat View</strong> — toggles the active window between its raw terminal and the
+    bubble-based conversation view; see <a href="#chat-view">Chat View</a>.</li>
+    <li><strong>Snippets</strong> — reusable text blocks you can insert into a session.</li>
     <li><strong>Slash Commands</strong> (<kbd>Ctrl+/</kbd>) — browse and insert available slash commands.</li>
     <li><strong>Extensions</strong> — installed MCP servers, skills and plugins.</li>
-    <li><strong>Source Control</strong> (<kbd>Ctrl+Shift+G</kbd>) — git status and actions for the project.</li>
+    <li><strong>Memory</strong> (<kbd>Ctrl+Shift+M</kbd>) — Claude's auto-memory notes for this project.</li>
+    <li><strong>Diagram Viewer</strong> — appears once a session has produced one; renders Mermaid/graph
+    output from a session inline.</li>
+  </ul>
+  <p>A second group sits at the bottom of the bar:</p>
+  <ul>
+    <li><strong>Compact</strong> — runs <code>/compact</code> against the active session.</li>
     <li><strong>Cost</strong> — token usage and spend for the current session and plan.</li>
-    <li><strong>Memory</strong> — what Claude remembers about this project across sessions.</li>
     <li><strong>Settings</strong> — application preferences, grouped by topic.</li>
   </ul>
 </section>
@@ -300,7 +329,9 @@
   <p>Dragging a file from the explorer onto a terminal window inserts a reference to it in the
   prompt input, prefixed with <code>@</code>. Files inside the working folder are inserted as a
   relative path, and files outside it as an absolute path — the same format you get by picking one
-  from the <code>@</code> completion popup.</p>
+  from the <code>@</code> completion popup. Ctrl+click or Shift+click selects several files or
+  folders at once, and dragging that selection drops every path in as its own <code>@</code>
+  reference in one go.</p>
 </section>
 
 <section id="snippets">
@@ -327,13 +358,24 @@
   (label, type, model, depth) while they run.</p>
 </section>
 
+<section id="memory-panel">
+  <h2>Memory Panel</h2>
+  <p>Reads Claude Code's auto-memory notes for the active project
+  (<code>~/.claude/projects/&lt;project&gt;/memory/</code>) and lists them grouped by note type. A
+  search box filters across the whole set, and <code>MEMORY.md</code> — the index Claude itself
+  loads every session — is shown as a table of contents. Opening a note also shows which other notes
+  link to it (backlinks) and any links inside it that point to a note not written yet. The panel is
+  read-only; notes are written by Claude Code itself, not edited here.</p>
+</section>
+
 <section id="settings">
   <h2>Settings</h2>
   <img src="images/settings.png" alt="Settings panel">
-  <p>Grouped by topic: general preferences, theme, AI provider and CLI configuration, source
-  control behavior (commit message language, risky-file checks before push), live status display,
-  plan tier and cost dashboard, launch profiles, and keyboard shortcuts. Most settings apply
-  immediately; a few — like the AI provider — apply to new sessions only.</p>
+  <p>Grouped into category boxes: language, font family and size, host shell, initial prompt, theme,
+  notifications, checkpoints, live status, commit message language, plan tier, launch model and
+  effort, AI provider executable and argument templates, and a shortcut to the <code>.claude</code>
+  folder. Most settings apply immediately; a few — like the AI provider — apply to new sessions
+  only.</p>
 </section>
 
 <section id="mdi">
@@ -352,7 +394,10 @@
   <h2>Window Strip Toolbar</h2>
   <img src="images/window-strip.png" alt="Window strip toolbar">
   <p>The horizontal strip directly above the MDI area lists a tab for every open window in this
-  shell and lets you switch between them. The icon buttons on its right edge control layout:</p>
+  shell and lets you switch between them. A session tab's context menu includes
+  <strong>Start Remote Control</strong>, which sends <code>/remote-control</code> to the CLI so the
+  session can be continued from another device. The icon buttons on the strip's right edge control
+  layout:</p>
   <ul>
     <li><strong>Tile</strong> — arrange all windows in an even grid.</li>
     <li><strong>Tile Horizontally</strong> / <strong>Tile Vertically</strong> — stack windows in
@@ -375,6 +420,53 @@
   contexts within the same project without rebuilding the layout each time.</p>
 </section>
 
+<section id="chat-view">
+  <h2>Chat View</h2>
+  <p class="subtitle">A desktop-app-style view of the session, an alternative to the raw terminal.</p>
+  <p>Click the <strong>Chat View</strong> icon in the activity bar to switch the active window between
+  its raw terminal and Chat View, which renders the session's JSONL transcript as message bubbles
+  instead of scrollback. The choice is kept separately for every window and survives restores.</p>
+  <h3>Tool Call Details</h3>
+  <p>Expanding a tool group shows each call: a shell command with its output, an Edit or Write as a
+  coloured diff, Read/Grep/Glob with the targets and a result excerpt, and anything else as its
+  input JSON and result. The model's thinking and the narration between tool calls are shown as
+  well. Clicking a file name a tool touched opens that file in an editor window.</p>
+  <h3>Answering the CLI</h3>
+  <p>Permission prompts, plan approval, menus such as <code>/model</code>, and
+  <code>AskUserQuestion</code> forms all appear as interactive cards in the conversation; the
+  answer is sent to the CLI as the same key presses you would type at its own prompt.</p>
+  <h3>Composer</h3>
+  <p>The input card at the bottom sends prompts and accepts <code>@</code> file completion and
+  <code>/</code> command completion (<kbd>↑</kbd>/<kbd>↓</kbd>, <kbd>Tab</kbd>, <kbd>Enter</kbd>,
+  <kbd>Esc</kbd>). Clipboard images (<kbd>Ctrl+V</kbd> or <kbd>Alt+V</kbd>) and pasted or dropped
+  image files go to a thumbnail strip above the input rather than being inserted as text; click a
+  thumbnail to view it full size, or its × to remove it, and the images go out with the prompt.
+  When the CLI suggests a next prompt, it appears as the input's placeholder text — press
+  <kbd>Tab</kbd> to pull it into the box, or press <kbd>Enter</kbd> on an empty box to send it
+  as-is.</p>
+  <h3>Working Spark, Stop &amp; Send Queue</h3>
+  <p>A spark animates next to a <strong>Stop</strong> button while the session is working. A prompt
+  sent mid-turn waits as a removable chip and is sent once the turn ends; pressing Stop puts any
+  queued prompts back into the input box instead of discarding them.</p>
+  <h3>Edit &amp; Rewind</h3>
+  <p>Hovering a previous prompt shows <strong>Edit</strong> and <strong>Rewind</strong>. Both drive
+  the CLI's <code>/rewind</code> to return the conversation to that point; Edit also puts the
+  original text back into the input box so it can be changed before resending.</p>
+  <h3>Tasks &amp; Subagents</h3>
+  <p>A strip under the title rebuilds Claude's task checklist from <code>TodoWrite</code>,
+  <code>TaskCreate</code> and <code>TaskUpdate</code> calls, and lists every <code>Agent</code> call
+  made during the session. A subagent that has its own transcript opens in place of the main
+  conversation, with a bar to go back to it.</p>
+  <h3>Find (Ctrl+F)</h3>
+  <p>Highlights every message containing the search text. <kbd>Enter</kbd> / <kbd>Shift+Enter</kbd>
+  or <kbd>F3</kbd> step forward and backward through the matches.</p>
+  <h3>Side Pane</h3>
+  <p>A resizable pane next to the conversation offers two tabs only: <strong>Terminal</strong>, the
+  same session's live terminal, and <strong>Preview</strong>, an embedded WebView2 browser with an
+  address bar, back, reload and open-in-browser controls. When a localhost address shows up in the
+  terminal output, Preview offers it as a one-click suggestion.</p>
+</section>
+
 <section id="source-control">
   <h2>Source Control Panel</h2>
   <img src="images/source-control.png" alt="Source control panel">
@@ -386,12 +478,20 @@
     yours on top.</li>
     <li><strong>Push</strong> — sends local commits to the remote.</li>
     <li><strong>Merge</strong> — brings another branch's work into the branch you are on.</li>
-    <li><strong>Branch menu</strong> — switch, create or delete branches.</li>
+    <li><strong>Branch menu</strong> — switch, create or delete branches. A branch checked out in
+    another worktree is greyed out here, with the reason and the worktree it is in.</li>
   </ul>
   <p>Before a push, an optional <strong>risky files check</strong> scans changed files for
   credentials, machine-local settings, build output and oversized files. A commit message can be
   generated by the AI in either English or Japanese, set independently of the app's display
-  language. The panel also includes a commit graph for visualizing branch and merge history.</p>
+  language. Pushing a repository that has no remote yet opens an owner / name / description /
+  private dialog and creates it on GitHub with <code>gh repo create</code>. Common git failures get
+  a localized explanation shown above git's own output instead of a bare error message.</p>
+  <p>Open pull requests show a coloured dot for their combined CI check status, refreshed once a
+  minute while the panel is open. Expanding a PR lists its failing checks and every review,
+  conversation and line comment, each with a button that hands the comment to the AI to fix.</p>
+  <p>The panel also includes a commit graph for visualizing branch and merge history, with each
+  branch's commits drawn in its own colour and a button to create a tag on any commit.</p>
 </section>
 
 <section id="status-bar">
@@ -406,10 +506,15 @@
     automatic compact; clicking it runs <code>/compact</code>.</li>
     <li><strong>Model</strong> / <strong>Effort</strong> — the model and reasoning effort answering
     in this session. Changing either sends the corresponding command to the terminal, and also
-    updates the default used for new sessions.</li>
+    updates the default used for new sessions. The model list learns each model line's newest
+    version from recent transcripts, so it does not fall behind when a new model ships. Switching
+    model or effort mid-conversation compacts first when there is enough context worth saving,
+    rather than throwing the prompt cache away silently.</li>
     <li><strong>Rate limits</strong> — usage against the plan's 5-hour and 7-day metering windows,
     with time until each resets.</li>
   </ul>
+  <p>An idle session approaching its prompt-cache expiry shows a "compact now" banner, since the
+  next message would otherwise re-read the whole conversation at full price.</p>
 </section>
 
 <section id="slash-commands">
@@ -445,7 +550,10 @@
   <img src="images/extensions.png" alt="Extensions panel">
   <p>Lists the MCP servers, skills and plugins currently installed for the active AI provider, and
   whether each is available to the session. Use the refresh button after installing or updating
-  one outside the app.</p>
+  one outside the app. Double-clicking a skill runs it.</p>
+  <p>MCP servers can be managed from here too, through <code>claude mcp</code>: add one as stdio or
+  http, choosing its scope (local, project or user), remove one, or check its connection status —
+  all without leaving the panel.</p>
 </section>
 
 <section id="launch-profiles">

@@ -2,7 +2,7 @@
 
 A Windows MDI (Multiple Document Interface) terminal application for AI coding CLIs, built with Avalonia UI.
 
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) is the default, and Codex CLI, GitHub Copilot CLI, Antigravity CLI and Grok CLI can be picked per session. Run several sessions side by side in one window - or dragged out into windows of their own - with a project explorer, a git/GitHub panel, snippets, cost and usage readouts, and a dark/light theme.
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) is the default, and Codex CLI, GitHub Copilot CLI, Antigravity CLI and Grok CLI can be picked per session. Run several sessions side by side in one window - or dragged out into windows of their own - each viewable as a raw terminal or as a desktop-app-style Chat View, with a project explorer, a git/GitHub panel, snippets, cost and usage readouts, and a dark/light theme.
 
 ![MDI Windows](https://github.com/user-attachments/assets/ed655337-ba75-4975-95da-0d31454db6bf)
 
@@ -32,7 +32,11 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 - **Session Index Auto-Creation** - Creates and updates `sessions-index.json` per project so the CLI can fill in AI-generated conversation summaries
 - **Running Session Guard** - A session only runs in one place at a time, so launching one another process already holds is blocked before it can die at the prompt
 - **Project Context Switching** - Switching MDI windows switches the project folder, explorer, session list and git status with it
+- **Execution Targets (WSL / SSH)** - The New Session menu lists installed WSL distros, recent and `~/.ssh/config` SSH hosts, and a `host:/path` prompt. The CLI runs through `wsl.exe` / `ssh.exe` with each argument escaped for the remote side. WSL windows read their transcript through `\\wsl.localhost`, so Chat View works; SSH windows stay in the terminal view. Remote windows are left out of saved workspaces
+- **Scheduled Tasks** - Open a new session in a chosen project with a prompt - once, daily or every N minutes - while the app is running. A slot missed by more than 30 minutes is skipped rather than caught up
+- **Remote Control** - A session tab's menu sends `/remote-control` to continue the session from another device
 - **Launch Profiles** - Light / Standard / Deep from the toolbar, applied on every launch path - new, `-c` continue and `-r` resume alike - so a resumed session cannot silently balloon back to an unbounded context. Light ships its own `--settings` file that trims MCP servers, tool descriptions and auto-memory out of the prompt prefix; Deep switches to `--model opus --effort high`
+- **Launch Model & Effort** - Pin a model and effort level when a session starts (Claude only) instead of switching mid-conversation and throwing away the prompt cache. The choice carries across new windows, restores and launches
 - **Git Worktree Isolation** - Give a session its own `git worktree` checkout (under a Claucraft-managed folder, on `claucraft/`-prefixed branches) so several windows on one repo can work in parallel without clobbering each other
 - **Session Hand-off** - When context runs low (an absolute token threshold, so it still fires on 1M-context models), hand off to a fresh session with a brief extracted from the transcript locally. It costs no tokens, unlike `/compact`, and the brief lands in the new session's input box to be edited before anything is sent
 - **Resume Cost & Token Badge** - The session picker shows each session's last known context size as a badge, with a tooltip estimate of what resuming it will cost. Right-click for "Start fresh from brief" to hand off without reopening the old session
@@ -48,13 +52,13 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 - **@-Mention Completion** - Typing `@` completes file paths from a project file index, and files can be picked from the input row
 - **Shift+Enter Line Break** - Insert a newline without submitting
 - **File Drag & Drop** - Drop files onto the terminal to insert their paths, or drag them in from the Explorer panel
-- **Clipboard Image Paste** - Ctrl+V pastes clipboard images as temp file paths
+- **Image Attachments** - Clipboard images (Ctrl+V or Alt+V) and pasted or dropped image files go to a thumbnail strip above the input instead of being inserted as text. Click a thumbnail to view it, × to remove it; the images are sent with the prompt
 - **Bracketed Paste Mode** - Wraps pasted text in bracket sequences for modern shells
 - **Terminal Output Export** - Save output as a text file from the tab context menu
 
 ### Project and files
 
-- **Project Explorer** - File tree with syntax-aware icons and colour-coded file types (40+ extensions), Windows shell icons, auto-refresh on file system changes, and file preview on selection
+- **Project Explorer** - File tree with syntax-aware icons and colour-coded file types (40+ extensions), Windows shell icons, auto-refresh on file system changes, and file preview on selection. Ctrl/Shift+click selects several items, and dragging them drops every path into the terminal as `@`-references
 - **In-App Text Editor** - Edit text files straight from the explorer (Ctrl+S to save), preserving the original encoding, line endings and BOM. Binary, oversized or non-UTF8 files stay read-only instead of getting corrupted
 - **Open With** - Right-click a file to hand it to the Windows "Open with" picker
 - **Safe Delete** - Deleting from the explorer sends to the Windows Recycle Bin rather than removing permanently
@@ -66,14 +70,18 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 - **Secret Scan** - Before a commit, the staged diff is scanned file by file for credentials and keys, and flagged files are called out rather than quietly committed
 - **Risky File Warnings** - Staging policy flags files that were probably not meant to be committed - credential files, build output - and a per-clone ignore list keeps the ones you have decided about out of the way
 - **GitHub Pull Requests** - List open PRs, approve, create and open in the browser via `gh`, right inside the panel. Hides itself if `gh` isn't installed/authenticated or the remote isn't GitHub
-- **Commit Graph & Diff Viewer** - Full commit history as a lane graph (as an MDI child or its own window, with Fetch / Pull / Push of its own) plus a virtualized diff viewer. Select a diff range or right-click a changed file to send `@path:12-20 <comment>` straight to the terminal
+- **CI Status & Review Comments** - Each open PR shows a coloured dot for its combined check status, polled every minute while the panel is open. A fold-out lists failing checks and every review, conversation and line comment, with buttons that hand them to the AI to fix
+- **Repository Creation** - Pushing a repo with no remote opens an owner / name / description / private dialog and creates the GitHub repository with `gh repo create`
+- **Git Error Hints** - Common git failures get a localized explanation above git's own output, and branches checked out in another worktree are greyed out in the branch menus with the reason
+- **Commit Graph & Diff Viewer** - Full commit history as a lane graph (as an MDI child or its own window, with Fetch / Pull / Push of its own) with lines coloured per branch, tag creation, plus a virtualized diff viewer. Select a diff range or right-click a changed file to send `@path:12-20 <comment>` straight to the terminal
 
 ### Knowing what the AI is doing
 
 - **Mode Badge** - Shows the session's mode (manual / auto-accept / plan / bypass) in the status bar, painted the colour the CLI paints it. Click to cycle. If a CLI update renames the modes, it falls back to "Switch Mode" and still sends Shift+Tab
-- **Model & Effort** - The active model and reasoning effort are shown in the status bar and switchable from it, and a model switch made inside the CLI is followed
+- **Model & Effort** - The active model and reasoning effort are shown in the status bar and switchable from it, and a model switch made inside the CLI is followed. The model list learns the newest version of each model line from recent transcripts, so it does not go stale when a new model ships
 - **Activity Indicator** - Says what the AI is doing while it is quiet - reading a file, running a command, searching - with elapsed time, plus a sweep bar under the input row while a turn is in flight
 - **Context Meter** - Reads the context left out of the CLI's own output and shows it as a meter, with one-click `/compact` when it runs low
+- **Cache Expiry Warning** - An idle session close to its prompt-cache expiry gets a "compact now" banner, and switching model or effort mid-session compacts first when there is enough context worth saving
 - **Marginal Cost Readout** - What the last turn cost, and what the next one costs just to re-read the conversation, so a session that has grown expensive says so instead of being discovered on the invoice
 - **Usage in Plain Words** - "about 840 left, resets in 5h" instead of a bare message count, measured against the plan (Pro / Max 5x / Max 20x) chosen in Settings. Aggregated from the session transcripts themselves
 - **Rate Limit Readout** - Utilization and reset countdown for both the 5-hour and 7-day plan windows
@@ -84,12 +92,24 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 - **Task Completion Notification** - A tray toast, a sound and a taskbar flash when a session finishes in the background, including when a turn finishes generating. All can be turned off in Settings
 - **Status Bar** - Repository name, branch, changed file count, terminal status, mode badge, model, current activity, context left, rate limits, and daily usage with a colour-gradient progress bar
 
+### Chat View
+
+- **Conversation View** - Toggle any window between the raw terminal and a Chat View that renders the session's JSONL transcript as desktop-app-style bubbles, Markdown, code blocks and collapsible tool-call summaries, in matching dark and light palettes. It spans the full window width and the choice is kept per window across restores
+- **Tool Call Details** - Expand a tool group to see each call: commands with their output, Edit/Write as a coloured diff, Read/Grep/Glob targets with result excerpts, and anything else as input JSON and result. Thinking and the narration between tool calls are shown too. A file a tool worked on opens in the editor window with one click
+- **Answering the CLI** - Permission prompts, plan approval, menus such as `/model`, and AskUserQuestion forms appear as interactive cards; the answer is sent to the CLI's selector as key presses
+- **Composer** - Send prompts from a card at the bottom with image attachments, `@` file completion and `/` command completion (↑↓ / Tab / Enter / Esc). The CLI's suggested next prompt is shown as the placeholder: Tab pulls it in, Enter on an empty box sends it
+- **Stop & Queue** - A spark shows while Claude is working, next to a Stop button. A prompt sent mid-turn waits as a removable chip and goes out once the turn ends; Stop puts queued prompts back in the box
+- **Edit & Rewind** - Hover a prompt for Edit and Rewind. Both drive the CLI's `/rewind` to that prompt; Edit also puts the text back into the box
+- **Tasks & Subagents** - A strip under the title rebuilds Claude's task checklist from TodoWrite / TaskCreate / TaskUpdate and lists every Agent call. A subagent with its own transcript opens in place of the session, with a bar to go back
+- **Find (Ctrl+F)** - Highlights every message holding the query; Enter / Shift+Enter or F3 step through the matches
+- **Side Pane** - A resizable pane next to the conversation with two tabs: **Terminal** (the same session's live terminal) and **Preview** (an embedded WebView2 browser with an address bar, back, reload and open-in-browser; a localhost address seen in the terminal output is offered as a one-click suggestion)
+
 ### Panels, commands and tools
 
 - **Command Palette (Ctrl+Shift+P)** - VS Code-style searchable action menu covering every command
 - **Slash Commands Panel (Ctrl+/)** - Every slash command the CLI understands, listed with a description. Custom commands from `.claude/commands/*.md` are picked up automatically
-- **Extensions Panel** - Configured MCP servers, skills and plugins, with enable/disable toggles where the CLI supports it. Double-click a skill to run it
-- **Chat View** - A side panel rendering a session's full JSONL transcript as auto-scrolling, formatted Markdown - a readable document view instead of raw scrollback
+- **Extensions Panel** - Configured MCP servers, skills and plugins, with enable/disable toggles where the CLI supports it. MCP servers can be added (stdio / http, with a scope), removed and checked through `claude mcp`. Double-click a skill to run it
+- **Memory Panel** - Reads Claude Code's auto-memory notes for a project (`~/.claude/projects/<project>/memory/`), grouped by type, searchable, with the `MEMORY.md` index, backlinks, and links to notes not written yet
 - **Diagram Viewer** - Renders Excalidraw diagrams drawn via MCP tool calls, and mermaid/chart code blocks from the output, in a zoomable, pannable window with PNG export/copy. Cached per project so they survive a resume or restart
 - **Snippets Panel** - Store and send code snippets to the active console (`\r` in text sends Enter). Drag-and-drop reordering, and it starts pre-filled with common prompts in English or Japanese rather than empty
 - **Tokens & Cost Dashboard** - A window reading `message.usage` out of session transcripts: 7/30/90-day range, a "this project only" scope toggle, a daily cost bar chart, and top-50 breakdowns by model, project and session, with CSV export
@@ -97,7 +117,8 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 - **Automatic Checkpoints** - Snapshots the project before each prompt so the work can be rolled back. Git repos use `git stash create`, which builds a commit object without touching the working tree; other folders get a file snapshot
 - **Setup Check** - One-click diagnosis of the CLI, Node.js, Git, the config folder and sign-in state, with a copyable fix command for anything missing. Runs itself on first launch and stays quiet when everything is fine
 - **Keyboard Shortcut Sheet (F1)** - Every shortcut on one screen, grouped by what it acts on
-- **Settings Panel** - Language, font family and size, host shell, initial prompt, theme, notifications, checkpoints, live status, commit message language, plan, AI provider executable and argument templates, and a shortcut to the `.claude` folder
+- **Built-in Help** - The "?" button opens illustrated English/Japanese help pages in the browser, including a comparison with Claude Desktop, the Claude Code CLI and the VS Code extension
+- **Settings Panel** - Grouped into categories: language, font family and size, host shell, initial prompt, theme, notifications, checkpoints, live status, commit message language, plan, launch model and effort, AI provider executable and argument templates, and a shortcut to the `.claude` folder
 - **Self-Update** - Checks the project's GitHub releases for a newer version, downloads it next to the running executable and verifies it before committing to anything, then steps the old executable aside by renaming it and restarts into the new one - undoing the rename if the swap fails, so there is no state with the application removed but not put back. Only the published single-file build can replace itself; a development build points at the releases page instead
 
 ### Everything else
@@ -129,8 +150,13 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 | Esc | Stop the task |
 | Ctrl+C | Copy, or interrupt when nothing is selected |
 | Ctrl+V | Paste, images included |
+| Alt+V | Paste a clipboard image |
 | Shift+Tab | Cycle the AI mode |
 | Ctrl+S | Save the file open in the editor |
+| **Chat View** | |
+| Ctrl+F | Find in the conversation |
+| Enter / Shift+Enter, F3 | Next / previous match |
+| Tab | Take the suggested prompt into the box |
 
 ## Tech Stack
 
@@ -139,8 +165,9 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 | Framework | .NET 8.0 / C# |
 | UI | Avalonia 12.1.1 + Fluent Theme + Inter fonts |
 | Terminal | Custom VT100/ANSI parser over PseudoConsole (ConPTY) |
+| Browser preview | Microsoft Edge WebView2 |
 | Serialization | System.Text.Json |
-| External tools | The AI CLI itself, `git`, and `gh` for pull requests |
+| External tools | The AI CLI itself, `git`, `gh` for pull requests, `wsl.exe` / `ssh.exe` for remote sessions |
 
 ## Project Structure
 
@@ -151,11 +178,14 @@ Claucraft/
 ├── MainWindow.axaml / .cs          # The application window - hosts one AppShell
 ├── AppShell.axaml / .cs            # The shell: toolbar, activity bar, panels, MDI area, status bar
 ├── AppShell.Update.cs              # Self-update flow (check, download, stage, restart)
+├── AppShell.Schedule.cs            # Scheduled tasks dialog and timer
+├── AppShell.Mcp.cs                 # MCP server add/remove/check through `claude mcp`
 ├── MdiLayoutItem.cs                # Interface every MDI child implements
 ├── FileTreeNode.cs                 # Explorer tree node model
 ├── UsageChartWindow.axaml / .cs    # 14-day usage chart dialog
 ├── Terminal/
 │   ├── TerminalControl.cs          # Terminal control: render, select, caret, IME, search, drag & drop
+│   ├── TerminalControl.SidePane.cs # Chat View side pane (Terminal / Preview)
 │   ├── TerminalBuffer.cs           # Cell grid + scrollback, alternate buffer, bracketed paste
 │   ├── TerminalCell.cs             # Cell model (Unicode code point, colours, attributes)
 │   ├── VtParser.cs                 # ANSI/VT state machine, SGR 256-colour and truecolour
@@ -173,7 +203,12 @@ Claucraft/
 │   ├── CommitGraphView.cs          # Lane-graph drawing control
 │   ├── DiffWindow.cs               # Virtualized diff viewer with line-range comments
 │   ├── CostDashboardWindow.cs      # Tokens & cost dashboard
-│   ├── DocumentViewPanel.cs        # Session transcript rendered as Markdown (Chat View)
+│   ├── DocumentViewPanel.cs        # Chat View: transcript bubbles, tool details, cards, find
+│   ├── ChatSidePane.cs             # Chat View side pane tabs
+│   ├── BrowserPreviewPanel.cs      # WebView2 preview of local web servers
+│   ├── ImageAttachmentStrip.cs     # Thumbnail strip for attached images
+│   ├── MemoryPanel.cs              # Auto-memory notes panel
+│   ├── MemoryNoteView.cs           # One memory note rendered with its links
 │   └── MarqueeBar.cs               # Turn-in-progress sweep bar
 ├── Services/
 │   ├── AppSettings.cs              # Configuration persistence
@@ -188,6 +223,13 @@ Claucraft/
 │   ├── ProcessTree.cs              # Walks child processes to find a window's CLI process
 │   ├── SessionService.cs           # Session list and sessions-index management
 │   ├── SessionMessageReader.cs     # JSONL transcript parser
+│   ├── ChatTaskTracker.cs          # Task checklist and subagents rebuilt from the transcript
+│   ├── ClaudeProjectPaths.cs       # Maps a project folder to its ~/.claude/projects folder
+│   ├── ExecutionTarget.cs          # Local / WSL / SSH launch targets
+│   ├── ScheduleService.cs          # Scheduled task storage
+│   ├── McpService.cs               # `claude mcp` wrapper
+│   ├── MemoryStore.cs              # Auto-memory note reader
+│   ├── ModelCatalog.cs             # Newest model versions learned from transcripts
 │   ├── SessionCostMonitor.cs       # Live per-session cost and context tracking
 │   ├── RunningSessionService.cs    # Detects a session already held by another process
 │   ├── SubagentMonitor.cs          # In-flight subagent tracking
@@ -215,9 +257,12 @@ Claucraft/
 │   ├── SecretScanService.cs        # Per-file secret scan of the staged diff
 │   ├── StagingPolicy.cs            # Flags files that probably should not be committed
 │   ├── GitIgnoreService.cs         # Per-clone ignore list for those warnings
-│   ├── GitHubCli.cs                # `gh` wrapper for pull requests
+│   ├── GitHubCli.cs                # `gh` wrapper for pull requests, CI status and repo creation
+│   ├── GitErrorHints.cs            # Localized explanations of common git failures
+│   ├── UnifiedDiffParser.cs        # Unified diff parser
 │   └── GitCli.cs / GitWriteService.cs / GitChangeService.cs / GitLogService.cs / GitPath.cs / CommitGraphLayout.cs
 │                                   # Git process wrapper, write ops, status/log readers, path decoding, graph layout
+├── Help/                           # Embedded EN/JP help pages and screenshots
 ├── icon.ico / icon.png             # Application icon
 ├── app.manifest                    # Application manifest
 ├── publish.bat                     # One-click self-contained release build
@@ -230,7 +275,9 @@ Claucraft/
 - Node.js - the supported CLIs are npm packages
 - At least one AI CLI: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (default), Codex CLI, GitHub Copilot CLI, Antigravity CLI or Grok CLI
 - `git` (optional) - for the source control panel, commit graph and worktree isolation
-- `gh` (optional) - for pull requests
+- `gh` (optional) - for pull requests, CI status and repository creation
+- Microsoft Edge WebView2 Runtime (optional, preinstalled on Windows 11) - for the Chat View browser preview
+- WSL or OpenSSH client (optional) - for WSL / SSH sessions
 
 ## Build
 
@@ -255,11 +302,14 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | CLI providers | `%APPDATA%\Claucraft\providers.json` |
 | Light profile settings | `%APPDATA%\Claucraft\light-settings.json` |
 | Slash command overrides | `%APPDATA%\Claucraft\slashcommands.json` (optional) |
+| Scheduled tasks | `%APPDATA%\Claucraft\schedules.json` |
+| Help pages | `%APPDATA%\Claucraft\Help\` |
 | Checkpoints | `%APPDATA%\Claucraft\checkpoints\` |
 | Session worktrees | `%LOCALAPPDATA%\Claucraft\worktrees\` |
 | Session index (read/write) | `~/.claude/projects/*/sessions-index.json` |
 | Session transcripts (read-only) | `~/.claude/projects/*/*.jsonl` |
 | Cached diagrams | `~/.claude/projects/*/diagrams/` |
+| Auto-memory notes (read-only) | `~/.claude/projects/*/memory/` |
 | Background agents (read-only) | `~/.claude/jobs/` |
 | CLI settings and plugins (read-only) | `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/plugins/installed_plugins.json` |
 | Project MCP servers and skills (read-only) | `<project>/.mcp.json`, `<project>/.claude/settings.local.json`, `<project>/.claude/commands/*.md` |
@@ -274,7 +324,7 @@ MIT
 
 Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（マルチドキュメントインターフェース）ターミナルアプリケーションです。
 
-既定は [Claude Code](https://docs.anthropic.com/en/docs/claude-code) で、Codex CLI・GitHub Copilot CLI・Antigravity CLI・Grok CLI をセッションごとに選択できます。複数のセッションを1つのウィンドウに並べて（あるいは別ウィンドウに切り離して）実行でき、プロジェクトエクスプローラー、git / GitHub パネル、スニペット、コストと使用量の表示、ダーク/ライトテーマを備えています。
+既定は [Claude Code](https://docs.anthropic.com/en/docs/claude-code) で、Codex CLI・GitHub Copilot CLI・Antigravity CLI・Grok CLI をセッションごとに選択できます。複数のセッションを1つのウィンドウに並べて（あるいは別ウィンドウに切り離して）実行でき、各セッションは生のターミナルとデスクトップアプリ風のチャットビューを切り替えて表示できます。プロジェクトエクスプローラー、git / GitHub パネル、スニペット、コストと使用量の表示、ダーク/ライトテーマを備えています。
 
 ## 機能
 
@@ -298,7 +348,11 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 - **セッションインデックス自動作成** - プロジェクトごとに `sessions-index.json` を自動作成・更新し、CLI が AI 生成の会話要約を追加できるようにする
 - **多重起動ガード** - 1つのセッションは同時に1か所でしか動かないため、他プロセスが保持中のセッションの起動をプロンプト表示前にブロック
 - **プロジェクトコンテキスト切替** - MDI ウィンドウの切替に合わせて、プロジェクトフォルダ・エクスプローラー・セッション一覧・git 状態を自動切替
+- **実行環境（WSL / SSH）** - 新規セッションのメニューに、インストール済みの WSL ディストリビューション、最近使った SSH ホストと `~/.ssh/config` のホスト、`host:/path` の入力欄を表示。CLI は `wsl.exe` / `ssh.exe` 経由で起動し、引数はリモート側向けにエスケープする。WSL のウィンドウは `\\wsl.localhost` 経由で記録を読むためチャットビューも使える。SSH のウィンドウはターミナル表示のみ。リモートのウィンドウはワークスペースに保存しない
+- **スケジュールタスク** - 指定したプロジェクトで新規セッションを開いてプロンプトを送信。1回・毎日・N分ごとを選べ、アプリの起動中に実行する。30分以上過ぎた実行枠は後から追いかけずスキップ
+- **リモート操作** - セッションタブのメニューから `/remote-control` を送り、別の端末からセッションを続けられる
 - **起動プロファイル** - ツールバーで Light / Standard / Deep を選択。新規・`-c` 継続・`-r` 再開のすべての起動経路に適用されるため、再開時にコンテキスト上限が外れて膨らむことがない。Light は独自の `--settings` ファイルで MCP サーバー・ツール説明・自動メモリをプロンプト冒頭から削減、Deep は `--model opus --effort high` に切替
+- **起動時のモデルと effort** - 会話の途中で切り替えてプロンプトキャッシュを捨てる代わりに、セッション開始時にモデルと effort を固定できる（Claude のみ）。選択は新規ウィンドウ・復元・起動をまたいで引き継がれる
 - **Git Worktree 分離** - セッションごとに専用の `git worktree` チェックアウト（Claucraft 管理フォルダ配下、`claucraft/` 接頭辞のブランチ）を持たせ、同一リポジトリの複数ウィンドウが互いのファイルを壊さず並行作業可能に
 - **セッション引き継ぎ** - コンテキストが少なくなったら（割合ではなく絶対トークン数が閾値なので 1M コンテキストのモデルでも発火する）、記録からローカルで抽出したブリーフを持って新規セッションへ引き継ぐ。`/compact` と違いトークン費用はかからず、ブリーフは新規セッションの入力欄に置かれるので送信前に編集できる
 - **再開コスト＆トークンバッジ** - セッション選択画面に直近のコンテキストサイズをバッジ表示し、ツールチップで再開コストを見積もり。右クリックの「ブリーフから新規開始」で、元のセッションを開かずに引き継げる
@@ -314,13 +368,13 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 - **@メンション補完** - `@` を入力するとプロジェクトのファイルインデックスからパスを補完。入力行からファイルを選ぶこともできる
 - **Shift+Enter 改行** - 送信せずに改行を挿入
 - **ファイルドラッグ＆ドロップ** - ターミナルにファイルをドロップしてパスを入力。エクスプローラーパネルからのドラッグにも対応
-- **クリップボード画像貼り付け** - Ctrl+V でクリップボード内の画像を一時ファイルのパスとして貼り付け
+- **画像の添付** - クリップボードの画像（Ctrl+V または Alt+V）や、貼り付け・ドロップした画像ファイルは、テキストとして挿入せず入力欄の上のサムネイル列に追加。クリックで拡大表示、×で削除でき、送信時にプロンプトと一緒に渡される
 - **ブラケットペーストモード** - モダンシェル向けにペーストテキストをブラケットシーケンスでラップ
 - **ターミナル出力のエクスポート** - タブの右クリックメニューから出力をテキストファイルに保存
 
 ### プロジェクトとファイル
 
-- **プロジェクトエクスプローラー** - 構文対応アイコンと色分け（40種類以上の拡張子）、Windows のシェルアイコン、ファイルシステム変更時の自動リフレッシュ、選択時のプレビュー表示
+- **プロジェクトエクスプローラー** - 構文対応アイコンと色分け（40種類以上の拡張子）、Windows のシェルアイコン、ファイルシステム変更時の自動リフレッシュ、選択時のプレビュー表示。Ctrl/Shift+クリックで複数選択でき、まとめてドラッグすると全パスを `@` 参照としてターミナルへ入力
 - **アプリ内テキストエディタ** - エクスプローラーからテキストファイルを直接編集（Ctrl+S で保存）。元のエンコーディング・改行コード・BOM を保持。バイナリ・大きすぎる・非 UTF-8 のファイルは壊さないよう読み取り専用のまま
 - **プログラムから開く** - ファイルを右クリックして Windows の「プログラムから開く」に渡す
 - **安全な削除** - エクスプローラーからの削除は完全削除ではなく Windows のごみ箱へ
@@ -332,14 +386,18 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 - **シークレットスキャン** - コミット前にステージ済み差分をファイル単位で走査し、認証情報や鍵を検出。該当ファイルを黙ってコミットせず明示的に警告
 - **危険ファイルの警告** - コミットするつもりがなかったと思われるファイル（認証情報ファイル、ビルド生成物など）をステージングポリシーが検出。判断済みのものはクローンごとの無視リストで以後表示されなくなる
 - **GitHub プルリクエスト** - `gh` を介して、パネル内でオープンな PR の一覧表示・承認・作成・ブラウザで開くが可能。`gh` が未インストール/未認証、またはリモートが GitHub でない場合は自動的に非表示
-- **コミットグラフ＆差分ビューア** - コミット履歴をレーングラフで表示（MDI 子ウィンドウ or 専用ウィンドウ。取得/取込/送信ボタンを内蔵）し、仮想化された差分ビューアを提供。差分範囲を選択、または変更ファイルを右クリックして `@path:12-20 <コメント>` をターミナルへ直接送信
+- **CI 状態とレビューコメント** - オープンな PR ごとにチェック結果をまとめた色付きドットを表示（パネル表示中は1分ごとに更新）。展開すると失敗したチェックと、レビュー・会話・行コメントを一覧でき、AI に修正を依頼するボタンが付く
+- **リポジトリ作成** - リモートのないリポジトリで送信すると、オーナー / 名前 / 説明 / 非公開を指定するダイアログを開き、`gh repo create` で GitHub リポジトリを作成
+- **git エラーのヒント** - よくある git の失敗には、git の出力の上に日英の説明を表示。別の worktree でチェックアウト中のブランチはブランチメニューでグレー表示し、理由を示す
+- **コミットグラフ＆差分ビューア** - コミット履歴をレーングラフで表示（MDI 子ウィンドウ or 専用ウィンドウ。取得/取込/送信ボタンを内蔵。線はブランチごとに色分けし、タグ作成も可能）し、仮想化された差分ビューアを提供。差分範囲を選択、または変更ファイルを右クリックして `@path:12-20 <コメント>` をターミナルへ直接送信
 
 ### AI の状態を知る
 
 - **モードバッジ** - セッションのモード（手動 / 自動承認 / プラン / 権限スキップ）を、CLI が使う色そのままでステータスバーに表示。クリックで切替。CLI の仕様変更でモード名を読めなくなった場合は「Switch Mode」表示に戻り、Shift+Tab の送信は継続
-- **モデルと effort** - 使用中のモデルと推論 effort をステータスバーに表示し、そこから切替可能。CLI 内部で行われたモデル切替にも追従
+- **モデルと effort** - 使用中のモデルと推論 effort をステータスバーに表示し、そこから切替可能。CLI 内部で行われたモデル切替にも追従。モデル一覧は直近の記録から各系統の最新バージョンを学習するため、新しいモデルが出ても古いままにならない
 - **実行中インジケータ** - AI が黙っている間に何をしているか（ファイル読み込み・コマンド実行・検索）を経過時間付きで表示。ターン実行中は入力行の下にスイープバーを表示
 - **コンテキスト残量メーター** - CLI の出力から残量を読み取ってメーター表示。少なくなったらワンクリックで `/compact`
+- **キャッシュ期限の警告** - アイドル中のセッションがプロンプトキャッシュの期限に近づくと「今すぐ compact」バナーを表示。会話途中でモデルや effort を切り替えるときは、残す価値のあるコンテキストがあれば先に compact する
 - **限界コスト表示** - 直前のターンにかかった額と、次のターンが会話を読み直すだけでかかる額を表示。高くなったセッションが自分から知らせる
 - **使用量の人間語表示** - 単なるメッセージ数ではなく「残り約 840 回・リセットまで 5 時間」と表示。基準は設定で選んだプラン（Pro / Max 5x / Max 20x）で、集計元はセッション記録そのもの
 - **レート制限表示** - プランの5時間枠・7日枠それぞれの使用率とリセットまでの時間を表示
@@ -350,12 +408,24 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 - **タスク完了通知** - バックグラウンドでセッションが終了したとき、およびターンの生成が完了したときに、トースト通知・効果音・タスクバー点滅で知らせる。いずれも設定でオフにできる
 - **ステータスバー** - リポジトリ名、ブランチ、変更ファイル数、ターミナル状態、モードバッジ、モデル、実行中の作業、コンテキスト残量、レート制限、日次使用量（緑→黄→赤のプログレスバー）を表示
 
+### チャットビュー
+
+- **会話ビュー** - 各ウィンドウを生のターミナルとチャットビューで切替。チャットビューはセッションの JSONL 記録を、デスクトップアプリ風の吹き出し・Markdown・コードブロック・折りたたみ式のツール呼び出し要約で表示し、ダーク/ライトの配色も合わせる。ウィンドウ幅いっぱいに広がり、表示の選択はウィンドウごとに復元後も保持
+- **ツール呼び出しの詳細** - ツールのグループを展開すると各呼び出しを表示。コマンドとその出力、Edit/Write は色分けした差分、Read/Grep/Glob は対象と結果の抜粋、それ以外は入力 JSON と結果。思考とツール呼び出しの間の説明文も表示。ツールが扱ったファイルはワンクリックでエディタウィンドウに開く
+- **CLI への応答** - 権限プロンプト、プランの承認、`/model` などのメニュー、AskUserQuestion のフォームを操作できるカードで表示し、回答は CLI の選択肢へキー操作として送る
+- **入力欄** - 下部のカードからプロンプトを送信。画像添付、`@` によるファイル補完、`/` によるコマンド補完（↑↓ / Tab / Enter / Esc）に対応。CLI が提案する次のプロンプトをプレースホルダーに表示し、Tab で取り込み、空欄で Enter を押すとそのまま送信
+- **停止と送信キュー** - Claude の作業中はスパークと停止ボタンを表示。作業中に送ったプロンプトは取り消し可能なチップとして待機し、ターン終了後に送信。停止するとキューのプロンプトは入力欄に戻る
+- **編集と巻き戻し** - プロンプトにホバーすると「編集」「巻き戻し」を表示。どちらも CLI の `/rewind` でそのプロンプトまで戻り、編集では元の文を入力欄に戻す
+- **タスクとサブエージェント** - タイトル下の帯に、TodoWrite / TaskCreate / TaskUpdate から組み立てた Claude のタスク一覧と、すべての Agent 呼び出しを表示。記録のあるサブエージェントはセッションの代わりに開き、戻るバーで元に戻れる
+- **会話内検索 (Ctrl+F)** - 検索語を含むメッセージを強調表示し、Enter / Shift+Enter または F3 で移動
+- **サイドペイン** - 会話の横にサイズ変更できるペインを開く。タブは **Terminal**（同じセッションのライブターミナル）と **Preview**（アドレスバー・戻る・再読み込み・ブラウザで開くを備えた WebView2 ブラウザ。ターミナル出力に出た localhost のアドレスをワンクリックで開ける候補として表示）の2つ
+
 ### パネル・コマンド・ツール
 
 - **コマンドパレット (Ctrl+Shift+P)** - VS Code 風の検索可能なアクションメニュー。全コマンドを網羅
 - **スラッシュコマンドパネル (Ctrl+/)** - CLI が解釈するスラッシュコマンドを説明付きで一覧表示。`.claude/commands/*.md` のカスタムコマンドも自動取り込み
-- **拡張機能パネル** - 設定済みの MCP サーバー・スキル・プラグインを一覧表示。CLI が対応していれば有効/無効を切替可能。スキルはダブルクリックで実行
-- **チャットビュー** - セッションの JSONL 記録全体を、自動スクロールする整形済み Markdown としてサイドパネルに表示。生のスクロールバックの代わりに読みやすい会話ビューを提供
+- **拡張機能パネル** - 設定済みの MCP サーバー・スキル・プラグインを一覧表示。CLI が対応していれば有効/無効を切替可能。MCP サーバーは `claude mcp` を使って追加（stdio / http、スコープ指定）・削除・状態確認ができる。スキルはダブルクリックで実行
+- **メモリパネル** - Claude Code がプロジェクトについて書き残した自動メモリのノート（`~/.claude/projects/<project>/memory/`）を種類別に表示。検索、`MEMORY.md` の目次、被リンク、未作成のリンクの一覧に対応
 - **ダイアグラムビューア** - MCP ツール呼び出しで描画された Excalidraw 図と、出力中の mermaid / chart コードブロックを、ズーム・パン可能なウィンドウで表示。PNG エクスポート/コピーに対応し、プロジェクトごとにキャッシュされるため再開・再起動後も残る
 - **スニペットパネル** - コードスニペットを保存してアクティブなコンソールへ送信（テキスト中の `\r` で Enter を送信）。ドラッグ＆ドロップで並べ替え可能。初期状態でよく使うプロンプト（日本語／英語）が入っている
 - **トークン／コストダッシュボード** - セッション記録の `message.usage` を集計する専用ウィンドウ。7/30/90日の期間切替、「このプロジェクトのみ」表示、日別コストの棒グラフ、モデル別・プロジェクト別・セッション別の上位50件内訳、CSV エクスポート
@@ -363,7 +433,8 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 - **自動チェックポイント** - プロンプト送信前にプロジェクトのスナップショットを取り、巻き戻し可能にする。Git リポジトリでは作業ツリーに触れない `git stash create` を使い、Git 管理外のフォルダはファイルコピーで保存
 - **セットアップ診断** - CLI・Node.js・Git・設定フォルダ・サインイン状態をワンクリックで診断し、足りないものにはコピーできる対処コマンドを表示。初回起動時に自動実行され、問題がなければ何も出さない
 - **ショートカット一覧 (F1)** - 全ショートカットを対象ごとにグループ分けして1画面で表示
-- **設定パネル** - 言語、フォントとサイズ、ホストシェル、初期プロンプト、テーマ、通知、チェックポイント、ライブステータス、コミットメッセージ言語、プラン、AI プロバイダーの実行ファイルと引数テンプレート、`.claude` フォルダへのショートカット
+- **ヘルプ** - 「?」ボタンで、スクリーンショット付きの日英ヘルプページをブラウザで開く。Claude Desktop・Claude Code CLI・VS Code 拡張との比較も収録
+- **設定パネル** - カテゴリごとにグループ分け。言語、フォントとサイズ、ホストシェル、初期プロンプト、テーマ、通知、チェックポイント、ライブステータス、コミットメッセージ言語、プラン、起動時のモデルと effort、AI プロバイダーの実行ファイルと引数テンプレート、`.claude` フォルダへのショートカット
 - **自動アップデート** - GitHub リリースを確認し、新しいバージョンがあれば実行中の exe の隣にダウンロードして検証したうえで適用。古い exe はリネームで退避してから新しい exe を配置し、失敗した場合はリネームを戻すため「アプリが消えたまま」の状態にはならない。自己置換できるのは発行済みの単一ファイルビルドのみで、開発ビルドはリリースページを案内する
 
 ### その他
@@ -395,8 +466,13 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 | Esc | タスクを停止 |
 | Ctrl+C | コピー（選択がなければ中断） |
 | Ctrl+V | 貼り付け（画像も可） |
+| Alt+V | クリップボードの画像を貼り付け |
 | Shift+Tab | AI モードを切替 |
 | Ctrl+S | エディタで開いているファイルを保存 |
+| **チャットビュー** | |
+| Ctrl+F | 会話内を検索 |
+| Enter / Shift+Enter、F3 | 次 / 前の一致へ移動 |
+| Tab | 提案されたプロンプトを入力欄に取り込む |
 
 ## 技術スタック
 
@@ -405,8 +481,9 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 | フレームワーク | .NET 8.0 / C# |
 | UI | Avalonia 12.1.1 + Fluent テーマ + Inter フォント |
 | ターミナル | PseudoConsole (ConPTY) 上の自前 VT100/ANSI パーサー |
+| ブラウザプレビュー | Microsoft Edge WebView2 |
 | シリアライズ | System.Text.Json |
-| 外部ツール | AI CLI 本体、`git`、プルリクエスト用の `gh` |
+| 外部ツール | AI CLI 本体、`git`、プルリクエスト用の `gh`、リモートセッション用の `wsl.exe` / `ssh.exe` |
 
 ## プロジェクト構成
 
@@ -417,11 +494,14 @@ Claucraft/
 ├── MainWindow.axaml / .cs          # アプリ本体のウィンドウ。中身は AppShell ひとつ
 ├── AppShell.axaml / .cs            # シェル本体：ツールバー、アクティビティバー、パネル、MDI 領域、ステータスバー
 ├── AppShell.Update.cs              # 自動アップデートの一連の流れ（確認・DL・配置・再起動）
+├── AppShell.Schedule.cs            # スケジュールタスクのダイアログとタイマー
+├── AppShell.Mcp.cs                 # `claude mcp` による MCP サーバーの追加・削除・確認
 ├── MdiLayoutItem.cs                # MDI 子ウィンドウが実装するインターフェース
 ├── FileTreeNode.cs                 # エクスプローラーのツリーノードモデル
 ├── UsageChartWindow.axaml / .cs    # 14日間の使用量チャートダイアログ
 ├── Terminal/
 │   ├── TerminalControl.cs          # ターミナルコントロール：描画・選択・キャレット・IME・検索・D&D
+│   ├── TerminalControl.SidePane.cs # チャットビューのサイドペイン（Terminal / Preview）
 │   ├── TerminalBuffer.cs           # セルグリッドとスクロールバック、代替バッファ、ブラケットペースト
 │   ├── TerminalCell.cs             # セルモデル（Unicode コードポイント、色、属性）
 │   ├── VtParser.cs                 # ANSI/VT 状態機械。SGR の 256 色・トゥルーカラー対応
@@ -439,7 +519,12 @@ Claucraft/
 │   ├── CommitGraphView.cs          # レーングラフの描画コントロール
 │   ├── DiffWindow.cs               # 仮想化された差分ビューア（行範囲コメント対応）
 │   ├── CostDashboardWindow.cs      # トークン／コストダッシュボード
-│   ├── DocumentViewPanel.cs        # セッション記録を Markdown で表示（チャットビュー）
+│   ├── DocumentViewPanel.cs        # チャットビュー：吹き出し・ツール詳細・カード・検索
+│   ├── ChatSidePane.cs             # チャットビューのサイドペインのタブ
+│   ├── BrowserPreviewPanel.cs      # ローカル Web サーバーの WebView2 プレビュー
+│   ├── ImageAttachmentStrip.cs     # 添付画像のサムネイル列
+│   ├── MemoryPanel.cs              # 自動メモリのノートパネル
+│   ├── MemoryNoteView.cs           # リンク付きでノート1件を表示
 │   └── MarqueeBar.cs               # ターン実行中のスイープバー
 ├── Services/
 │   ├── AppSettings.cs              # 設定の永続化
@@ -454,6 +539,13 @@ Claucraft/
 │   ├── ProcessTree.cs              # 子プロセスを辿ってウィンドウの CLI プロセスを特定
 │   ├── SessionService.cs           # セッション一覧と sessions-index の管理
 │   ├── SessionMessageReader.cs     # JSONL 記録のパーサー
+│   ├── ChatTaskTracker.cs          # 記録から組み立てるタスク一覧とサブエージェント
+│   ├── ClaudeProjectPaths.cs       # プロジェクトフォルダと ~/.claude/projects のフォルダの対応付け
+│   ├── ExecutionTarget.cs          # ローカル / WSL / SSH の起動先
+│   ├── ScheduleService.cs          # スケジュールタスクの保存
+│   ├── McpService.cs               # `claude mcp` のラッパー
+│   ├── MemoryStore.cs              # 自動メモリのノートの読み取り
+│   ├── ModelCatalog.cs             # 記録から学習する最新のモデルバージョン
 │   ├── SessionCostMonitor.cs       # セッションごとのコスト・コンテキストのライブ追跡
 │   ├── RunningSessionService.cs    # 他プロセスが保持中のセッションの検出
 │   ├── SubagentMonitor.cs          # 実行中サブエージェントの追跡
@@ -481,9 +573,12 @@ Claucraft/
 │   ├── SecretScanService.cs        # ステージ済み差分のファイル単位シークレットスキャン
 │   ├── StagingPolicy.cs            # コミットすべきでない可能性が高いファイルの検出
 │   ├── GitIgnoreService.cs         # 上記警告のクローン単位の無視リスト
-│   ├── GitHubCli.cs                # プルリクエスト用の `gh` ラッパー
+│   ├── GitHubCli.cs                # プルリクエスト・CI 状態・リポジトリ作成用の `gh` ラッパー
+│   ├── GitErrorHints.cs            # よくある git の失敗の日英説明
+│   ├── UnifiedDiffParser.cs        # unified diff のパーサー
 │   └── GitCli.cs / GitWriteService.cs / GitChangeService.cs / GitLogService.cs / GitPath.cs / CommitGraphLayout.cs
 │                                   # git プロセスラッパー、書き込み操作、status/log 読み取り、パス復号、グラフレイアウト
+├── Help/                           # 埋め込みの日英ヘルプページとスクリーンショット
 ├── icon.ico / icon.png             # アプリケーションアイコン
 ├── app.manifest                    # アプリケーションマニフェスト
 ├── publish.bat                     # 自己完結型リリースビルドのワンクリック発行
@@ -496,7 +591,9 @@ Claucraft/
 - Node.js - 対応 CLI はいずれも npm パッケージ
 - AI CLI をいずれか1つ以上: [Claude Code](https://docs.anthropic.com/en/docs/claude-code)（既定）、Codex CLI、GitHub Copilot CLI、Antigravity CLI、Grok CLI
 - `git`（任意）- ソースコントロールパネル、コミットグラフ、worktree 分離に必要
-- `gh`（任意）- プルリクエスト機能に必要
+- `gh`（任意）- プルリクエスト、CI 状態、リポジトリ作成に必要
+- Microsoft Edge WebView2 ランタイム（任意。Windows 11 には標準搭載）- チャットビューのブラウザプレビューに必要
+- WSL または OpenSSH クライアント（任意）- WSL / SSH セッションに必要
 
 ## ビルド
 
@@ -521,11 +618,14 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | CLI プロバイダー | `%APPDATA%\Claucraft\providers.json` |
 | Light プロファイル設定 | `%APPDATA%\Claucraft\light-settings.json` |
 | スラッシュコマンド上書き | `%APPDATA%\Claucraft\slashcommands.json`（任意） |
+| スケジュールタスク | `%APPDATA%\Claucraft\schedules.json` |
+| ヘルプページ | `%APPDATA%\Claucraft\Help\` |
 | チェックポイント | `%APPDATA%\Claucraft\checkpoints\` |
 | セッション用 worktree | `%LOCALAPPDATA%\Claucraft\worktrees\` |
 | セッションインデックス（読み書き） | `~/.claude/projects/*/sessions-index.json` |
 | セッション記録（読み取り専用） | `~/.claude/projects/*/*.jsonl` |
 | ダイアグラムのキャッシュ | `~/.claude/projects/*/diagrams/` |
+| 自動メモリのノート（読み取り専用） | `~/.claude/projects/*/memory/` |
 | バックグラウンドセッション（読み取り専用） | `~/.claude/jobs/` |
 | CLI 設定・プラグイン（読み取り専用） | `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/plugins/installed_plugins.json` |
 | プロジェクトの MCP・スキル（読み取り専用） | `<project>/.mcp.json`, `<project>/.claude/settings.local.json`, `<project>/.claude/commands/*.md` |
