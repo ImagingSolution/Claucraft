@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Claucraft 生成中マーク候補</title>
+<style>
+  body { font-family: 'Segoe UI', 'Yu Gothic UI', sans-serif; background: #f3f4f6; margin: 0; padding: 24px; color: #111; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .note { font-size: 13px; color: #555; margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 14px; }
+  .card { background: #fff; border-radius: 12px; padding: 14px 16px; box-shadow: 0 1px 3px #0002; }
+  .card b { font-size: 15px; }
+  .card p { margin: 4px 0 10px; font-size: 12.5px; color: #555; }
+  .frames { font-family: 'Segoe UI Symbol', 'Segoe UI'; font-size: 13px; color: #888; letter-spacing: 2px; }
+  .demo { display: flex; gap: 10px; }
+  .row { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; font-size: 14px; }
+  .row.dark { background: #1a1a19; color: #f0efec; }
+  .row.light { background: #fff; color: #0b0b0b; border: 1px solid #ddd; }
+  .g { font-family: 'Segoe UI Symbol', 'Segoe UI Emoji', 'Segoe UI'; width: 1.2em; text-align: center; display: inline-block; }
+  .dark .g { color: #4ADE80; }
+  .light .g { color: #16a34a; }
+  .big { font-size: 22px; }
+</style>
+</head>
+<body>
+<h1>生成中マーク候補（星以外）</h1>
+<p class="note">アプリと同じく Segoe UI Symbol の文字をコマ送りで描画。色は新アイコンの緑（ダーク #4ADE80 / ライト #16A34A）。上段は本文サイズ、下段は拡大。</p>
+<div class="grid" id="grid"></div>
+<script>
+const spinners = [
+  ["01", "点字ドット", "ターミナル系CLIで定番。細かく回って静か", 80, ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]],
+  ["02", "半円の回転", "塗り分けた円が回る。小さくても判別しやすい", 150, ["◐","◓","◑","◒"]],
+  ["03", "円弧", "細い弧が一周する。ローディング表示の王道", 110, ["◜","◝","◞","◟"]],
+  ["04", "四分割ブロック", "小さな四角が角を巡る", 130, ["▖","▘","▝","▗"]],
+  ["05", "伸縮バー", "レベルメーター風に上下する", 90, ["▁","▂","▃","▄","▅","▆","▇","█","▇","▆","▅","▄","▃","▂"]],
+  ["06", "鼓動ドット", "点が膨らんで縮む。今の星の「点→最大→点」の動きを継承", 130, ["·","∙","•","●","•","∙"]],
+  ["07", "窓の回転", "四分割した窓の塗りが巡る。MDI アイコンと連想がつながる", 150, ["◰","◳","◲","◱"]],
+  ["08", "三角の回転", "角に置いた三角が一周する", 130, ["◢","◣","◤","◥"]],
+  ["09", "プロンプト点滅", "アイコンの「>_」と同じモチーフ。カーソルが点滅", 260, ["›_","› "]],
+  ["10", "ひし形の脈動", "輪郭→中点→塗りつぶしと変化する", 150, ["◇","◈","◆","◈"]],
+];
+const grid = document.getElementById("grid");
+for (const [num, name, desc, ms, frames] of spinners) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `<b>${num}. ${name}</b><p>${desc}（${ms}ms/コマ）<br><span class="frames">${frames.join(" ")}</span></p>
+    <div class="demo">
+      <div class="row dark"><span class="g"></span>Thinking…</div>
+      <div class="row light"><span class="g"></span>Thinking…</div>
+    </div>
+    <div class="demo" style="margin-top:8px">
+      <div class="row dark big"><span class="g"></span></div>
+      <div class="row light big"><span class="g"></span></div>
+    </div>`;
+  grid.appendChild(card);
+  const els = card.querySelectorAll(".g");
+  let i = 0;
+  const tick = () => { els.forEach(e => e.textContent = frames[i]); i = (i + 1) % frames.length; };
+  tick();
+  setInterval(tick, ms);
+}
+</script>
+</body>
+</html>

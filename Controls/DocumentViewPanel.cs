@@ -69,7 +69,7 @@ public class DocumentViewPanel : Panel
     private string _pendingText = "";
     private static readonly TimeSpan PendingPromptTimeout = TimeSpan.FromSeconds(15);
     private readonly Control _workingView;
-    private readonly ClaudeSpinnerGlyph _workingGlyph;
+    private readonly WorkingSpinnerGlyph _workingGlyph;
     // The CLI's spinner line beside the glyph, e.g. "Compacting conversation… (22s · ↑ 1.4k tokens)"
     private readonly TextBlock _workingStatus;
     private bool _isWorking;
@@ -289,7 +289,7 @@ public class DocumentViewPanel : Panel
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
-        _workingGlyph = new ClaudeSpinnerGlyph { VerticalAlignment = VerticalAlignment.Center };
+        _workingGlyph = new WorkingSpinnerGlyph { VerticalAlignment = VerticalAlignment.Center };
         _workingView = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -2382,19 +2382,19 @@ public class DocumentViewPanel : Panel
 }
 
 /// <summary>
-/// The CLI's "Claude is working" mark: the orange glyph at the head of its spinner line, cycling
-/// through the same frames at the same pace - out from a dot to a full star and back again.
+/// The "working" mark: a braille-dot spinner, the kind terminal tools use. Deliberately not the
+/// Claude CLI's orange star, which reads as Anthropic's logo.
 /// </summary>
-public class ClaudeSpinnerGlyph : TextBlock
+public class WorkingSpinnerGlyph : TextBlock
 {
-    private static readonly string[] Frames = { "·", "✢", "✳", "✶", "✻", "✽", "✽", "✻", "✶", "✳", "✢", "·" };
-    // Segoe UI Symbol draws the dingbats in one flat colour; Inter has none of them, and the emoji
-    // font would paint ✳ as a green tile.
+    private static readonly string[] Frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
+    // Segoe UI Symbol has the braille block; Inter has none of it, and falling through to the
+    // emoji font would change the weight between frames.
     private static readonly FontFamily GlyphFont = new("Segoe UI Symbol,Segoe UI Emoji,Segoe UI");
-    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(120) };
+    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(80) };
     private int _frame;
 
-    public ClaudeSpinnerGlyph()
+    public WorkingSpinnerGlyph()
     {
         FontFamily = GlyphFont;
         Foreground = new SolidColorBrush(ChatTheme.Accent);
