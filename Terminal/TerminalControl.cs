@@ -769,6 +769,13 @@ public partial class TerminalControl : Control, IDisposable
             return;
         }
 
+        // Chat view: the prompt box edits like Notepad instead of passing Ctrl keys to the CLI
+        if (_isDocumentView && HandleChatEditKey(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
         // In document view: text stays in input box, allow editing freely
         // Only intercept Enter, Escape, and Ctrl shortcuts
         if (_isDocumentView && !string.IsNullOrEmpty(_inputTextBox.Text))
@@ -928,11 +935,9 @@ public partial class TerminalControl : Control, IDisposable
         {
             if (_isDocumentView)
             {
-                // Chat view: a new line in the box, sent with the rest on Enter
-                var current = _inputTextBox.Text ?? "";
-                var caret = Math.Clamp(_inputTextBox.CaretIndex, 0, current.Length);
-                _inputTextBox.Text = current.Insert(caret, "\n");
-                _inputTextBox.CaretIndex = caret + 1;
+                // Chat view: a new line in the box, sent with the rest on Enter. Typed in as
+                // an edit, so it replaces the selection and Ctrl+Z can take it back.
+                _inputTextBox.SelectedText = "\n";
             }
             else
             {
@@ -6192,14 +6197,41 @@ public partial class TerminalControl : Control, IDisposable
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         if (clipboard == null) return;
         if (await TryAttachClipboardImagesAsync(clipboard)) return;
-        var text = await clipboard.TryGetTextAsync();
-        if (string.IsNullOrEmpty(text)) return;
 
-        // Insert at caret position
-        var current = _inputTextBox.Text ?? "";
-        var caretIndex = _inputTextBox.CaretIndex;
-        _inputTextBox.Text = current.Insert(caretIndex, text);
-        _inputTextBox.CaretIndex = caretIndex + text.Length;
+        // The box's own paste: over the selection, as one undo step. Assigning Text instead
+        // would wipe the undo history.
+        _inputTextBox.Paste();
+    }
+
+    /// <summary>
+    /// Notepad's editing keys for the chat view's prompt box. Returns false for a key that
+    /// keeps its terminal meaning: Ctrl+C with nothing selected in the box still copies the
+    /// terminal selection or interrupts the CLI, and Ctrl+V goes to the image-aware paste.
+    /// </summary>
+    private bool HandleChatEditKey(KeyEventArgs e)
+    {
+        var mods = e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift | KeyModifiers.Alt);
+        bool boxSelection = _inputTextBox.SelectionStart != _inputTextBox.SelectionEnd;
+        switch (e.Key)
+        {
+            case Key.C when mods == KeyModifiers.Control && boxSelection:
+                _inputTextBox.Copy();
+                return true;
+            case Key.X when mods == KeyModifiers.Control && (boxSelection || !_hasSelection):
+                _inputTextBox.Cut();    // nothing selected: nothing to cut, as in Notepad
+                return true;
+            case Key.Z when mods == KeyModifiers.Control:
+                _inputTextBox.Undo();
+                return true;
+            case Key.Z when mods == (KeyModifiers.Control | KeyModifiers.Shift):
+            case Key.Y when mods == KeyModifiers.Control:
+                _inputTextBox.Redo();
+                return true;
+            case Key.A when mods == KeyModifiers.Control:
+                _inputTextBox.SelectAll();
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
