@@ -794,7 +794,11 @@
                         <ScrollViewer x:Name="WindowsPanel" IsVisible="False"
                                       HorizontalScrollBarVisibility="Disabled"
                                       VerticalScrollBarVisibility="Auto">
-                            <StackPanel x:Name="WindowsList" Spacing="2" Margin="4,8" />
+                            <StackPanel>
+                                <StackPanel x:Name="WindowsList" Spacing="2" Margin="4,8" />
+                                <!-- Session sidebar — built in code, see AppShell.Sessions.cs -->
+                                <StackPanel x:Name="SessionsSection" Spacing="2" Margin="4,4,4,8" />
+                            </StackPanel>
                         </ScrollViewer>
 
                         <!-- Slash Commands Panel -->

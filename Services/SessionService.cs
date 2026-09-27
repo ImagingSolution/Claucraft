@@ -25,12 +25,21 @@ public record SessionInfo(string Id, string? Cwd, string? Summary, DateTime? Tim
     /// <summary>Model of the last main-thread turn, used to price a resume.</summary>
     public string? LastModel { get; init; }
 
+    /// <summary>Where the conversation stood when the transcript was last written.</summary>
+    public SessionEndState EndState { get; init; }
+
     /// <summary>What the /resume picker shows for the session, down to its "No prompt" fallback.</summary>
     public string? DisplayTitle =>
         !string.IsNullOrWhiteSpace(Title) ? Title
         : !string.IsNullOrWhiteSpace(Summary) ? Summary
         : "No prompt";
 }
+
+/// <summary>
+/// The last main-thread message of a transcript, reduced to what a session list shows:
+/// the turn finished, it stopped on a question for the user, or it was cut off mid-turn.
+/// </summary>
+public enum SessionEndState { Unknown, Done, Asking, MidTurn, Interrupted }
 
 public static class SessionService
 {
@@ -160,6 +169,7 @@ public static class SessionService
         public bool LoopChecked;
         public long? LastContextTokens;   // tail only: last main-thread turn or compact boundary
         public string? LastModel;
+        public SessionEndState EndState;
     }
 
     /// <summary>Entrypoints of transcripts a program drove, not someone typing into the CLI.</summary>
@@ -222,6 +232,7 @@ public static class SessionService
             Title = CleanupPromptText(title),
             LastContextTokens = scan.LastContextTokens,
             LastModel = scan.LastModel,
+            EndState = scan.EndState,
         };
     }
 
@@ -346,6 +357,8 @@ public static class SessionService
 
             scan.HasMessages = true;
             scan.SeenFirstMessage = true;
+            if (!IsTrue(root, "isSidechain") && !IsTrue(root, "isMeta"))
+                scan.EndState = EndStateOf(root, type!, line, scan.EndState);
 
             // /resume hides sessions opened by /loop, judged from the first real user message.
             if (inHead && !scan.LoopChecked && type == "user"
@@ -380,6 +393,46 @@ public static class SessionService
                 scan.FirstPrompt = candidate; // store original, cleanup happens once at the end
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Folds one main-thread message into the running end state. Lines come in file order, so
+    /// whatever the last one says is where the session stopped.
+    /// </summary>
+    internal static SessionEndState EndStateOf(JsonElement root, string type, string line, SessionEndState current)
+    {
+        if (!root.TryGetProperty("message", out var msg) || msg.ValueKind != JsonValueKind.Object)
+            return current;
+
+        if (type == "user")
+        {
+            if (line.Contains("[Request interrupted", StringComparison.Ordinal))
+                return SessionEndState.Interrupted;
+            // A prompt or a tool's result: either way the assistant owes the next message.
+            return SessionEndState.MidTurn;
+        }
+
+        bool asks = false, usesTool = false;
+        if (msg.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var block in content.EnumerateArray())
+            {
+                if (block.ValueKind != JsonValueKind.Object || ReadString(block, "type") != "tool_use") continue;
+                usesTool = true;
+                var name = ReadString(block, "name");
+                if (name is "AskUserQuestion" or "ExitPlanMode") asks = true;
+            }
+        }
+        if (asks) return SessionEndState.Asking;
+        if (usesTool) return SessionEndState.MidTurn;
+        // The CLI writes one line per content block and only the last carries end_turn, so a
+        // text block without a stop reason keeps the state where it was headed.
+        return ReadString(msg, "stop_reason") switch
+        {
+            "end_turn" or "stop_sequence" => SessionEndState.Done,
+            null => current == SessionEndState.Asking ? current : SessionEndState.Done,
+            _ => SessionEndState.MidTurn,
+        };
     }
 
     private static bool IsTrue(JsonElement root, string name)
