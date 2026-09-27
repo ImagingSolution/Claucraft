@@ -572,7 +572,7 @@ public static class SessionMessageReader
             CollectInlineImages(contentProp, images);
         }
 
-        text = string.IsNullOrWhiteSpace(text) ? "" : CleanMetadataTags(text);
+        text = string.IsNullOrWhiteSpace(text) ? "" : CleanMetadataTags(SlashCommandText(text));
 
         // Claucraft hands pasted images to the CLI as file paths, so the prompt text carries
         // them. Show those as thumbnails and keep the path out of the bubble.
@@ -929,6 +929,19 @@ public static class SessionMessageReader
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// A slash command is logged only as its command-name/command-args tags, which
+    /// <see cref="CleanMetadataTags"/> strips whole; put back what the user typed.
+    /// </summary>
+    private static string SlashCommandText(string text)
+    {
+        var name = Regex.Match(text, @"<command-name>(.*?)</command-name>", RegexOptions.Singleline);
+        if (!name.Success) return text;
+        var args = Regex.Match(text, @"<command-args>(.*?)</command-args>", RegexOptions.Singleline);
+        var typed = (name.Groups[1].Value.Trim() + " " + (args.Success ? args.Groups[1].Value.Trim() : "")).Trim();
+        return typed + "\n" + text;
     }
 
     /// <summary>
