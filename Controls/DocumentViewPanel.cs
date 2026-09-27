@@ -107,6 +107,15 @@ public class DocumentViewPanel : Panel
     /// </summary>
     public Func<bool>? IsAskOpen { get; set; }
 
+    // Task checklist and subagent list under the title, and the back bar while a subagent is open
+    private readonly StackPanel _extrasPanel;
+    private string _extrasKey = "";
+    private bool _tasksExpanded = true;
+    private bool _agentsExpanded;
+    // The subagent transcript on screen in place of the session, or null for the session itself
+    private string? _agentPath;
+    private string _agentTitle = "";
+
     private string? _currentSessionPath;
     private int _lastLineCount;
     private bool _autoScroll = true;
@@ -145,11 +154,12 @@ public class DocumentViewPanel : Panel
         Grid.SetColumn(_projectChip, 1);
         headerRow.Children.Add(_titleText);
         headerRow.Children.Add(_projectChip);
+        _extrasPanel = new StackPanel { Spacing = 4 };
         _header = new Border
         {
             Padding = new Thickness(16, 9),
             BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = headerRow,
+            Child = new StackPanel { Spacing = 6, Children = { headerRow, _extrasPanel } },
         };
         Children.Add(_header);
 
@@ -241,6 +251,7 @@ public class DocumentViewPanel : Panel
     {
         if (jsonlPath != _currentSessionPath) _hideFromUuid = null;
         _currentSessionPath = jsonlPath;
+        _agentPath = null;
         _pendingView = null;
         _autoScroll = true;
         ClearViews();
@@ -255,6 +266,8 @@ public class DocumentViewPanel : Panel
     public void ShowPendingPrompt(string text)
     {
         RemovePendingView();
+        // A prompt goes to the session, so show the session it lands in
+        if (_agentPath != null) ShowAgent(null, "");
         // Slash commands are not always written to the transcript as a prompt
         if (string.IsNullOrWhiteSpace(text) || text.TrimStart().StartsWith('/') || _currentSessionPath == null) return;
 
@@ -393,6 +406,9 @@ public class DocumentViewPanel : Panel
     {
         ClearViews();
         _currentSessionPath = null;
+        _agentPath = null;
+        _extrasPanel.Children.Clear();
+        _extrasKey = "";
         _lastLineCount = 0;
         SetEmptyState(Loc.Get("NoSession", "No session loaded"));
         _titleText.Text = "";
@@ -431,10 +447,11 @@ public class DocumentViewPanel : Panel
 
     private void OnPollTick(object? sender, EventArgs e)
     {
-        if (string.IsNullOrEmpty(_currentSessionPath)) return;
-        if (!System.IO.File.Exists(_currentSessionPath)) return;
+        var path = _agentPath ?? _currentSessionPath;
+        if (string.IsNullOrEmpty(path)) return;
+        if (!System.IO.File.Exists(path)) return;
         bool pendingExpired = _pendingView != null && DateTime.UtcNow - _pendingSince > PendingPromptTimeout;
-        if (CountLines(_currentSessionPath) == _lastLineCount && !pendingExpired) return;
+        if (CountLines(path) == _lastLineCount && !pendingExpired) return;
 
         if (Refresh(force: false) && _autoScroll)
             ScrollToBottom();
@@ -443,19 +460,23 @@ public class DocumentViewPanel : Panel
     /// <summary>Re-reads the transcript and brings the view in line; true if anything changed.</summary>
     private bool Refresh(bool force)
     {
-        var path = _currentSessionPath;
+        var path = _agentPath ?? _currentSessionPath;
         if (path == null) return false;
 
         var messages = SessionMessageReader.ReadSession(path);
-        if (_hideFromUuid != null)
+        if (_agentPath == null)
         {
-            int cut = messages.FindIndex(m => m.Uuid == _hideFromUuid);
-            if (cut >= 0) messages.RemoveRange(cut, messages.Count - cut);
-            else _hideFromUuid = null;
+            if (_hideFromUuid != null)
+            {
+                int cut = messages.FindIndex(m => m.Uuid == _hideFromUuid);
+                if (cut >= 0) messages.RemoveRange(cut, messages.Count - cut);
+                else _hideFromUuid = null;
+            }
+            _shownMessages = messages;
+            UpdateHeader(path, messages);
         }
-        _shownMessages = messages;
         _lastLineCount = CountLines(path);
-        UpdateHeader(path, messages);
+        UpdateExtras(messages);
         RemovePendingView();
         _messagesStack.Children.Remove(_workingView);
         _messagesStack.Children.Remove(_queueView);
@@ -526,6 +547,185 @@ public class DocumentViewPanel : Panel
         _projectChip.IsVisible = !string.IsNullOrEmpty(project);
         ToolTip.SetTip(_projectChip, meta.Cwd);
     }
+
+    // ── Tasks and subagents ──
+
+    private static readonly Color AccentColor = Color.FromRgb(217, 119, 87);
+    private static readonly Color DoneColor = Color.FromRgb(96, 165, 96);
+
+    /// <summary>Opens a subagent's transcript in place of the session, or goes back with null.</summary>
+    private void ShowAgent(string? transcriptPath, string title)
+    {
+        _agentPath = transcriptPath;
+        _agentTitle = title;
+        _pendingView = null;
+        _autoScroll = true;
+        ClearViews();
+        Refresh(force: true);
+        ScrollToBottom();
+    }
+
+    /// <summary>
+    /// Rebuilds the strip under the title: the back bar while a subagent is open, otherwise the
+    /// task checklist and the subagent list, each folded to one line until clicked.
+    /// </summary>
+    private void UpdateExtras(List<ConversationMessage> messages)
+    {
+        List<ChatTask> tasks = new();
+        List<SubagentInfo> agents = new();
+        if (_agentPath == null && _currentSessionPath != null)
+        {
+            tasks = ChatTaskTracker.ExtractTasks(messages);
+            agents = ChatTaskTracker.ExtractSubagents(_currentSessionPath, messages);
+        }
+        var key = string.Join("\u001E",
+            _isDark, _baseFontSize, _agentPath, _agentTitle, _tasksExpanded, _agentsExpanded,
+            string.Join("\u001F", tasks.Select(t => $"{t.Id}|{t.Status}|{t.Subject}|{t.ActiveForm}")),
+            string.Join("\u001F", agents.Select(a => $"{a.ToolUseId}|{a.Running}|{a.TranscriptPath != null}|{a.Description}")));
+        if (key == _extrasKey) return;
+        _extrasKey = key;
+        _extrasPanel.Children.Clear();
+
+        var pal = Palette;
+        double size = _baseFontSize * 0.85;
+
+        if (_agentPath != null)
+        {
+            var back = FlatButton(Loc.Get("ChatBackToMain"), size, AccentColor);
+            back.Click += (_, _) => ShowAgent(null, "");
+            _extrasPanel.Children.Add(new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 12,
+                Children =
+                {
+                    back,
+                    new TextBlock
+                    {
+                        Text = string.Format(Loc.Get("ChatSubagentTitle"), _agentTitle),
+                        FontSize = size,
+                        Foreground = Brush(pal.Dim),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                    },
+                },
+            });
+            return;
+        }
+        if (tasks.Count == 0 && agents.Count == 0) return;
+
+        var toggles = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+        _extrasPanel.Children.Add(toggles);
+
+        if (tasks.Count > 0)
+        {
+            int done = tasks.Count(t => t.Status == ChatTaskStatus.Completed);
+            var toggle = FlatButton((_tasksExpanded ? "▾ " : "▸ ")
+                + string.Format(Loc.Get("ChatTasks"), done, tasks.Count), size, pal.Fg);
+            toggle.Click += (_, _) => { _tasksExpanded = !_tasksExpanded; UpdateExtras(messages); };
+            toggles.Children.Add(toggle);
+
+            // Folded, the line still says what Claude is on right now
+            var current = tasks.FirstOrDefault(t => t.Status == ChatTaskStatus.InProgress);
+            if (!_tasksExpanded && current != null)
+                toggles.Children.Add(new TextBlock
+                {
+                    Text = current.ActiveForm ?? current.Subject,
+                    FontSize = size,
+                    Foreground = Brush(AccentColor),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    MaxWidth = 600,
+                });
+        }
+        if (agents.Count > 0)
+        {
+            var toggle = FlatButton((_agentsExpanded ? "▾ " : "▸ ")
+                + string.Format(Loc.Get("ChatSubagents"), agents.Count), size, pal.Fg);
+            toggle.Click += (_, _) => { _agentsExpanded = !_agentsExpanded; UpdateExtras(messages); };
+            toggles.Children.Add(toggle);
+        }
+
+        if (tasks.Count > 0 && _tasksExpanded)
+        {
+            var list = new StackPanel { Spacing = 2, Margin = new Thickness(14, 0, 0, 2) };
+            foreach (var t in tasks)
+            {
+                var (glyph, color) = t.Status switch
+                {
+                    ChatTaskStatus.Completed => ("✓", DoneColor),
+                    ChatTaskStatus.InProgress => ("◐", AccentColor),
+                    _ => ("○", pal.Dim),
+                };
+                list.Children.Add(new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Children =
+                    {
+                        new TextBlock { Text = glyph, FontSize = size, Foreground = Brush(color), Width = 14 },
+                        new TextBlock
+                        {
+                            Text = t.Status == ChatTaskStatus.InProgress ? t.ActiveForm ?? t.Subject : t.Subject,
+                            FontSize = size,
+                            Foreground = Brush(t.Status == ChatTaskStatus.Completed ? pal.Dim : pal.Fg),
+                            FontWeight = t.Status == ChatTaskStatus.InProgress ? FontWeight.SemiBold : FontWeight.Normal,
+                            TextDecorations = t.Status == ChatTaskStatus.Completed ? TextDecorations.Strikethrough : null,
+                            TextTrimming = TextTrimming.CharacterEllipsis,
+                        },
+                    },
+                });
+            }
+            _extrasPanel.Children.Add(list);
+        }
+
+        if (agents.Count > 0 && _agentsExpanded)
+        {
+            var list = new StackPanel { Spacing = 0, Margin = new Thickness(14, 0, 0, 2) };
+            foreach (var a in agents)
+            {
+                var label = string.IsNullOrEmpty(a.Description) ? a.AgentType : $"{a.AgentType} — {a.Description}";
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                row.Children.Add(new TextBlock
+                {
+                    Text = a.Running ? "●" : "✓",
+                    FontSize = size,
+                    Foreground = Brush(a.Running ? AccentColor : DoneColor),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Width = 14,
+                });
+                var open = FlatButton(label, size, a.TranscriptPath != null ? pal.Fg : pal.Dim);
+                open.IsEnabled = a.TranscriptPath != null;
+                ToolTip.SetTip(open, Loc.Get(a.TranscriptPath != null ? "ChatSubagentOpen" : "ChatSubagentNoTranscript"));
+                ToolTip.SetShowOnDisabled(open, true);
+                var path = a.TranscriptPath;
+                open.Click += (_, _) => { if (path != null) ShowAgent(path, label); };
+                row.Children.Add(open);
+                if (a.Running)
+                    row.Children.Add(new TextBlock
+                    {
+                        Text = Loc.Get("ChatSubagentRunning"),
+                        FontSize = size * 0.9,
+                        Foreground = Brush(AccentColor),
+                        VerticalAlignment = VerticalAlignment.Center,
+                    });
+                list.Children.Add(row);
+            }
+            _extrasPanel.Children.Add(list);
+        }
+    }
+
+    private Button FlatButton(string text, double size, Color fg) => new()
+    {
+        Content = new TextBlock { Text = text, FontSize = size, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 },
+        Foreground = Brush(fg),
+        Background = Brushes.Transparent,
+        BorderThickness = new Thickness(0),
+        Padding = new Thickness(0, 1),
+        Cursor = new Cursor(StandardCursorType.Hand),
+        VerticalAlignment = VerticalAlignment.Center,
+        Focusable = false,
+    };
 
     private void SetEmptyState(string? text)
     {
@@ -628,8 +828,9 @@ public class DocumentViewPanel : Panel
     }
 
     // What the CLI lists under /rewind: prompts the reader typed, not notices it wrote itself
-    private static bool IsRewindable(ConversationMessage msg) =>
-        msg.Uuid != null && msg.Images is not { Count: > 0 }
+    // A subagent's prompts are not the session's, so the CLI cannot rewind to them
+    private bool IsRewindable(ConversationMessage msg) =>
+        _agentPath == null && msg.Uuid != null && msg.Images is not { Count: > 0 }
         && !msg.Text.StartsWith('<') && !msg.Text.StartsWith("[Request interrupted");
 
     internal static string FirstLine(string text) =>
