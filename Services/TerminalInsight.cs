@@ -300,6 +300,20 @@ public static class TerminalInsight
 
     private static (bool IsWorking, int? ElapsedSeconds) DetectWorking(string[] lines)
     {
+        var i = FindWorkingLine(lines);
+        if (i < 0) return (false, null);
+
+        var m = ElapsedRegex.Match(lines[i]);
+        if (!m.Success) return (true, null);
+
+        var seconds = int.TryParse(m.Groups["sec"].Value, out var s) ? s : 0;
+        if (m.Groups["min"].Success && int.TryParse(m.Groups["min"].Value, out var min))
+            seconds += min * 60;
+        return (true, seconds);
+    }
+
+    private static int FindWorkingLine(string[] lines)
+    {
         // A screen is padded with blank rows to its full height, so the tail has to be measured
         // from the last row that has anything on it rather than from the end of the array.
         var last = lines.Length - 1;
@@ -307,18 +321,27 @@ public static class TerminalInsight
         var first = Math.Max(0, last - WorkingTailLines + 1);
 
         for (var i = last; i >= first; i--)
+            if (WorkingLineRegex.IsMatch(lines[i]) || WorkingSpinnerRegex.IsMatch(lines[i])) return i;
+        return -1;
+    }
+
+    /// <summary>
+    /// The spinner line as the terminal shows it, e.g. "Compacting conversation… (22s · ↑ 1.4k tokens)",
+    /// without its animated glyph; null when the CLI is not working.
+    /// </summary>
+    public static string? WorkingStatus(string screenText)
+    {
+        try
         {
-            if (!WorkingLineRegex.IsMatch(lines[i]) && !WorkingSpinnerRegex.IsMatch(lines[i])) continue;
-
-            var m = ElapsedRegex.Match(lines[i]);
-            if (!m.Success) return (true, null);
-
-            var seconds = int.TryParse(m.Groups["sec"].Value, out var s) ? s : 0;
-            if (m.Groups["min"].Success && int.TryParse(m.Groups["min"].Value, out var min))
-                seconds += min * 60;
-            return (true, seconds);
+            var lines = SplitWindow(screenText);
+            var i = FindWorkingLine(lines);
+            if (i < 0) return null;
+            var line = lines[i].Trim();
+            // The glyph cycles (✻ ✳ · …); the chat view has its own spark
+            if (line.Length > 1 && !char.IsLetterOrDigit(line[0]) && line[0] != '(') line = line[1..].TrimStart();
+            return line;
         }
-        return (false, null);
+        catch { return null; }
     }
 
     private static readonly Dictionary<string, AiActivity> ToolVerbMap = new(StringComparer.OrdinalIgnoreCase)

@@ -69,6 +69,8 @@ public class DocumentViewPanel : Panel
     private string _pendingText = "";
     private static readonly TimeSpan PendingPromptTimeout = TimeSpan.FromSeconds(15);
     private readonly Control _workingView;
+    // The CLI's spinner line beside the spark, e.g. "Compacting conversation… (22s · ↑ 1.4k tokens)"
+    private readonly TextBlock _workingStatus;
     private bool _isWorking;
     // Prompts sent while Claude was busy, waiting for the turn to end
     private readonly StackPanel _queueView;
@@ -280,10 +282,18 @@ public class DocumentViewPanel : Panel
             else if (e.Key == Key.F3 && _searchBar.IsVisible) { StepMatch(e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? -1 : 1); e.Handled = true; }
         }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
 
-        _workingView = new ClaudeSparkIndicator
+        _workingStatus = new TextBlock
         {
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        _workingView = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 6, 0, 0),
+            Children = { new ClaudeSparkIndicator { VerticalAlignment = VerticalAlignment.Center }, _workingStatus },
         };
         _queueView = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
 
@@ -390,9 +400,19 @@ public class DocumentViewPanel : Panel
         if (_pendingView != null) _messagesStack.Children.Remove(_pendingView);
     }
 
-    /// <summary>Whether the CLI is mid-turn; shows the spark under the transcript while it is.</summary>
-    public void SetWorking(bool working)
+    /// <summary>
+    /// Whether the CLI is mid-turn; shows the spark under the transcript while it is, with the
+    /// terminal's spinner line beside it when there is one.
+    /// </summary>
+    public void SetWorking(bool working, string? status = null)
     {
+        status = working ? status : null;
+        if (_workingStatus.Text != status)
+        {
+            _workingStatus.Text = status;
+            _workingStatus.FontSize = _baseFontSize * 0.9;
+            _workingStatus.Foreground = Brush(Palette.Dim);
+        }
         if (working == _isWorking) return;
         _isWorking = working;
         PlaceWorkingView();

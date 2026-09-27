@@ -3981,7 +3981,8 @@ public partial class TerminalControl : Control, IDisposable
             _suggestionTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
             _suggestionTimer.Tick += (_, _) =>
             {
-                _docViewPanel?.SetWorking(Services.TerminalInsight.IsWorking(GetScreenText(0)));
+                var status = Services.TerminalInsight.WorkingStatus(GetScreenText(0));
+                _docViewPanel?.SetWorking(status != null, status);
                 FlushSendQueueWhenIdle();
                 var s = ReadPromptSuggestion();
                 if (s == _promptSuggestion) return;
