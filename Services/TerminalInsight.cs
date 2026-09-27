@@ -337,7 +337,7 @@ public static class TerminalInsight
             var i = FindWorkingLine(lines);
             if (i < 0) return null;
             var line = lines[i].Trim();
-            // The glyph cycles (✻ ✳ · …); the chat view has its own spark
+            // The glyph cycles (✻ ✳ · …); the chat view runs its own
             if (line.Length > 1 && !char.IsLetterOrDigit(line[0]) && line[0] != '(') line = line[1..].TrimStart();
             return line;
         }

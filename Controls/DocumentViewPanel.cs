@@ -69,7 +69,8 @@ public class DocumentViewPanel : Panel
     private string _pendingText = "";
     private static readonly TimeSpan PendingPromptTimeout = TimeSpan.FromSeconds(15);
     private readonly Control _workingView;
-    // The CLI's spinner line beside the spark, e.g. "Compacting conversation… (22s · ↑ 1.4k tokens)"
+    private readonly ClaudeSpinnerGlyph _workingGlyph;
+    // The CLI's spinner line beside the glyph, e.g. "Compacting conversation… (22s · ↑ 1.4k tokens)"
     private readonly TextBlock _workingStatus;
     private bool _isWorking;
     // Prompts sent while Claude was busy, waiting for the turn to end
@@ -288,13 +289,14 @@ public class DocumentViewPanel : Panel
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
+        _workingGlyph = new ClaudeSpinnerGlyph { VerticalAlignment = VerticalAlignment.Center };
         _workingView = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 8,
+            Spacing = 4,
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 6, 0, 0),
-            Children = { new ClaudeSparkIndicator { VerticalAlignment = VerticalAlignment.Center }, _workingStatus },
+            Children = { _workingGlyph, _workingStatus },
         };
         _queueView = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
 
@@ -402,7 +404,7 @@ public class DocumentViewPanel : Panel
     }
 
     /// <summary>
-    /// Whether the CLI is mid-turn; shows the spark under the transcript while it is, with the
+    /// Whether the CLI is mid-turn; shows the spinner under the transcript while it is, with the
     /// terminal's spinner line beside it when there is one.
     /// </summary>
     public void SetWorking(bool working, string? status = null)
@@ -495,12 +497,15 @@ public class DocumentViewPanel : Panel
         }
     }
 
-    // The spark stays the last thing in the column, with the queue after it. A just-sent prompt
-    // shows the spark too, since the CLI takes a moment to start its spinner.
+    // The spinner stays the last thing in the column, with the queue after it. A just-sent prompt
+    // shows the spinner too, since the CLI takes a moment to start its own.
     private void PlaceWorkingView()
     {
         _messagesStack.Children.Remove(_workingView);
         _messagesStack.Children.Remove(_queueView);
+        // A fixed-width cell, so the text beside it holds still while the glyph changes shape
+        _workingGlyph.FontSize = _baseFontSize;
+        _workingGlyph.Width = _baseFontSize * 1.2;
         if (IsBusy) _messagesStack.Children.Add(_workingView);
         if (_queueItems.Count > 0) _messagesStack.Children.Add(_queueView);
     }
@@ -2377,60 +2382,37 @@ public class DocumentViewPanel : Panel
 }
 
 /// <summary>
-/// The desktop app's "Claude is writing" mark: the orange spark under the reply, its rays
-/// breathing in and out one after another while the whole mark turns slowly.
+/// The CLI's "Claude is working" mark: the orange glyph at the head of its spinner line, cycling
+/// through the same frames at the same pace - out from a dot to a full star and back again.
 /// </summary>
-public class ClaudeSparkIndicator : Control
+public class ClaudeSpinnerGlyph : TextBlock
 {
-    private const int RayCount = 12;
-    // Uneven resting lengths, like the hand-drawn rays of the logo
-    private static readonly double[] RayLength = { 1.0, 0.78, 0.92, 0.7, 0.96, 0.82, 1.0, 0.74, 0.9, 0.8, 0.95, 0.72 };
-    private readonly DateTime _start = DateTime.UtcNow;
-    private bool _running;
+    private static readonly string[] Frames = { "·", "✢", "✳", "✶", "✻", "✽", "✽", "✻", "✶", "✳", "✢", "·" };
+    // Segoe UI Symbol draws the dingbats in one flat colour; Inter has none of them, and the emoji
+    // font would paint ✳ as a green tile.
+    private static readonly FontFamily GlyphFont = new("Segoe UI Symbol,Segoe UI Emoji,Segoe UI");
+    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(120) };
+    private int _frame;
 
-    public ClaudeSparkIndicator()
+    public ClaudeSpinnerGlyph()
     {
-        Width = 22;
-        Height = 22;
+        FontFamily = GlyphFont;
+        Foreground = new SolidColorBrush(ChatTheme.Accent);
+        TextAlignment = TextAlignment.Center;
         IsHitTestVisible = false;
+        Text = Frames[0];
+        _timer.Tick += (_, _) => Text = Frames[_frame = (_frame + 1) % Frames.Length];
     }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        _running = true;
-        RequestFrame();
+        _timer.Start();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        _running = false;
+        _timer.Stop();
         base.OnDetachedFromVisualTree(e);
-    }
-
-    private void RequestFrame() => TopLevel.GetTopLevel(this)?.RequestAnimationFrame(_ =>
-    {
-        if (!_running) return;
-        InvalidateVisual();
-        RequestFrame();
-    });
-
-    public override void Render(DrawingContext context)
-    {
-        double t = (DateTime.UtcNow - _start).TotalSeconds;
-        var c = new Point(Bounds.Width / 2, Bounds.Height / 2);
-        double radius = Math.Min(Bounds.Width, Bounds.Height) / 2;
-        double spin = t * 0.9;
-        var pen = new Pen(new SolidColorBrush(ChatTheme.Accent), radius * 0.2, lineCap: PenLineCap.Round);
-
-        for (int i = 0; i < RayCount; i++)
-        {
-            // A wave runs round the mark: each ray grows and shrinks a little after its neighbour
-            double wave = 0.5 + 0.5 * Math.Sin(t * 4.2 - i * (2 * Math.PI / RayCount) * 2);
-            double len = radius * RayLength[i] * (0.55 + 0.45 * wave);
-            double a = spin + i * 2 * Math.PI / RayCount;
-            var dir = new Vector(Math.Cos(a), Math.Sin(a));
-            context.DrawLine(pen, c + dir * (radius * 0.12), c + dir * len);
-        }
     }
 }
