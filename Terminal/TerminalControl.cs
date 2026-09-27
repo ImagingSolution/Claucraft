@@ -443,6 +443,17 @@ public class TerminalControl : Control, IDisposable
         if (string.IsNullOrEmpty(_inputTextBox.Text) && !_attachStrip.HasItems) return false;
 
         bool withImages = _attachStrip.HasItems;
+        // Mid-turn, the prompt waits its turn instead of being typed over Claude's work
+        if (_isDocumentView && (_docViewPanel?.IsBusy == true || _sendQueue.Count > 0))
+        {
+            var shown = _inputTextBox.Text ?? "";
+            _sendQueue.Add(new QueuedPrompt(shown, JoinWithAttachments(shown), withImages));
+            _inputTextBox.Text = "";
+            _inputTextBox.CaretIndex = 0;
+            _docViewPanel?.SetQueue(_sendQueue.Select(q => q.Shown).ToList());
+            return true;
+        }
+
         _docViewPanel?.ShowPendingPrompt(_inputTextBox.Text ?? "");
         var text = JoinWithAttachments(_inputTextBox.Text ?? "");
         PromptSubmitted?.Invoke(text);
@@ -1329,6 +1340,11 @@ public class TerminalControl : Control, IDisposable
         ToolTip.SetTip(button, Services.Loc.Get("StopTaskTooltip", "Stop what the AI is doing (Esc)"));
         button.Click += (_, _) =>
         {
+            if (_isDocumentView)
+            {
+                StopTurn();
+                return;
+            }
             SendText("\x1b");
             FocusTerminal();
         };
@@ -3741,6 +3757,12 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.AskAnswered += (questions, replies) => AnswerAskUserQuestion(questions, replies);
                 _docViewPanel.AskCancelled += () => _pty?.WriteInput("\x1b");
                 _docViewPanel.IsAskOpen = IsAskSelectorOnScreen;
+                _docViewPanel.QueuedPromptRemoved += index =>
+                {
+                    if (index < 0 || index >= _sendQueue.Count) return;
+                    _sendQueue.RemoveAt(index);
+                    _docViewPanel?.SetQueue(_sendQueue.Select(q => q.Shown).ToList());
+                };
                 VisualChildren.Add(_docViewPanel);
                 LogicalChildren.Add(_docViewPanel);
             }
@@ -3793,6 +3815,7 @@ public class TerminalControl : Control, IDisposable
             _suggestionTimer.Tick += (_, _) =>
             {
                 _docViewPanel?.SetWorking(Services.TerminalInsight.IsWorking(GetScreenText(0)));
+                FlushSendQueueWhenIdle();
                 var s = ReadPromptSuggestion();
                 if (s == _promptSuggestion) return;
                 _promptSuggestion = s;
@@ -3800,6 +3823,53 @@ public class TerminalControl : Control, IDisposable
             };
         }
         _suggestionTimer.Start();
+    }
+
+    // ── Stop and the send queue (chat view) ──
+
+    private record QueuedPrompt(string Shown, string Text, bool WithImages);
+    private readonly List<QueuedPrompt> _sendQueue = new();
+    private int _idleTicks;
+    // The spinner can drop out for a tick between tool calls; wait this many ticks (x400 ms)
+    // of quiet before treating the turn as over
+    private const int IdleTicksBeforeSend = 3;
+
+    /// <summary>
+    /// Interrupts the running turn. Queued prompts go back into the box, as the CLI does with
+    /// its own queue: the reader stopped Claude, so sending them on regardless would be wrong.
+    /// </summary>
+    private void StopTurn()
+    {
+        _pty?.WriteInput("\x1b");
+        if (_sendQueue.Count == 0) return;
+        var back = string.Join("\n", _sendQueue.Select(q => q.Shown).Where(s => !string.IsNullOrWhiteSpace(s)));
+        var typed = _inputTextBox.Text ?? "";
+        _inputTextBox.Text = string.IsNullOrWhiteSpace(typed) ? back : back + "\n" + typed;
+        _inputTextBox.CaretIndex = _inputTextBox.Text.Length;
+        _sendQueue.Clear();
+        _docViewPanel?.SetQueue(Array.Empty<string>());
+        _inputTextBox.Focus();
+    }
+
+    // Sends the next queued prompt once the turn has been over for a moment and nothing else
+    // (a permission prompt, a question, a menu) is waiting for an answer.
+    private void FlushSendQueueWhenIdle()
+    {
+        if (_sendQueue.Count == 0 || _docViewPanel == null || !_isDocumentView
+            || _docViewPanel.IsBusy || IsPermissionPromptOnScreen() || IsAskSelectorOnScreen())
+        {
+            _idleTicks = 0;
+            return;
+        }
+        if (++_idleTicks < IdleTicksBeforeSend) return;
+        _idleTicks = 0;
+
+        var next = _sendQueue[0];
+        _sendQueue.RemoveAt(0);
+        _docViewPanel.SetQueue(_sendQueue.Select(q => q.Shown).ToList());
+        _docViewPanel.ShowPendingPrompt(next.Shown);
+        PromptSubmitted?.Invoke(next.Text);
+        WriteAndSubmit(next.Text, next.WithImages);
     }
 
     private void StopSuggestionWatch()

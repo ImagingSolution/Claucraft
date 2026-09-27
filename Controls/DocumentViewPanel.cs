@@ -65,6 +65,12 @@ public class DocumentViewPanel : Panel
     private static readonly TimeSpan PendingPromptTimeout = TimeSpan.FromSeconds(15);
     private readonly Control _workingView;
     private bool _isWorking;
+    // Prompts sent while Claude was busy, waiting for the turn to end
+    private readonly StackPanel _queueView;
+    private IReadOnlyList<string> _queueItems = Array.Empty<string>();
+
+    /// <summary>The reader took back a queued prompt, by its index in the queue.</summary>
+    public event Action<int>? QueuedPromptRemoved;
 
     // What is on screen, one entry per message, so a poll only rebuilds the changed tail
     private readonly List<string> _keys = new();
@@ -179,15 +185,16 @@ public class DocumentViewPanel : Panel
         };
         Children.Add(_scrollDownButton);
 
-        ClipToBounds = true;
-        ApplyChrome();
-        SetEmptyState(Loc.Get("NoSession", "No session loaded"));
-
         _workingView = new ClaudeSparkIndicator
         {
             HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 6, 0, 0),
         };
+        _queueView = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
+
+        ClipToBounds = true;
+        ApplyChrome();
+        SetEmptyState(Loc.Get("NoSession", "No session loaded"));
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         _pollTimer.Tick += OnPollTick;
@@ -260,12 +267,89 @@ public class DocumentViewPanel : Panel
         if (_autoScroll) ScrollToBottom();
     }
 
-    // The spark stays the last thing in the column. A just-sent prompt shows it too, since the
-    // CLI takes a moment to start its spinner.
+    /// <summary>
+    /// Whether a prompt sent now would land mid-turn: the CLI is working, or a prompt was just
+    /// sent and the CLI has not started on it yet.
+    /// </summary>
+    public bool IsBusy => _isWorking || _pendingView != null;
+
+    /// <summary>Whether a just-sent prompt is still waiting to show up in the transcript.</summary>
+    public bool HasPendingPrompt => _pendingView != null;
+
+    /// <summary>Shows the prompts waiting for the turn to end, as chips under the transcript.</summary>
+    public void SetQueue(IReadOnlyList<string> items)
+    {
+        _queueItems = items.ToArray();
+        RebuildQueueView();
+        PlaceWorkingView();
+        if (_autoScroll) ScrollToBottom();
+    }
+
+    private void RebuildQueueView()
+    {
+        _queueView.Children.Clear();
+        var pal = Palette;
+        for (int i = 0; i < _queueItems.Count; i++)
+        {
+            int index = i;
+            var text = _queueItems[i].ReplaceLineEndings(" ").Trim();
+            var label = new TextBlock
+            {
+                Text = Loc.Get("ChatQueued"),
+                FontSize = _baseFontSize * 0.8,
+                Foreground = Brush(pal.Dim),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var body = new TextBlock
+            {
+                Text = text,
+                FontSize = _baseFontSize * 0.9,
+                Foreground = Brush(pal.Fg),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 520,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            ToolTip.SetTip(body, _queueItems[i]);
+            var remove = new Button
+            {
+                Content = "✕",
+                FontSize = 11,
+                Padding = new Thickness(5, 1),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Foreground = Brush(pal.Dim),
+                Cursor = new Cursor(StandardCursorType.Hand),
+                VerticalAlignment = VerticalAlignment.Center,
+                Focusable = false,
+            };
+            ToolTip.SetTip(remove, Loc.Get("ChatQueueRemove"));
+            remove.Click += (_, _) => QueuedPromptRemoved?.Invoke(index);
+            _queueView.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(12),
+                BorderThickness = new Thickness(1),
+                BorderBrush = Brush(ChatTheme.Outline(_isDark)),
+                Background = Brush(ChatTheme.Surface(_isDark)),
+                Padding = new Thickness(10, 3, 4, 3),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Child = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    Children = { label, body, remove },
+                },
+            });
+        }
+    }
+
+    // The spark stays the last thing in the column, with the queue after it. A just-sent prompt
+    // shows the spark too, since the CLI takes a moment to start its spinner.
     private void PlaceWorkingView()
     {
         _messagesStack.Children.Remove(_workingView);
-        if (_isWorking || _pendingView != null) _messagesStack.Children.Add(_workingView);
+        _messagesStack.Children.Remove(_queueView);
+        if (IsBusy) _messagesStack.Children.Add(_workingView);
+        if (_queueItems.Count > 0) _messagesStack.Children.Add(_queueView);
     }
 
     public void StartPolling() => _pollTimer.Start();
@@ -334,6 +418,7 @@ public class DocumentViewPanel : Panel
         UpdateHeader(path, messages);
         RemovePendingView();
         _messagesStack.Children.Remove(_workingView);
+        _messagesStack.Children.Remove(_queueView);
 
         // Keep the longest prefix that is unchanged and rebuild only what follows it, so
         // expanded groups and the scroll position survive a new reply arriving.
@@ -435,6 +520,7 @@ public class DocumentViewPanel : Panel
             Height = 6,
             Stretch = Stretch.Uniform,
         };
+        RebuildQueueView();
     }
 
     // ── Message views ──

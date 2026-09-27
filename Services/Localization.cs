@@ -194,6 +194,8 @@ public static class Loc
         ["ChatToolError"] = new() { ["English"] = "Error", ["日本語"] = "エラー" },
         ["ChatToolRunning"] = new() { ["English"] = "Running…", ["日本語"] = "実行中…" },
         ["ChatToolNoOutput"] = new() { ["English"] = "(no output)", ["日本語"] = "（出力なし）" },
+        ["ChatQueued"] = new() { ["English"] = "Queued", ["日本語"] = "送信待ち" },
+        ["ChatQueueRemove"] = new() { ["English"] = "Remove from queue", ["日本語"] = "送信待ちから削除" },
         ["AskOther"] = new() { ["English"] = "Other", ["日本語"] = "その他" },
         ["AskOtherPlaceholder"] = new() { ["English"] = "Type your own answer here", ["日本語"] = "ここに独自の回答を入力してください" },
         ["AskBack"] = new() { ["English"] = "Back", ["日本語"] = "戻る" },
