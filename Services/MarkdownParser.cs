@@ -45,17 +45,20 @@ public static class MarkdownParser
     {
         public static ChatPalette For(bool isDark) => isDark
             ? new(Color.FromRgb(240, 239, 236), Color.FromRgb(137, 135, 129), Color.FromRgb(45, 45, 45),
-                  Color.FromRgb(26, 26, 25), Color.FromRgb(236, 126, 126), Color.FromRgb(214, 214, 212),
+                  Color.FromRgb(26, 26, 25), Color.FromRgb(236, 126, 126), Color.FromRgb(228, 228, 226),
                   Color.FromRgb(152, 205, 130), Color.FromRgb(128, 127, 120), Color.FromRgb(33, 33, 33),
                   Color.FromRgb(126, 204, 120), Color.FromRgb(240, 120, 115))
             : new(Color.FromRgb(11, 11, 11), Color.FromRgb(137, 135, 129), Color.FromRgb(221, 221, 220),
-                  Color.FromRgb(255, 255, 255), Color.FromRgb(142, 38, 38), Color.FromRgb(40, 40, 40),
+                  Color.FromRgb(255, 255, 255), Color.FromRgb(142, 38, 38), Color.FromRgb(20, 20, 20),
                   Color.FromRgb(28, 128, 58), Color.FromRgb(125, 123, 118), Color.FromRgb(240, 240, 239),
                   Color.FromRgb(30, 130, 40), Color.FromRgb(200, 30, 30));
 
         /// <summary>Tint behind an inline code chip.</summary>
         public static Color InlineCodeBg(bool isDark) => isDark ? Color.FromRgb(33, 33, 33) : Color.FromRgb(240, 240, 239);
     }
+
+    private static readonly Typeface ChatCodeFont =
+        new(new FontFamily("Cascadia Mono, Consolas, BIZ UDGothic, Yu Gothic UI, Meiryo"));
 
     /// <summary>Background for inline code runs while a chat-style parse is running (UI thread only).</summary>
     private static IBrush? _inlineCodeBg;
@@ -88,7 +91,11 @@ public static class MarkdownParser
         var dimColor = chat?.Dim ?? (isDark ? Color.FromRgb(140, 140, 145) : Color.FromRgb(88, 88, 96));
         var markerColor = chat?.Fg ?? (isDark ? Color.FromRgb(0, 122, 255) : Color.FromRgb(0, 100, 200));
         var ruleColor = chat?.Border ?? (isDark ? Color.FromRgb(60, 60, 65) : Color.FromRgb(200, 200, 205));
-        var codeFont = codeTypeface ?? new Typeface("Cascadia Mono, Consolas, Courier New");
+        // The chat view passes the terminal's font, which is often a narrow CJK mono; code there
+        // reads like the desktop app's instead: Cascadia Mono, whose strokes carry more weight than
+        // Consolas', with a Japanese gothic behind it.
+        var codeFont = chat != null ? ChatCodeFont
+            : codeTypeface ?? new Typeface("Cascadia Mono, Consolas, Courier New");
 
         var lines = markdown.Split('\n');
         int i = 0;
@@ -407,7 +414,7 @@ public static class MarkdownParser
                 var content = part[1..^1];
                 var codeRun = new Avalonia.Controls.Documents.Run(content)
                 {
-                    FontFamily = new FontFamily(codeFont.FontFamily.Name),
+                    FontFamily = codeFont.FontFamily,
                     Foreground = new SolidColorBrush(codeFg),
                 };
                 if (_inlineCodeBg != null)
@@ -650,12 +657,15 @@ public static class MarkdownParser
         var codeText = new SelectableTextBlock
         {
             FontSize = baseFontSize * 0.9,
-            FontFamily = new FontFamily(codeFont.FontFamily.Name),
+            FontFamily = codeFont.FontFamily,
             Foreground = new SolidColorBrush(pal.CodeFg),
             Margin = new Thickness(16, 0, 16, 12),
             TextWrapping = TextWrapping.Wrap,
             LineHeight = Math.Round(baseFontSize * 1.45),
         };
+        // Subpixel AA draws mono strokes hairline-thin; the desktop app's grayscale AA
+        // is what gives its code its weight.
+        TextOptions.SetTextRenderingMode(codeText, TextRenderingMode.Antialias);
         if (IsDiff(code, language)) HighlightDiff(codeText, code, pal);
         else HighlightCode(codeText, code, pal);
 
