@@ -98,6 +98,9 @@ public class AppSettings
     /// </summary>
     public bool LastChatView { get; set; }
 
+    /// <summary>SSH targets ("host:/remote/folder") sessions were last opened on, newest first.</summary>
+    public List<string> RecentSshTargets { get; set; } = new();
+
     // ── Source control ──
 
     /// <summary>

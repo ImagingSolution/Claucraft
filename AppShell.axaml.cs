@@ -354,6 +354,12 @@ internal partial class AppShell : UserControl, IDockOwner
 
         /// <summary>The repository the worktree was cut from - not where the session works.</summary>
         public string? WorktreeOrigin { get; set; }
+
+        /// <summary>
+        /// Where the CLI runs when not on this machine's own shell (WSL, SSH), else null. Its
+        /// transcripts then live on that side, and the workspace does not reopen it.
+        /// </summary>
+        public ExecutionTarget? Target { get; set; }
     };
 
     public AppShell() : this(true) { }
@@ -1078,6 +1084,11 @@ internal partial class AppShell : UserControl, IDockOwner
         if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
         var child = _children[_activeChildIndex];
         var terminal = child.Terminal;
+        if (child.Target?.Kind == ExecutionKind.Ssh && !terminal.IsDocumentView)
+        {
+            ShowMessageDialog(Loc.Get("DocViewTooltip"), Loc.Get("ChatViewSshUnavailable"));
+            return;
+        }
 
         // This window's own transcript only. The session dropdown and the newest file in the
         // folder both belong to whichever window wrote last, so a fresh window showed its
@@ -4639,11 +4650,89 @@ internal partial class AppShell : UserControl, IDockOwner
         MenuNewClaudeWorktreeToggle.Header = Loc.Get(ChkWorktree.IsChecked == true
             ? "NewSessionNotWorktree"
             : "NewSessionWorktree");
+
+        // The other places a session can run. Rebuilt each time: distros come and go, and the
+        // recent SSH list grows with every launch.
+        while (MenuNewClaude.Items.Count > 1) MenuNewClaude.Items.RemoveAt(1);
+        MenuNewClaude.Items.Add(new Separator());
+        _wslDistros ??= ExecutionTarget.ListWslDistros();
+        foreach (var distro in _wslDistros)
+        {
+            var item = new MenuItem { Header = string.Format(Loc.Get("NewSessionWsl"), distro) };
+            item.Click += (_, _) => LaunchOnTarget(ExecutionKind.Wsl, distro);
+            MenuNewClaude.Items.Add(item);
+        }
+        if (_wslDistros.Count == 0)
+            MenuNewClaude.Items.Add(new MenuItem { Header = Loc.Get("NewSessionNoWsl"), IsEnabled = false });
+
+        var targets = _settings.RecentSshTargets
+            .Concat(ExecutionTarget.ListSshConfigHosts())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8);
+        foreach (var t in targets)
+        {
+            var item = new MenuItem { Header = string.Format(Loc.Get("NewSessionSshTarget"), t) };
+            item.Click += (_, _) => LaunchOnTarget(ExecutionKind.Ssh, t);
+            MenuNewClaude.Items.Add(item);
+        }
+        var ssh = new MenuItem { Header = Loc.Get("NewSessionSsh") };
+        ssh.Click += async (_, _) =>
+        {
+            var text = await ShowTextInputDialog(Loc.Get("NewSessionSshTitle"),
+                "user@host:/home/user/project", _settings.RecentSshTargets.FirstOrDefault() ?? "",
+                Loc.Get("NewSessionStart"));
+            if (!string.IsNullOrWhiteSpace(text)) LaunchOnTarget(ExecutionKind.Ssh, text!);
+        };
+        MenuNewClaude.Items.Add(ssh);
+
+        // Picked up for next time, so a distro installed while the app runs appears
+        _ = Task.Run(() => _wslDistros = ExecutionTarget.ListWslDistros());
     }
+
+    private List<string>? _wslDistros;
 
     private void OnNewClaudeWorktreeToggle(object? sender, RoutedEventArgs e)
     {
         LaunchClaudeWithInitialPrompt(forceWorktree: ChkWorktree.IsChecked != true);
+    }
+
+    /// <summary>
+    /// Starts a new session in a WSL distro or on an SSH host, in the project folder (WSL) or the
+    /// folder named after the host (SSH).
+    /// </summary>
+    private async void LaunchOnTarget(ExecutionKind kind, string name)
+    {
+        bool chatView = _activeChildIndex >= 0 && _activeChildIndex < _children.Count
+            && _children[_activeChildIndex].Terminal.IsDocumentView;
+
+        ExecutionTarget? target;
+        if (kind == ExecutionKind.Wsl)
+        {
+            target = await Task.Run(() => ExecutionTarget.ResolveWsl(name));
+        }
+        else
+        {
+            target = ExecutionTarget.ParseSsh(name);
+            if (target == null)
+            {
+                ShowMessageDialog(Loc.Get("NewSessionSshTitle"), Loc.Get("NewSessionSshInvalid"));
+                return;
+            }
+            var key = name.Trim();
+            _settings.RecentSshTargets.RemoveAll(t => string.Equals(t, key, StringComparison.OrdinalIgnoreCase));
+            _settings.RecentSshTargets.Insert(0, key);
+            if (_settings.RecentSshTargets.Count > 8)
+                _settings.RecentSshTargets.RemoveRange(8, _settings.RecentSshTargets.Count - 8);
+            _settings.Save();
+        }
+
+        var profile = ActiveLaunchProfile();
+        var (exe, args) = _cli.BuildNewArgv(_settings.InitialPrompt, profile);
+        CreateNewChild(
+            _cli.BuildNewCommand(_settings.InitialPrompt, profile),
+            $"{_cli.Active.Name} ({target.Label})",
+            chatView: chatView,
+            remote: new RemoteLaunch(target, exe, args));
     }
 
     private void OnCloseTab(object? sender, RoutedEventArgs e) => CloseActiveWindow();
@@ -7075,6 +7164,8 @@ internal partial class AppShell : UserControl, IDockOwner
         // this window's name. TrackSessionIdAsync learns the real id within a poll or two of
         // launch, and until it does, no readout at all beats a confident wrong one.
         if (string.IsNullOrEmpty(child.SessionId)) return null;
+        // A WSL session writes inside the distro; an SSH one somewhere this app cannot read
+        if (child.Target != null) return child.Target.FindSessionFile(folder, child.SessionId!);
         return SessionMessageReader.FindSessionFile(folder, child.SessionId!);
     }
 
@@ -7790,6 +7881,8 @@ internal partial class AppShell : UserControl, IDockOwner
 
         foreach (var child in _children)
         {
+            // Reopening would resume it locally, where its session does not exist
+            if (child.Target != null) continue;
             ws.Tabs.Add(new WorkspaceTab
             {
                 ProjectFolder = child.ProjectFolder ?? "",
@@ -8492,7 +8585,8 @@ internal partial class AppShell : UserControl, IDockOwner
 
     private void CreateNewChild(string command, string tabTitle, string? firstInput = null,
                                 string? sessionId = null, WorktreeLease? worktree = null,
-                                string? effort = null, bool? chatView = null)
+                                string? effort = null, bool? chatView = null,
+                                RemoteLaunch? remote = null)
     {
         // Null means "open the way the window in front is shown", so resuming and continuing
         // keep Chat View just as New Session does.
@@ -8500,14 +8594,20 @@ internal partial class AppShell : UserControl, IDockOwner
             ?? (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
                 ? _children[_activeChildIndex].Terminal.IsDocumentView
                 : _settings.LastChatView);
+        // An SSH session's transcript stays on the host, so there is nothing for Chat View to show
+        if (remote?.Target.Kind == ExecutionKind.Ssh) startInChat = false;
 
         // A new window carries on at the effort of the one in front, or failing that the one the
         // app was last left at; the CLI's own default would otherwise reset it on every launch.
-        command = PinEffort(command, effort
+        var effortLevel = effort
             ?? (_activeChildIndex >= 0 && _activeChildIndex < _children.Count
                 ? _children[_activeChildIndex].Effort
                 : null)
-            ?? _settings.LastEffort);
+            ?? _settings.LastEffort;
+        var pinned = PinEffort(command, effortLevel);
+        if (remote != null && pinned.Length > command.Length)
+            remote = remote with { Args = remote.Args.Concat(new[] { "--effort", effortLevel! }).ToList() };
+        command = pinned;
 
         // A worktree session works in its checkout, and so does everything that follows the
         // active window: explorer, changed files, session list and the branch readout all
@@ -8613,6 +8713,7 @@ internal partial class AppShell : UserControl, IDockOwner
             WorktreePath = worktree?.Path,
             WorktreeBranch = worktree?.Branch,
             WorktreeOrigin = worktree?.RepoRoot,
+            Target = remote?.Target,
         };
 
         // Set FirstUserInput on terminal if provided (e.g. from resumed session)
@@ -8808,7 +8909,9 @@ internal partial class AppShell : UserControl, IDockOwner
             // The host shell - cmd.exe or PowerShell - is a setting the active CLI can override,
             // and ShellHost is the one place that knows how each one wraps a launch. The CLI goes
             // in because `command` was quoted for whatever shell it picks.
-            terminal.StartProcess(ShellHost.Build(command, workFolder, _cli.Active), workFolder);
+            terminal.StartProcess(remote != null
+                ? remote.Target.BuildCommandLine(remote.Exe, remote.Args, workFolder)
+                : ShellHost.Build(command, workFolder, _cli.Active), workFolder);
             // Start in Chat View when asked to. A resumed session's transcript is attached now; a
             // new one's does not exist yet, and the session poll attaches it once
             // TrackSessionIdAsync learns the id.
@@ -8850,6 +8953,23 @@ internal partial class AppShell : UserControl, IDockOwner
     {
         var folder = entry.ProjectFolder;
         if (string.IsNullOrEmpty(folder) || !_cli.Features.SessionList) return;
+
+        // The pid ledger is inside the distro, where these pids mean nothing, so a WSL window
+        // goes by the newest transcript in its folder - for as long as it runs, because the
+        // CLI does not write one until the first turn.
+        if (entry.Target != null)
+        {
+            if (entry.Target.Kind != ExecutionKind.Wsl) return;
+            while (string.IsNullOrEmpty(entry.SessionId))
+            {
+                await Task.Delay(3000);
+                if (!_children.Contains(entry)) return;
+                var taken = TakenSessionIds(entry);
+                entry.SessionId = await Task.Run(() => entry.Target.FindSessionIdCreatedAfter(folder, launchedAt, taken));
+                if (string.IsNullOrEmpty(entry.SessionId) && !entry.Terminal.IsProcessRunning) return;
+            }
+            return;
+        }
 
         for (int i = 0; string.IsNullOrEmpty(entry.SessionId); i++)
         {

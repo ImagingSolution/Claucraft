@@ -173,6 +173,48 @@ public class CliProviderService
     }
 
     /// <summary>
+    /// The same launch as BuildNewCommand, as the bare executable name and an unquoted argument
+    /// list, for a target (WSL, SSH) whose own shell does the quoting. The name drops any local
+    /// path and extension: on the other side the CLI is whatever PATH finds under that name.
+    /// </summary>
+    public (string Exe, List<string> Args) BuildNewArgv(string? initialPrompt, LaunchProfile? profile = null)
+    {
+        var p = Active;
+        var exe = Path.GetFileNameWithoutExtension((p.Exe ?? "").Trim().Trim('"'));
+        var args = SplitArgs(AppendModelEffortOverride(SanitizePrompt(profile?.ExtraArgs)));
+        var prompt = SanitizePrompt(initialPrompt);
+        if (string.IsNullOrEmpty(prompt)) return (exe, args);
+
+        var template = SplitArgs(p.NewArgs ?? "");
+        if (!template.Any(t => t.Contains("{prompt}"))) template.Add("{prompt}");
+        args.AddRange(template.Select(t => t.Replace("{prompt}", prompt)));
+        return (exe, args);
+    }
+
+    /// <summary>Splits flags on whitespace, keeping a double-quoted run as one argument.</summary>
+    private static List<string> SplitArgs(string text)
+    {
+        var result = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        bool quoted = false, any = false;
+        foreach (var c in text)
+        {
+            if (c == '"') { quoted = !quoted; any = true; continue; }
+            if (char.IsWhiteSpace(c) && !quoted)
+            {
+                if (any) result.Add(sb.ToString());
+                sb.Clear();
+                any = false;
+                continue;
+            }
+            sb.Append(c);
+            any = true;
+        }
+        if (any) result.Add(sb.ToString());
+        return result;
+    }
+
+    /// <summary>
     /// Command that continues the most recent session. The profile flags ride along here too:
     /// a resumed session is the one most likely to be sitting on a large prefix, so a cap such
     /// as --autocompact matters more on this path than on a fresh launch.
