@@ -67,13 +67,19 @@ public static class SessionMessageReader
         {
             var toolUseIdToName = new Dictionary<string, string>();
             var calls = new Dictionary<string, ToolCall>();
-            using var stream = new FileStream(jsonlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-
-            while (!reader.EndOfStream)
+            var lines = new List<string>();
+            using (var stream = new FileStream(jsonlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(stream, Encoding.UTF8))
             {
-                var line = reader.ReadLine();
-                if (string.IsNullOrWhiteSpace(line)) continue;
+                while (reader.ReadLine() is { } l)
+                    if (!string.IsNullOrWhiteSpace(l)) lines.Add(l);
+            }
+            var abandoned = FindAbandonedLines(lines);
+
+            for (int li = 0; li < lines.Count; li++)
+            {
+                if (abandoned?.Contains(li) == true) continue;
+                var line = lines[li];
 
                 if (line.Contains("\"tool_result\""))
                 {
@@ -109,6 +115,102 @@ public static class SessionMessageReader
                 laterContent = true;
         }
         return result;
+    }
+
+    private readonly record struct LineLinks(string? Uuid, string? Parent, string? LogicalParent,
+        bool Sidechain, bool IsPrompt);
+
+    /// <summary>
+    /// A rewind forks the conversation inside the same file: the new prompt's parentUuid is the
+    /// row before the prompt that was rewound, so that row ends up with two prompt children.
+    /// Walking up from the last row gives the live chain; at each fork on it, the other prompt
+    /// child and everything under it is the branch that was left behind. Returns the indices of
+    /// those lines, or null when nothing was rewound. Rows without a uuid are always kept.
+    /// </summary>
+    private static HashSet<int>? FindAbandonedLines(List<string> lines)
+    {
+        var links = new LineLinks[lines.Count];
+        var byUuid = new Dictionary<string, int>();
+        var children = new Dictionary<string, List<int>>();
+        int last = -1;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            links[i] = ReadLinks(lines[i]);
+            if (links[i].Uuid is not { } u) continue;
+            byUuid[u] = i;
+            if (links[i].Parent is { } p)
+            {
+                if (!children.TryGetValue(p, out var list)) children[p] = list = new List<int>();
+                list.Add(i);
+            }
+            if (!links[i].Sidechain) last = i;
+        }
+        if (last < 0) return null;
+
+        // Any fork at all? Most sessions never rewind
+        bool forked = false;
+        foreach (var list in children.Values)
+        {
+            int prompts = 0;
+            foreach (var c in list) if (links[c].IsPrompt) prompts++;
+            if (prompts > 1) { forked = true; break; }
+        }
+        if (!forked) return null;
+
+        var chain = new HashSet<int>();
+        for (int i = last; i >= 0 && chain.Add(i);)
+        {
+            // A compact boundary has no parent, only a logical one pointing across it
+            var up = links[i].Parent ?? links[i].LogicalParent;
+            i = up != null && byUuid.TryGetValue(up, out var j) ? j : -1;
+        }
+
+        HashSet<int>? drop = null;
+        var stack = new Stack<int>();
+        foreach (var i in chain)
+        {
+            if (!links[i].IsPrompt || links[i].Parent is not { } p || !children.TryGetValue(p, out var sibs)) continue;
+            foreach (var s in sibs)
+                if (s != i && links[s].IsPrompt && !chain.Contains(s)) stack.Push(s);
+        }
+        while (stack.Count > 0)
+        {
+            var i = stack.Pop();
+            drop ??= new HashSet<int>();
+            if (!drop.Add(i)) continue;
+            if (links[i].Uuid is { } u && children.TryGetValue(u, out var kids))
+                foreach (var k in kids) if (!chain.Contains(k)) stack.Push(k);
+        }
+        return drop;
+    }
+
+    /// <summary>Reads just the top-level links of a transcript row, skipping over its content.</summary>
+    private static LineLinks ReadLinks(string line)
+    {
+        string? uuid = null, parent = null, logical = null, type = null;
+        bool sidechain = false;
+        try
+        {
+            var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(line));
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return default;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                var name = reader.GetString();
+                reader.Read();
+                switch (name)
+                {
+                    case "uuid" when reader.TokenType == JsonTokenType.String: uuid = reader.GetString(); break;
+                    case "parentUuid" when reader.TokenType == JsonTokenType.String: parent = reader.GetString(); break;
+                    case "logicalParentUuid" when reader.TokenType == JsonTokenType.String: logical = reader.GetString(); break;
+                    case "type" when reader.TokenType == JsonTokenType.String: type = reader.GetString(); break;
+                    case "isSidechain": sidechain = reader.TokenType == JsonTokenType.True; break;
+                    default: reader.Skip(); break;
+                }
+            }
+        }
+        catch (JsonException) { return default; }
+        bool isPrompt = type == "user" && !line.Contains("\"tool_result\"");
+        return new LineLinks(uuid, parent, logical, sidechain, isPrompt);
     }
 
     /// <summary>

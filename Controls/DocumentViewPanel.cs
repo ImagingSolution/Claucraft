@@ -43,6 +43,10 @@ public static class ChatTheme
 /// <summary>The reader's answer to one AskUserQuestion question: option indexes and typed text.</summary>
 public record AskReply(bool Skipped, IReadOnlyList<int> Selected, string? OtherText);
 
+/// <param name="SameTextLater">How many later prompts start with the same line: the CLI's list
+/// shows only a line of each, so the match has to skip that many from the bottom.</param>
+public record RewindTarget(string Uuid, string Text, int SameTextLater, bool Edit);
+
 /// <summary>
 /// The chat view: a Claude session's JSONL transcript rendered the way the desktop app shows a
 /// conversation - user prompts as grey bubbles on the right, Claude's replies as plain Markdown
@@ -86,6 +90,17 @@ public class DocumentViewPanel : Panel
 
     /// <summary>The reader dismissed the open question.</summary>
     public event Action? AskCancelled;
+
+    /// <summary>
+    /// The reader asked to go back to before a prompt: its uuid, its text, how many later prompts
+    /// read the same (so the right one is picked from the CLI's list), and whether to edit it.
+    /// </summary>
+    public event Action<RewindTarget>? RewindRequested;
+
+    // Set once a rewind went through: that bubble and everything after it stay hidden until the
+    // transcript no longer has it on the live branch, which is when the next prompt forks it off
+    private string? _hideFromUuid;
+    private List<ConversationMessage> _shownMessages = new();
     /// <summary>
     /// Whether the CLI's question selector is on screen. The transcript cannot tell: a question
     /// cut off by a restart still reads as open until the next prompt is written.
@@ -224,6 +239,7 @@ public class DocumentViewPanel : Panel
 
     public void LoadSession(string jsonlPath)
     {
+        if (jsonlPath != _currentSessionPath) _hideFromUuid = null;
         _currentSessionPath = jsonlPath;
         _pendingView = null;
         _autoScroll = true;
@@ -352,6 +368,23 @@ public class DocumentViewPanel : Panel
         if (_queueItems.Count > 0) _messagesStack.Children.Add(_queueView);
     }
 
+    /// <summary>Hides a rewound prompt and what followed it (see <see cref="_hideFromUuid"/>).</summary>
+    public void HideFrom(string uuid)
+    {
+        _hideFromUuid = uuid;
+        Refresh(force: false);
+        if (_autoScroll) ScrollToBottom();
+    }
+
+    /// <summary>A short-lived line under the transcript, for something the reader asked for that did not happen.</summary>
+    public void ShowNotice(string text)
+    {
+        var line = CreateStatusLine(text, Palette.Dim);
+        _messagesStack.Children.Add(line);
+        if (_autoScroll) ScrollToBottom();
+        DispatcherTimer.RunOnce(() => _messagesStack.Children.Remove(line), TimeSpan.FromSeconds(6));
+    }
+
     public void StartPolling() => _pollTimer.Start();
 
     public void StopPolling() => _pollTimer.Stop();
@@ -414,6 +447,13 @@ public class DocumentViewPanel : Panel
         if (path == null) return false;
 
         var messages = SessionMessageReader.ReadSession(path);
+        if (_hideFromUuid != null)
+        {
+            int cut = messages.FindIndex(m => m.Uuid == _hideFromUuid);
+            if (cut >= 0) messages.RemoveRange(cut, messages.Count - cut);
+            else _hideFromUuid = null;
+        }
+        _shownMessages = messages;
         _lastLineCount = CountLines(path);
         UpdateHeader(path, messages);
         RemovePendingView();
@@ -578,11 +618,74 @@ public class DocumentViewPanel : Panel
                     LineHeight = Math.Round(_baseFontSize * 1.6),
                 },
             };
-            if (msg.Timestamp.HasValue)
-                ToolTip.SetTip(bubble, msg.Timestamp.Value.ToLocalTime().ToString("yyyy/MM/dd HH:mm"));
             column.Children.Add(bubble);
+            // The hover row carries the time; a tooltip there would cover its links
+            if (IsRewindable(msg)) AddRewindActions(column, msg);
+            else if (msg.Timestamp.HasValue)
+                ToolTip.SetTip(bubble, msg.Timestamp.Value.ToLocalTime().ToString("yyyy/MM/dd HH:mm"));
         }
         return column;
+    }
+
+    // What the CLI lists under /rewind: prompts the reader typed, not notices it wrote itself
+    private static bool IsRewindable(ConversationMessage msg) =>
+        msg.Uuid != null && msg.Images is not { Count: > 0 }
+        && !msg.Text.StartsWith('<') && !msg.Text.StartsWith("[Request interrupted");
+
+    internal static string FirstLine(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text.Trim().Split('\n')[0], @"\s+", " ").Trim();
+
+    /// <summary>Edit / Rewind links under a prompt, shown while the pointer is over it.</summary>
+    private void AddRewindActions(StackPanel column, ConversationMessage msg)
+    {
+        var pal = Palette;
+        Button Link(string key, bool edit)
+        {
+            var b = new Button
+            {
+                Content = Loc.Get(key),
+                FontSize = _baseFontSize * 0.8,
+                Padding = new Thickness(6, 1),
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Foreground = Brush(pal.Dim),
+                Cursor = new Cursor(StandardCursorType.Hand),
+                Focusable = false,
+            };
+            ToolTip.SetTip(b, Loc.Get(key + "Tip"));
+            b.Click += (_, _) =>
+            {
+                // Count from what is on screen when clicked, not when the bubble was built
+                int at = _shownMessages.FindIndex(m => m.Uuid == msg.Uuid);
+                var line = FirstLine(msg.Text);
+                int later = at < 0 ? 0 : _shownMessages.Skip(at + 1)
+                    .Count(m => m.Role == MessageRole.User && IsRewindable(m) && FirstLine(m.Text) == line);
+                RewindRequested?.Invoke(new RewindTarget(msg.Uuid!, msg.Text, later, edit));
+            };
+            return b;
+        }
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 2,
+            Opacity = 0,
+            Margin = new Thickness(0, -4, 0, 0),
+            Children = { Link("ChatEdit", true), Link("ChatRewind", false) },
+        };
+        if (msg.Timestamp.HasValue)
+            actions.Children.Insert(0, new TextBlock
+            {
+                Text = msg.Timestamp.Value.ToLocalTime().ToString("yyyy/MM/dd HH:mm"),
+                FontSize = _baseFontSize * 0.8,
+                Foreground = Brush(pal.Dim),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0),
+            });
+        column.Children.Add(actions);
+        column.Background = Brushes.Transparent;   // hit-test the gaps too, so the links stay reachable
+        column.PointerEntered += (_, _) => actions.Opacity = 1;
+        column.PointerExited += (_, _) => actions.Opacity = 0;
     }
 
     private Control? CreateImageThumb(ChatImage img)

@@ -3757,6 +3757,7 @@ public class TerminalControl : Control, IDisposable
                 _docViewPanel.AskAnswered += (questions, replies) => AnswerAskUserQuestion(questions, replies);
                 _docViewPanel.AskCancelled += () => _pty?.WriteInput("\x1b");
                 _docViewPanel.IsAskOpen = IsAskSelectorOnScreen;
+                _docViewPanel.RewindRequested += target => RewindToPrompt(target);
                 _docViewPanel.QueuedPromptRemoved += index =>
                 {
                     if (index < 0 || index >= _sendQueue.Count) return;
@@ -3855,7 +3856,7 @@ public class TerminalControl : Control, IDisposable
     // (a permission prompt, a question, a menu) is waiting for an answer.
     private void FlushSendQueueWhenIdle()
     {
-        if (_sendQueue.Count == 0 || _docViewPanel == null || !_isDocumentView
+        if (_sendQueue.Count == 0 || _docViewPanel == null || !_isDocumentView || _rewinding
             || _docViewPanel.IsBusy || IsPermissionPromptOnScreen() || IsAskSelectorOnScreen())
         {
             _idleTicks = 0;
@@ -3870,6 +3871,137 @@ public class TerminalControl : Control, IDisposable
         _docViewPanel.ShowPendingPrompt(next.Shown);
         PromptSubmitted?.Invoke(next.Text);
         WriteAndSubmit(next.Text, next.WithImages);
+    }
+
+    // ── Rewind / edit (chat view) ──
+
+    private bool _rewinding;
+    private const string RewindMenuMarker = "Restore the code and/or conversation";
+    private const string RewindConfirmMarker = "Confirm you want to restore";
+
+    /// <summary>
+    /// Drives the CLI's /rewind to the point before a prompt. Measured against Claude Code
+    /// 2.1.283: the menu lists the prompts one line each (truncated with "…") with the caret on
+    /// "(current)" at the bottom, Up walks it, and Enter opens a confirm page of numbered choices
+    /// (restore the conversation, code too when it changed, summarize, never mind). That page is
+    /// left to the reader through the choice card. A conversation restore puts the prompt's text
+    /// back into the CLI's input; that is how a completed rewind is told from a cancelled one.
+    /// </summary>
+    private async void RewindToPrompt(Controls.RewindTarget target)
+    {
+        if (_rewinding || _pty == null || _docViewPanel == null) return;
+        if (_docViewPanel.IsBusy || IsPermissionPromptOnScreen() || IsAskSelectorOnScreen())
+        {
+            ShowRewindNotice("ChatRewindBusy");
+            return;
+        }
+        _rewinding = true;
+        try
+        {
+            WriteAndSubmit("/rewind", false);
+            if (!await WaitForScreen(s => s.Contains(RewindMenuMarker), 5000))
+            {
+                ShowRewindNotice("ChatRewindFailed");
+                return;
+            }
+
+            var want = Controls.DocumentViewPanel.FirstLine(target.Text);
+            int skip = target.SameTextLater;
+            string? selected = ReadRewindSelection();
+            bool found = false;
+            for (int step = 0; step < 300 && !found; step++)
+            {
+                _pty?.WriteInput("\x1b[A");
+                var before = selected;
+                // The caret row is redrawn a moment after the key; the list scrolls at the top
+                if (!await WaitForScreen(_ => (selected = ReadRewindSelection()) != before, 1500))
+                    break;   // did not move: the top of the list
+                if (selected != null && RewindRowMatches(selected, want) && skip-- == 0)
+                    found = true;
+            }
+            if (!found)
+            {
+                _pty?.WriteInput("\x1b");
+                ShowRewindNotice("ChatRewindNotFound");
+                return;
+            }
+
+            _pty?.WriteInput("\r");
+            await WaitForScreen(s => s.Contains(RewindConfirmMarker), 3000);
+            // The reader answers the confirm page from the choice card; wait for both pages to go
+            if (!await WaitForScreen(s => !s.Contains(RewindConfirmMarker) && !s.Contains(RewindMenuMarker), 120_000))
+                return;
+            await Task.Delay(300);
+
+            var restored = ReadCliInput();
+            if (restored == null || !RewindRowMatches(Controls.DocumentViewPanel.FirstLine(restored), want[..Math.Min(want.Length, 20)]))
+                return;   // "Never mind", or a summarize that keeps the prompt out of the input
+            _pty?.WriteInput("\x15");   // Ctrl+U: the box, not the CLI's input, holds the draft
+            _docViewPanel?.HideFrom(target.Uuid);
+            if (target.Edit)
+            {
+                _inputTextBox.Text = target.Text;
+                _inputTextBox.CaretIndex = target.Text.Length;
+                _inputTextBox.Focus();
+            }
+        }
+        finally
+        {
+            _rewinding = false;
+        }
+    }
+
+    private async Task<bool> WaitForScreen(Func<string, bool> condition, int timeoutMs)
+    {
+        var until = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < until)
+        {
+            if (condition(GetScreenText(0))) return true;
+            await Task.Delay(60);
+        }
+        return false;
+    }
+
+    /// <summary>The /rewind row under the caret, without the caret.</summary>
+    private string? ReadRewindSelection()
+    {
+        int totalRows = _buffer.Scrollback.Count + _buffer.Rows;
+        for (int i = totalRows - 1; i >= Math.Max(0, totalRows - _buffer.Rows); i--)
+        {
+            var t = GetRowText(i).Trim(' ', '│', '|');
+            if (t.Length > 1 && (t[0] == '❯' || t[0] == '>'))
+                return Controls.DocumentViewPanel.FirstLine(t[1..]);
+        }
+        return null;
+    }
+
+    // A listed row is the prompt's first line, cut short with "…" when it does not fit
+    private static bool RewindRowMatches(string row, string want)
+    {
+        row = row.TrimEnd('…', '.', ' ');
+        if (row.Length == 0 || want.Length == 0) return false;
+        return want.StartsWith(row, StringComparison.Ordinal) || row.StartsWith(want, StringComparison.Ordinal);
+    }
+
+    /// <summary>Text in the CLI's own input row, if any (the chat view keeps it empty).</summary>
+    private string? ReadCliInput()
+    {
+        int bottom = _buffer.Rows - 1;
+        for (int r = bottom; r >= 0 && bottom - r < 24; r--)
+        {
+            if (FirstNonBlankCol(r) != 0) continue;
+            int marker = GetCellAt(r, 0).Character;
+            if (marker != '❯' && marker != '>') continue;
+            var text = GetRowText(_buffer.Scrollback.Count + r).Trim();
+            text = text.TrimStart('❯', '>').Trim();
+            return text.Length == 0 ? null : text;
+        }
+        return null;
+    }
+
+    private void ShowRewindNotice(string key)
+    {
+        _docViewPanel?.ShowNotice(Services.Loc.Get(key));
     }
 
     private void StopSuggestionWatch()
@@ -4064,7 +4196,8 @@ public class TerminalControl : Control, IDisposable
         }
         else if (yesFirst && question != null && question.Contains("Do you want"))
             kind = ChoiceKind.Permission;
-        else if (footer != null)
+        // /rewind's confirm page is a menu that shows no footer
+        else if (footer != null || context.Any(t => t.StartsWith(RewindConfirmMarker)))
             kind = ChoiceKind.Menu;
         else
             return null;
