@@ -5190,33 +5190,6 @@ internal partial class AppShell : UserControl, IDockOwner
         bool show = _cli.Features.ModeSwitchButton
                     && _activeChildIndex >= 0 && _activeChildIndex < _children.Count;
         StatusModeBadge.IsVisible = show;
-        try
-        {
-            ApplyModeBadgeCore(show, mode, modeText);
-        }
-        finally
-        {
-            SyncComposerChips();
-        }
-    }
-
-    /// <summary>
-    /// Copies what the status bar shows - mode, model, effort - onto the chips of the window in
-    /// front, so the chat composer offers the same switches without a trip to the bottom edge.
-    /// </summary>
-    private void SyncComposerChips()
-    {
-        if (_activeChildIndex < 0 || _activeChildIndex >= _children.Count) return;
-        var modeColor = (StatusModeText.Foreground as ISolidColorBrush)?.Color;
-        _children[_activeChildIndex].Terminal.SetComposerChips(
-            StatusModeBadge.IsVisible ? StatusModeText.Text : null,
-            modeColor,
-            StatusModelName.IsVisible ? StatusModelText.Text : null,
-            StatusEffortName.IsVisible ? StatusEffortText.Text : null);
-    }
-
-    private void ApplyModeBadgeCore(bool show, AiMode? mode, string modeText)
-    {
         if (!show) return;
 
         bool known = mode is not null and not AiMode.Unknown;
@@ -7312,7 +7285,6 @@ internal partial class AppShell : UserControl, IDockOwner
             StatusModelText.Text = model;
             ToolTip.SetTip(StatusModelName, Loc.Get("ModelTooltip"));
         }
-        SyncComposerChips();
     }
 
     /// <summary>The model the window in front was started on, as far as anything outside the
@@ -7414,7 +7386,6 @@ internal partial class AppShell : UserControl, IDockOwner
         _pendingModelLabel = label;
         StatusModelText.Text = label;
         StatusModelName.IsVisible = true;
-        SyncComposerChips();
     }
 
     /// <summary>Below this, a mid-session switch has too little cached context to be worth saving.</summary>
@@ -7536,7 +7507,6 @@ internal partial class AppShell : UserControl, IDockOwner
 
         StatusEffortName.IsVisible = effort != null;
         if (effort != null) StatusEffortText.Text = EffortDisplayName(effort);
-        SyncComposerChips();
         if (effort == null) return;
 
         ToolTip.SetTip(StatusEffortName, Loc.Get("EffortTooltip"));
@@ -8854,23 +8824,6 @@ internal partial class AppShell : UserControl, IDockOwner
             // front back.
             if (!ReferenceEquals(_activeLayoutItem, entry))
                 ActivateTerminal(entry);
-        };
-
-        // The composer's chips act through the same paths as the status bar, on this window
-        terminal.ComposerModeClicked += () =>
-        {
-            if (!ReferenceEquals(_activeLayoutItem, entry)) ActivateTerminal(entry);
-            SendModeSwitch();
-        };
-        terminal.ComposerModelClicked += anchor =>
-        {
-            if (!ReferenceEquals(_activeLayoutItem, entry)) ActivateTerminal(entry);
-            StatusModelName.Flyout?.ShowAt(anchor);
-        };
-        terminal.ComposerEffortClicked += anchor =>
-        {
-            if (!ReferenceEquals(_activeLayoutItem, entry)) ActivateTerminal(entry);
-            StatusEffortName.Flyout?.ShowAt(anchor);
         };
 
         terminal.TitleChanged += title =>
