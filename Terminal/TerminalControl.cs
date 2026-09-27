@@ -299,6 +299,8 @@ public partial class TerminalControl : Control, IDisposable
             _inputTextBox.TextWrapping = TextWrapping.NoWrap;
             _inputTextBox.AcceptsReturn = false;
             _inputTextBox.ClearValue(MinHeightProperty);
+            _inputTextBox.ClearValue(TextBox.SelectionBrushProperty);
+            _inputTextBox.ClearValue(TextBox.SelectionForegroundBrushProperty);
             foreach (var key in ChatChromeResourceKeys)
                 _inputTextBox.Resources.Remove(key);
 
@@ -326,6 +328,9 @@ public partial class TerminalControl : Control, IDisposable
         _inputTextBox.TextWrapping = TextWrapping.Wrap;
         _inputTextBox.AcceptsReturn = true;
         _inputTextBox.MinHeight = 0;
+        // Selected text as in the replies: solid blue with white text, not the theme's dark grey
+        _inputTextBox.SelectionBrush = Services.MarkdownParser.ChatSelectionBg;
+        _inputTextBox.SelectionForegroundBrush = Brushes.White;
         // Fluent repaints the box on hover and focus; inside the card it has to stay invisible
         var res = _inputTextBox.Resources;
         foreach (var key in ChatChromeResourceKeys)

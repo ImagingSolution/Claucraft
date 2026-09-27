@@ -83,7 +83,7 @@ public static class MarkdownParser
         finally { _inlineCodeBg = null; _inlineCodeBorder = null; }
     }
 
-    private static readonly IBrush ChatSelectionBg = new SolidColorBrush(Color.FromRgb(50, 102, 208));
+    public static readonly IBrush ChatSelectionBg = new SolidColorBrush(Color.FromRgb(50, 102, 208));
 
     /// <summary>
     /// Selection as the desktop app shows it: solid blue with white text. The theme's default
