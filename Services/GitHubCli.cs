@@ -16,7 +16,15 @@ public sealed record PullRequestInfo(
     string BaseBranch,
     bool IsDraft,
     string ReviewDecision,
-    string Url);
+    string Url,
+    ChecksState Checks = ChecksState.None,
+    IReadOnlyList<string>? FailingChecks = null);
+
+/// <summary>Where a pull request's CI stands, all of its checks taken together.</summary>
+public enum ChecksState { None, Pending, Passing, Failing }
+
+/// <summary>One piece of review feedback: a review summary, a conversation comment or a line comment.</summary>
+public sealed record PrFeedback(string Author, string Body, string? Path, int? Line, string Kind);
 
 /// <summary>
 /// The pull-request half of the source-control panel, driven through GitHub's own `gh` CLI.
@@ -88,7 +96,7 @@ public static class GitHubCli
                     "pr", "list",
                     "--state", "open",
                     "--limit", ListLimit.ToString(),
-                    "--json", "number,title,author,headRefName,baseRefName,isDraft,reviewDecision,url");
+                    "--json", "number,title,author,headRefName,baseRefName,isDraft,reviewDecision,url,statusCheckRollup");
                 if (!result.Ok || string.IsNullOrWhiteSpace(result.StdOut)) return list;
 
                 var raw = JsonSerializer.Deserialize<List<PrDto>>(result.StdOut);
@@ -96,6 +104,7 @@ public static class GitHubCli
 
                 foreach (var pr in raw)
                 {
+                    var (checks, failing) = SummarizeChecks(pr.StatusCheckRollup);
                     list.Add(new PullRequestInfo(
                         pr.Number,
                         pr.Title ?? "",
@@ -104,7 +113,9 @@ public static class GitHubCli
                         pr.BaseRefName ?? "",
                         pr.IsDraft,
                         pr.ReviewDecision ?? "",
-                        pr.Url ?? ""));
+                        pr.Url ?? "",
+                        checks,
+                        failing));
                 }
             }
             catch
@@ -113,6 +124,100 @@ public static class GitHubCli
             }
             return list;
         });
+    }
+
+    /// <summary>
+    /// Folds a statusCheckRollup into one state. It mixes two shapes: CheckRun (Actions and
+    /// apps: status + conclusion) and StatusContext (the older commit statuses: state).
+    /// A single failure fails the whole; otherwise anything unfinished keeps it pending.
+    /// </summary>
+    public static (ChecksState State, List<string> Failing) SummarizeChecks(JsonElement? rollup)
+    {
+        var failing = new List<string>();
+        if (rollup is not { ValueKind: JsonValueKind.Array } items || items.GetArrayLength() == 0)
+            return (ChecksState.None, failing);
+
+        bool pending = false;
+        foreach (var c in items.EnumerateArray())
+        {
+            string Str(string name) => c.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString() ?? "" : "";
+            var name = Str("name").Length > 0 ? Str("name") : Str("context");
+            if (c.TryGetProperty("state", out _) && Str("state").Length > 0)
+            {
+                var state = Str("state").ToUpperInvariant();
+                if (state is "FAILURE" or "ERROR") failing.Add(name);
+                else if (state is "PENDING" or "EXPECTED") pending = true;
+            }
+            else
+            {
+                if (!string.Equals(Str("status"), "COMPLETED", StringComparison.OrdinalIgnoreCase)) pending = true;
+                else if (Str("conclusion").ToUpperInvariant() is "FAILURE" or "TIMED_OUT" or "CANCELLED"
+                         or "ACTION_REQUIRED" or "STARTUP_FAILURE")
+                    failing.Add(name);
+            }
+        }
+        var result = failing.Count > 0 ? ChecksState.Failing : pending ? ChecksState.Pending : ChecksState.Passing;
+        return (result, failing);
+    }
+
+    /// <summary>
+    /// Everything reviewers have said on a pull request: review summaries and conversation
+    /// comments from `gh pr view`, and line comments from the REST endpoint, which gh pr view
+    /// does not carry. Empty bodies (a bare approval) are left out. Empty on any failure.
+    /// </summary>
+    public static Task<List<PrFeedback>> GetFeedbackAsync(string repoRoot, int number)
+    {
+        return Task.Run(() =>
+        {
+            var list = new List<PrFeedback>();
+            try
+            {
+                var view = ProcessRunner.Run("gh", repoRoot, null, TimeoutMs, null,
+                    "pr", "view", number.ToString(), "--json", "reviews,comments");
+                if (view.Ok && !string.IsNullOrWhiteSpace(view.StdOut))
+                {
+                    using var doc = JsonDocument.Parse(view.StdOut);
+                    foreach (var (key, kind) in new[] { ("reviews", "review"), ("comments", "comment") })
+                    {
+                        if (!doc.RootElement.TryGetProperty(key, out var arr) || arr.ValueKind != JsonValueKind.Array) continue;
+                        foreach (var r in arr.EnumerateArray())
+                        {
+                            var body = r.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
+                            if (string.IsNullOrWhiteSpace(body)) continue;
+                            list.Add(new PrFeedback(Login(r), body.Trim(), null, null, kind));
+                        }
+                    }
+                }
+
+                var inline = ProcessRunner.Run("gh", repoRoot, null, TimeoutMs, null,
+                    "api", $"repos/{{owner}}/{{repo}}/pulls/{number}/comments");
+                if (inline.Ok && !string.IsNullOrWhiteSpace(inline.StdOut))
+                {
+                    using var doc = JsonDocument.Parse(inline.StdOut);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Array)
+                        foreach (var r in doc.RootElement.EnumerateArray())
+                        {
+                            var body = r.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
+                            if (string.IsNullOrWhiteSpace(body)) continue;
+                            var path = r.TryGetProperty("path", out var p) ? p.GetString() : null;
+                            int? line = r.TryGetProperty("line", out var l) && l.ValueKind == JsonValueKind.Number
+                                ? l.GetInt32()
+                                : r.TryGetProperty("original_line", out var ol) && ol.ValueKind == JsonValueKind.Number
+                                    ? ol.GetInt32() : null;
+                            var user = r.TryGetProperty("user", out var u) && u.TryGetProperty("login", out var ul)
+                                ? ul.GetString() ?? "" : "";
+                            list.Add(new PrFeedback(user, body.Trim(), path, line, "line"));
+                        }
+                }
+            }
+            catch { }
+            return list;
+        });
+
+        static string Login(JsonElement e) =>
+            e.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object
+            && a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
     }
 
     /// <summary>
@@ -270,6 +375,7 @@ public static class GitHubCli
         [JsonPropertyName("isDraft")] public bool IsDraft { get; set; }
         [JsonPropertyName("reviewDecision")] public string? ReviewDecision { get; set; }
         [JsonPropertyName("url")] public string? Url { get; set; }
+        [JsonPropertyName("statusCheckRollup")] public JsonElement? StatusCheckRollup { get; set; }
     }
 
     private sealed class AuthorDto

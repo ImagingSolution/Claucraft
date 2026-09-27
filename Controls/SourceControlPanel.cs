@@ -578,12 +578,23 @@ public sealed class SourceControlPanel : UserControl
             _fetchTimer.Tick += (_, _) => _ = AutoFetchAsync();
         }
         _fetchTimer.Start();
+
+        // CI finishes on GitHub's clock, not on any change here, so the checks are polled
+        if (_prTimer == null)
+        {
+            _prTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(60) };
+            _prTimer.Tick += (_, _) => { if (_prSection.IsVisible) _ = RefreshPullRequestsAsync(_refreshGeneration); };
+        }
+        _prTimer.Start();
     }
+
+    private DispatcherTimer? _prTimer;
 
     public void OnPanelHidden()
     {
         _panelShown = false;
         _fetchTimer?.Stop();
+        _prTimer?.Stop();
     }
 
     /// <summary>
@@ -2062,6 +2073,31 @@ public sealed class SourceControlPanel : UserControl
         var approve = GlyphButton("✓", Loc.Get("ApproveAction", "Approve"), () => ApprovePullRequest(pr));
         approve.IsEnabled = !approved;
         var open = GlyphButton("↗", Loc.Get("OpenInBrowser", "Open"), () => OpenUrl(pr.Url));
+        var feedbackBody = new StackPanel { Spacing = 4, Margin = new Thickness(0, 4, 0, 2) };
+        var feedback = GlyphButton("💬", Loc.Get("PrFeedbackAction"), () =>
+        {
+            if (!_expandedPrs.Remove(pr.Number)) _expandedPrs.Add(pr.Number);
+            feedbackBody.IsVisible = _expandedPrs.Contains(pr.Number);
+            if (feedbackBody.IsVisible) _ = LoadFeedbackAsync(pr, feedbackBody);
+        });
+        feedbackBody.IsVisible = _expandedPrs.Contains(pr.Number);
+        if (feedbackBody.IsVisible) _ = LoadFeedbackAsync(pr, feedbackBody);
+
+        // CI, as one coloured dot ahead of the title; the tooltip names what failed
+        if (pr.Checks != ChecksState.None)
+        {
+            var color = pr.Checks switch
+            {
+                ChecksState.Passing => Color.FromRgb(48, 209, 88),
+                ChecksState.Failing => Color.FromRgb(255, 69, 58),
+                _ => Color.FromRgb(255, 159, 10),
+            };
+            title.Inlines = new Avalonia.Controls.Documents.InlineCollection
+            {
+                new Avalonia.Controls.Documents.Run("● ") { Foreground = new SolidColorBrush(color) },
+                new Avalonia.Controls.Documents.Run(title.Text),
+            };
+        }
 
         var grid = new Grid
         {
@@ -2073,7 +2109,7 @@ public sealed class SourceControlPanel : UserControl
         Grid.SetColumn(meta, 0);
         Grid.SetRow(meta, 1);
 
-        var actions = Row(approve, open);
+        var actions = Row(feedback, approve, open);
         actions.Margin = new Thickness(6, 0, 0, 0);
         actions.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(actions, 1);
@@ -2083,6 +2119,10 @@ public sealed class SourceControlPanel : UserControl
         grid.Children.Add(title);
         grid.Children.Add(meta);
         grid.Children.Add(actions);
+        Grid.SetRow(feedbackBody, 2);
+        Grid.SetColumnSpan(feedbackBody, 2);
+        grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+        grid.Children.Add(feedbackBody);
 
         var row = new Border
         {
@@ -2093,9 +2133,92 @@ public sealed class SourceControlPanel : UserControl
             BorderThickness = new Thickness(0.5),
         };
         // A branch pair does not fit a sidebar, so the row is where the whole of it lives.
-        ToolTip.SetTip(row, "#" + pr.Number + "  " + pr.Title + "\n" + metaText);
+        // On the two text lines, not the row: the row also holds the fold-out of comments
+        var tip = "#" + pr.Number + "  " + pr.Title + "\n" + metaText;
+        ToolTip.SetTip(title, tip);
+        ToolTip.SetTip(meta, tip);
         return row;
     }
+
+    /// <summary>
+    /// Fills a pull request's fold-out: its failing checks and every reviewer comment, each with
+    /// a button that hands it to the AI as a request to deal with it.
+    /// </summary>
+    private async Task LoadFeedbackAsync(PullRequestInfo pr, StackPanel body)
+    {
+        body.Children.Clear();
+        body.Children.Add(Dim(Loc.Get("PrFeedbackLoading")));
+        var items = await GitHubCli.GetFeedbackAsync(_repo, pr.Number);
+        body.Children.Clear();
+
+        if (pr.Checks == ChecksState.Failing)
+        {
+            var names = string.Join(", ", pr.FailingChecks ?? Array.Empty<string>());
+            var fix = new Button { Content = Loc.Get("PrFixChecks"), FontSize = 11, Padding = new Thickness(8, 2) };
+            fix.Click += (_, _) => _host.SendToTerminal(string.Format(Loc.Get("PrFixChecksPrompt"), pr.Number, names));
+            body.Children.Add(Wrap(string.Format(Loc.Get("PrChecksFailing"), names), Color.FromRgb(255, 69, 58)));
+            body.Children.Add(fix);
+        }
+        else if (pr.Checks != ChecksState.None)
+        {
+            body.Children.Add(Dim(Loc.Get(pr.Checks == ChecksState.Passing ? "PrChecksPassing" : "PrChecksPending")));
+        }
+
+        if (items.Count == 0)
+        {
+            body.Children.Add(Dim(Loc.Get("PrNoFeedback")));
+            return;
+        }
+
+        var all = new Button { Content = Loc.Get("PrAddressAll"), FontSize = 11, Padding = new Thickness(8, 2) };
+        all.Click += (_, _) => _host.SendToTerminal(string.Format(Loc.Get("PrAddressPrompt"), pr.Number,
+            string.Join(" / ", items.Select(FeedbackLine))));
+        body.Children.Add(all);
+
+        foreach (var item in items)
+        {
+            var head = item.Author + (item.Path != null ? "  " + item.Path + (item.Line != null ? ":" + item.Line : "") : "");
+            var one = GlyphButton("→", Loc.Get("PrAddressOne"), () =>
+                _host.SendToTerminal(string.Format(Loc.Get("PrAddressPrompt"), pr.Number, FeedbackLine(item))));
+            DockPanel.SetDock(one, Dock.Right);
+            var text = new StackPanel { Spacing = 1 };
+            text.Children.Add(Dim(head));
+            var bodyText = Wrap(item.Body.Length > 400 ? item.Body[..400] + "…" : item.Body, null);
+            text.Children.Add(bodyText);
+            var line = new DockPanel { LastChildFill = true };
+            line.Children.Add(one);
+            line.Children.Add(text);
+            body.Children.Add(new Border
+            {
+                Child = line,
+                Padding = new Thickness(6, 3),
+                BorderBrush = new SolidColorBrush(Divider()),
+                BorderThickness = new Thickness(2, 0, 0, 0),
+            });
+        }
+
+        TextBlock Dim(string s) => new()
+        {
+            Text = s, FontSize = 10, Opacity = 0.65, TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        TextBlock Wrap(string s, Color? color)
+        {
+            var t = new TextBlock { Text = s, FontSize = 11, TextWrapping = TextWrapping.Wrap };
+            if (color != null) t.Foreground = new SolidColorBrush(color.Value);
+            return t;
+        }
+    }
+
+    /// <summary>One piece of feedback on one line, where it is if it is on a line of code.</summary>
+    private static string FeedbackLine(PrFeedback f)
+    {
+        var body = f.Body.Replace("\r", " ").Replace("\n", " ");
+        return f.Path != null
+            ? $"[{f.Path}{(f.Line != null ? ":" + f.Line : "")}] {f.Author}: {body}"
+            : $"{f.Author}: {body}";
+    }
+
+    private readonly HashSet<int> _expandedPrs = new();
 
     private async void ApprovePullRequest(PullRequestInfo pr)
     {
