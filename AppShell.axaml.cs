@@ -8722,6 +8722,9 @@ internal partial class AppShell : UserControl, IDockOwner
         TabDrag.Hook(entry);
         WindowStrip.Children.Add(stripButton);
         ArrangeChildren();
+        // Bring it up in its pane too: _activeChild alone left the pane on the previous tab, so
+        // the toolbar and Chat View button acted on a window hidden behind the one on screen
+        SetActiveLayoutItem(entry);
         SyncSessionSelection();
 
         // The explorer, changed files, session list and branch readout all follow the active
