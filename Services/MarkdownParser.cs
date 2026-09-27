@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Avalonia;
+using Claucraft.Controls;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -62,6 +63,7 @@ public static class MarkdownParser
 
     /// <summary>Background for inline code runs while a chat-style parse is running (UI thread only).</summary>
     private static IBrush? _inlineCodeBg;
+    private static IBrush? _inlineCodeBorder;
 
     public static List<Control> Parse(string markdown, bool isDark, Typeface? codeTypeface = null,
         double baseFontSize = 13, WikiLinkOptions? wiki = null, bool chatStyle = false)
@@ -70,8 +72,9 @@ public static class MarkdownParser
             return ParseCore(markdown, isDark, codeTypeface, baseFontSize, wiki, null);
 
         _inlineCodeBg = new SolidColorBrush(ChatPalette.InlineCodeBg(isDark));
+        _inlineCodeBorder = new SolidColorBrush(ChatPalette.For(isDark).Border);
         try { return ParseCore(markdown, isDark, codeTypeface, baseFontSize, wiki, ChatPalette.For(isDark)); }
-        finally { _inlineCodeBg = null; }
+        finally { _inlineCodeBg = null; _inlineCodeBorder = null; }
     }
 
     private static List<Control> ParseCore(string markdown, bool isDark, Typeface? codeTypeface,
@@ -122,7 +125,7 @@ public static class MarkdownParser
                     : level switch { 1 => baseFontSize * 1.7, 2 => baseFontSize * 1.4, 3 => baseFontSize * 1.2, _ => baseFontSize * 1.1 };
                 var fontWeight = level <= 2 || chat != null ? FontWeight.Bold : FontWeight.SemiBold;
 
-                var tb = new SelectableTextBlock
+                var tb = new ChipSelectableTextBlock
                 {
                     FontSize = fontSize,
                     FontWeight = fontWeight,
@@ -168,7 +171,7 @@ public static class MarkdownParser
                 }
                 var quoteText = string.Join("\n", quoteLines);
 
-                var quoteContent = new SelectableTextBlock
+                var quoteContent = new ChipSelectableTextBlock
                 {
                     FontSize = baseFontSize,
                     FontStyle = FontStyle.Italic,
@@ -221,7 +224,7 @@ public static class MarkdownParser
                         Margin = new Thickness(indent * 8 + 4, 0, 6, 0),
                         VerticalAlignment = VerticalAlignment.Top,
                     };
-                    var itemContent = new TextBlock
+                    var itemContent = new ChipTextBlock
                     {
                         FontSize = baseFontSize,
                         Foreground = new SolidColorBrush(fg),
@@ -264,7 +267,7 @@ public static class MarkdownParser
                         Margin = new Thickness(4, 0, 6, 0),
                         VerticalAlignment = VerticalAlignment.Top,
                     };
-                    var itemContent = new TextBlock
+                    var itemContent = new ChipTextBlock
                     {
                         FontSize = baseFontSize,
                         Foreground = new SolidColorBrush(fg),
@@ -321,7 +324,7 @@ public static class MarkdownParser
                 // The chat keeps the writer's line breaks, as the desktop app does; joining them
                 // with a space also wedges stray gaps into Japanese sentences.
                 var paraText = string.Join(chat != null ? "\n" : " ", paraLines);
-                var tb = new SelectableTextBlock
+                var tb = new ChipSelectableTextBlock
                 {
                     FontSize = baseFontSize,
                     Foreground = new SolidColorBrush(fg),
@@ -421,7 +424,15 @@ public static class MarkdownParser
                 {
                     // A tinted chip, padded with narrow spaces so the tint clears the glyphs
                     codeRun.Text = " " + content + " ";
-                    codeRun.Background = _inlineCodeBg;
+                    if (tb is InlineCodeChips.IHost host)
+                    {
+                        // Drawn by the host as a rounded, outlined chip under the text
+                        codeRun.Background = InlineCodeChips.MarkerBrush;
+                        host.ChipBackground = _inlineCodeBg;
+                        host.ChipBorder = _inlineCodeBorder;
+                    }
+                    else
+                        codeRun.Background = _inlineCodeBg;
                     codeRun.FontSize = tb.FontSize * 0.9;
                 }
                 tb.Inlines!.Add(codeRun);
@@ -823,7 +834,7 @@ public static class MarkdownParser
             {
                 for (int c = 0; c < colCount; c++)
                 {
-                    var cellText = new SelectableTextBlock
+                    var cellText = new ChipSelectableTextBlock
                     {
                         FontSize = baseFontSize * 0.95,
                         FontWeight = r == 0 ? FontWeight.SemiBold : FontWeight.Normal,
@@ -870,7 +881,7 @@ public static class MarkdownParser
                         : Brushes.Transparent,
                     Padding = new Thickness(6, 3),
                 };
-                var cellText = new SelectableTextBlock
+                var cellText = new ChipSelectableTextBlock
                 {
                     FontSize = baseFontSize * 0.92,
                     FontWeight = r == 0 ? FontWeight.SemiBold : FontWeight.Normal,
