@@ -542,6 +542,10 @@ public static class SessionMessageReader
             {
                 return ParseProgressMessage(root, timestamp);
             }
+            else if (type == "attachment")
+            {
+                return ParseQueuedPrompt(root, timestamp);
+            }
             else if (type == "system")
             {
                 return null; // Skip system messages
@@ -572,6 +576,41 @@ public static class SessionMessageReader
             CollectInlineImages(contentProp, images);
         }
 
+        var uuid = root.TryGetProperty("uuid", out var uuidProp) && uuidProp.ValueKind == JsonValueKind.String
+            ? uuidProp.GetString() : null;
+        return UserMessage(text, images, timestamp, uuid);
+    }
+
+    /// <summary>
+    /// A prompt sent while Claude was mid-turn. The CLI does not log it as a user turn but as an
+    /// attachment it hands the running turn, so without this it never shows in the chat view.
+    /// No uuid: /rewind lists only real turns, so it cannot be rewound to or edited.
+    /// </summary>
+    private static ConversationMessage? ParseQueuedPrompt(JsonElement root, DateTime? timestamp)
+    {
+        if (!root.TryGetProperty("attachment", out var att) || att.ValueKind != JsonValueKind.Object
+            || !att.TryGetProperty("type", out var t) || t.GetString() != "queued_command"
+            || !att.TryGetProperty("prompt", out var prompt))
+            return null;
+        if (att.TryGetProperty("origin", out var origin) && origin.ValueKind == JsonValueKind.Object
+            && origin.TryGetProperty("kind", out var kind) && kind.ValueKind == JsonValueKind.String
+            && kind.GetString() != "human")
+            return null;
+
+        string? text = null;
+        var images = new List<ChatImage>();
+        if (prompt.ValueKind == JsonValueKind.String)
+            text = prompt.GetString();
+        else if (prompt.ValueKind == JsonValueKind.Array)
+        {
+            text = ExtractAllTextContent(prompt, skipToolResults: true);
+            CollectInlineImages(prompt, images);
+        }
+        return UserMessage(text, images, timestamp, null);
+    }
+
+    private static ConversationMessage? UserMessage(string? text, List<ChatImage> images, DateTime? timestamp, string? uuid)
+    {
         text = string.IsNullOrWhiteSpace(text) ? "" : CleanMetadataTags(SlashCommandText(text));
 
         // Snipyard hands pasted images to the CLI as file paths, so the prompt text carries
@@ -586,8 +625,6 @@ public static class SessionMessageReader
 
         if (string.IsNullOrWhiteSpace(text) && images.Count == 0) return null;
 
-        var uuid = root.TryGetProperty("uuid", out var uuidProp) && uuidProp.ValueKind == JsonValueKind.String
-            ? uuidProp.GetString() : null;
         return new ConversationMessage(MessageRole.User, text, timestamp, null, false, false,
             Images: images.Count > 0 ? images : null, Uuid: uuid);
     }
