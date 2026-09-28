@@ -7,7 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// Dragging a window by its tab: along the strip to reorder it, onto a pane to dock it there,

@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Decoding for the paths git prints. Shared by the services that read porcelain output,

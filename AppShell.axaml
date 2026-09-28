@@ -2,11 +2,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:svc="clr-namespace:Claucraft.Services"
-             xmlns:local="clr-namespace:Claucraft"
-             xmlns:ctl="clr-namespace:Claucraft.Controls"
+             xmlns:svc="clr-namespace:Snipyard.Services"
+             xmlns:local="clr-namespace:Snipyard"
+             xmlns:ctl="clr-namespace:Snipyard.Controls"
              mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
-             x:Class="Claucraft.AppShell"
+             x:Class="Snipyard.AppShell"
              Background="{DynamicResource SurfaceBg}">
 
     <UserControl.Styles>
@@ -730,7 +730,7 @@
                                         <StackPanel x:Name="PnlProviderRadios" Spacing="2" />
                                         <!-- Opens the active provider's own config directory (e.g. Claude
                                              Code's .claude folder) - distinct from Open Config Folder
-                                             below, which opens Claucraft's provider-definition folder. -->
+                                             below, which opens Snipyard's provider-definition folder. -->
                                         <Button x:Name="BtnOpenClaudeFolder" Classes="primary"
                                                 HorizontalAlignment="Stretch"
                                                 Click="OnOpenClaudeFolder">

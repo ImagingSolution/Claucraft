@@ -3,7 +3,7 @@ using System.IO;
 using System.Text.Json;
 using System.Threading;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>One rate-limit window: how much of it is spent, and when it starts over.</summary>
 public sealed class RateLimitWindow
@@ -51,7 +51,7 @@ public sealed class RateLimitInfo
 ///  2. The cache a user's own statusline script may leave in %TEMP%.
 /// With neither, the readout simply stays hidden.
 ///
-/// Claucraft deliberately never reads Claude Code's stored OAuth token or calls Anthropic's API
+/// Snipyard deliberately never reads Claude Code's stored OAuth token or calls Anthropic's API
 /// itself: Anthropic's terms reserve Claude.ai credentials for Claude Code and Anthropic's own
 /// apps, and forbid third-party tools from collecting or using them. Both sources are data Claude
 /// Code or the user's own script already produced; this process only reads a file.
@@ -71,7 +71,7 @@ public sealed class RateLimitService : IDisposable
 
     /// <summary>
     /// The relay's copy lives longer: its windows carry exact reset times, so a window past its
-    /// reset is dropped on its own. The cap only bounds drift from use outside Claucraft, one
+    /// reset is dropped on its own. The cap only bounds drift from use outside Snipyard, one
     /// five-hour window's worth.
     /// </summary>
     private static readonly TimeSpan RelayCacheTtl = TimeSpan.FromHours(5);

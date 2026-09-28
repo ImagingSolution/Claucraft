@@ -8,9 +8,9 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft;
+namespace Snipyard;
 
 /// <summary>
 /// The update notice: the corner of the shell that says a newer release exists and installs it.

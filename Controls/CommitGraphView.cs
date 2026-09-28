@@ -6,9 +6,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// The commit list: lanes and edges down the left, then the commit's refs, subject, author and

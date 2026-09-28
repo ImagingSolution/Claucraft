@@ -1,4 +1,6 @@
-# Claucraft
+# Snipyard
+
+*Formerly Claucraft.*
 
 A Windows MDI (Multiple Document Interface) terminal application for AI coding CLIs, built with Avalonia UI.
 
@@ -37,7 +39,7 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 - **Remote Control** - A session tab's menu sends `/remote-control` to continue the session from another device
 - **Launch Profiles** - Light / Standard / Deep from the toolbar, applied on every launch path - new, `-c` continue and `-r` resume alike - so a resumed session cannot silently balloon back to an unbounded context. Light ships its own `--settings` file that trims MCP servers, tool descriptions and auto-memory out of the prompt prefix; Deep switches to `--model opus --effort high`
 - **Launch Model & Effort** - Pin a model and effort level when a session starts (Claude only) instead of switching mid-conversation and throwing away the prompt cache. The choice carries across new windows, restores and launches
-- **Git Worktree Isolation** - Give a session its own `git worktree` checkout (under a Claucraft-managed folder, on `claucraft/`-prefixed branches) so several windows on one repo can work in parallel without clobbering each other
+- **Git Worktree Isolation** - Give a session its own `git worktree` checkout (under a Snipyard-managed folder, on `snipyard/`-prefixed branches) so several windows on one repo can work in parallel without clobbering each other
 - **Session Hand-off** - When context runs low (an absolute token threshold, so it still fires on 1M-context models), hand off to a fresh session with a brief extracted from the transcript locally. It costs no tokens, unlike `/compact`, and the brief lands in the new session's input box to be edited before anything is sent
 - **Resume Cost & Token Badge** - The session picker shows each session's last known context size as a badge, with a tooltip estimate of what resuming it will cost. Right-click for "Start fresh from brief" to hand off without reopening the old session
 
@@ -84,7 +86,7 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 - **Cache Expiry Warning** - An idle session close to its prompt-cache expiry gets a "compact now" banner, and switching model or effort mid-session compacts first when there is enough context worth saving
 - **Marginal Cost Readout** - What the last turn cost, and what the next one costs just to re-read the conversation, so a session that has grown expensive says so instead of being discovered on the invoice
 - **Usage in Plain Words** - "about 840 left, resets in 5h" instead of a bare message count, measured against the plan (Pro / Max 5x / Max 20x) chosen in Settings. Aggregated from the session transcripts themselves
-- **Rate Limit Readout** - Utilization and reset countdown for both the 5-hour and 7-day plan windows. Claude sessions started from Claucraft get a status line that saves the `rate_limits` Claude Code itself reports (Pro/Max, after the first reply); a status line of your own keeps showing. It can be turned off in Settings > Live status, at the cost of the readout, and while it is on Claude Code hides its footer key hints. A `claude_usage_cache.json` left in the temp folder by your own script is read as a fallback. Claucraft never uses your Claude sign-in itself
+- **Rate Limit Readout** - Utilization and reset countdown for both the 5-hour and 7-day plan windows. Claude sessions started from Snipyard get a status line that saves the `rate_limits` Claude Code itself reports (Pro/Max, after the first reply); a status line of your own keeps showing. It can be turned off in Settings > Live status, at the cost of the readout, and while it is on Claude Code hides its footer key hints. A `claude_usage_cache.json` left in the temp folder by your own script is read as a fallback. Snipyard never uses your Claude sign-in itself
 - **Permission Prompts, Explained** - The approval overlay says what the command actually does and rates it read-only / changes files / deletes or reaches the network
 - **Error Diagnosis Banner** - Known failures (signed out, rate limited, usage limit, network down, outdated CLI) surface as a banner with the fix one click away, and advisory banners hide themselves again
 - **Stop Button** - A stop control on the input row of whichever window is working, for anyone who does not know Escape interrupts the AI
@@ -172,7 +174,7 @@ A Windows MDI (Multiple Document Interface) terminal application for AI coding C
 ## Project Structure
 
 ```
-Claucraft/
+Snipyard/
 ├── Program.cs                      # Application entry point
 ├── App.axaml / .cs                 # Application root and theme resources
 ├── MainWindow.axaml / .cs          # The application window - hosts one AppShell
@@ -296,17 +298,17 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 | Data | Path |
 |---|---|
-| Settings | `%APPDATA%\Claucraft\appsettings.json` |
-| Snippets | `%APPDATA%\Claucraft\snippets.json` |
-| Workspaces | `%APPDATA%\Claucraft\workspace.json` |
-| CLI providers | `%APPDATA%\Claucraft\providers.json` |
-| Light profile settings | `%APPDATA%\Claucraft\light-settings.json` |
-| Slash command overrides | `%APPDATA%\Claucraft\slashcommands.json` (optional) |
-| Scheduled tasks | `%APPDATA%\Claucraft\schedules.json` |
-| Help pages | `%APPDATA%\Claucraft\Help\` |
-| Checkpoints | `%APPDATA%\Claucraft\checkpoints\` |
-| Session worktrees | `%LOCALAPPDATA%\Claucraft\worktrees\` |
-| Rate limits (from the status line) | `%LOCALAPPDATA%\Claucraft\rate-limits.json` |
+| Settings | `%APPDATA%\Snipyard\appsettings.json` |
+| Snippets | `%APPDATA%\Snipyard\snippets.json` |
+| Workspaces | `%APPDATA%\Snipyard\workspace.json` |
+| CLI providers | `%APPDATA%\Snipyard\providers.json` |
+| Light profile settings | `%APPDATA%\Snipyard\light-settings.json` |
+| Slash command overrides | `%APPDATA%\Snipyard\slashcommands.json` (optional) |
+| Scheduled tasks | `%APPDATA%\Snipyard\schedules.json` |
+| Help pages | `%APPDATA%\Snipyard\Help\` |
+| Checkpoints | `%APPDATA%\Snipyard\checkpoints\` |
+| Session worktrees | `%LOCALAPPDATA%\Snipyard\worktrees\` |
+| Rate limits (from the status line) | `%LOCALAPPDATA%\Snipyard\rate-limits.json` |
 | Session index (read/write) | `~/.claude/projects/*/sessions-index.json` |
 | Session transcripts (read-only) | `~/.claude/projects/*/*.jsonl` |
 | Cached diagrams | `~/.claude/projects/*/diagrams/` |
@@ -315,11 +317,13 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | CLI settings and plugins (read-only) | `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/plugins/installed_plugins.json` |
 | Project MCP servers and skills (read-only) | `<project>/.mcp.json`, `<project>/.claude/settings.local.json`, `<project>/.claude/commands/*.md` |
 
+**Upgrading from Claucraft:** the first start copies `%APPDATA%\Claucraft` to `%APPDATA%\Snipyard`, so settings, snippets, providers, schedules and checkpoints carry over. The old folder is left in place and can be deleted once you no longer need to go back. Worktrees made before the rename stay under `%LOCALAPPDATA%\Claucraft\worktrees\` and are still recognised. An install updated in place keeps its `Claucraft.exe` file name; rename it to `Snipyard.exe` whenever convenient.
+
 ## Disclaimer
 
-Claucraft is an unofficial, independent project. It is not affiliated with, endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC; other product names mentioned here are trademarks of their respective owners.
+Snipyard is an unofficial, independent project. It is not affiliated with, endorsed by, or sponsored by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC; other product names mentioned here are trademarks of their respective owners.
 
-Claucraft does not bundle Claude Code. It runs the copy you installed, signed in with your own account.
+Snipyard does not bundle Claude Code. It runs the copy you installed, signed in with your own account.
 
 ## License
 
@@ -327,7 +331,9 @@ MIT
 
 ---
 
-# Claucraft (日本語)
+# Snipyard (日本語)
+
+*旧名 Claucraft。*
 
 Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（マルチドキュメントインターフェース）ターミナルアプリケーションです。
 
@@ -360,7 +366,7 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 - **リモート操作** - セッションタブのメニューから `/remote-control` を送り、別の端末からセッションを続けられる
 - **起動プロファイル** - ツールバーで Light / Standard / Deep を選択。新規・`-c` 継続・`-r` 再開のすべての起動経路に適用されるため、再開時にコンテキスト上限が外れて膨らむことがない。Light は独自の `--settings` ファイルで MCP サーバー・ツール説明・自動メモリをプロンプト冒頭から削減、Deep は `--model opus --effort high` に切替
 - **起動時のモデルと effort** - 会話の途中で切り替えてプロンプトキャッシュを捨てる代わりに、セッション開始時にモデルと effort を固定できる（Claude のみ）。選択は新規ウィンドウ・復元・起動をまたいで引き継がれる
-- **Git Worktree 分離** - セッションごとに専用の `git worktree` チェックアウト（Claucraft 管理フォルダ配下、`claucraft/` 接頭辞のブランチ）を持たせ、同一リポジトリの複数ウィンドウが互いのファイルを壊さず並行作業可能に
+- **Git Worktree 分離** - セッションごとに専用の `git worktree` チェックアウト（Snipyard 管理フォルダ配下、`snipyard/` 接頭辞のブランチ）を持たせ、同一リポジトリの複数ウィンドウが互いのファイルを壊さず並行作業可能に
 - **セッション引き継ぎ** - コンテキストが少なくなったら（割合ではなく絶対トークン数が閾値なので 1M コンテキストのモデルでも発火する）、記録からローカルで抽出したブリーフを持って新規セッションへ引き継ぐ。`/compact` と違いトークン費用はかからず、ブリーフは新規セッションの入力欄に置かれるので送信前に編集できる
 - **再開コスト＆トークンバッジ** - セッション選択画面に直近のコンテキストサイズをバッジ表示し、ツールチップで再開コストを見積もり。右クリックの「ブリーフから新規開始」で、元のセッションを開かずに引き継げる
 
@@ -407,7 +413,7 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 - **キャッシュ期限の警告** - アイドル中のセッションがプロンプトキャッシュの期限に近づくと「今すぐ compact」バナーを表示。会話途中でモデルや effort を切り替えるときは、残す価値のあるコンテキストがあれば先に compact する
 - **限界コスト表示** - 直前のターンにかかった額と、次のターンが会話を読み直すだけでかかる額を表示。高くなったセッションが自分から知らせる
 - **使用量の人間語表示** - 単なるメッセージ数ではなく「残り約 840 回・リセットまで 5 時間」と表示。基準は設定で選んだプラン（Pro / Max 5x / Max 20x）で、集計元はセッション記録そのもの
-- **レート制限表示** - プランの5時間枠・7日枠それぞれの使用率とリセットまでの時間を表示。Claucraft から起動した Claude セッションに status line を追加し、Claude Code 自身が報告する `rate_limits` を保存して表示します（Pro/Max、最初の応答以降）。ご自身の status line はそのまま表示されます。設定 > ライブステータスでオフにできます（表示も消えます）。オンの間、Claude Code はフッターのキー操作ヒントを表示しません。ご自身のスクリプトが一時フォルダに残す `claude_usage_cache.json` も予備として読みます（Claucraft 自身が Claude のサインイン情報を使うことはありません）
+- **レート制限表示** - プランの5時間枠・7日枠それぞれの使用率とリセットまでの時間を表示。Snipyard から起動した Claude セッションに status line を追加し、Claude Code 自身が報告する `rate_limits` を保存して表示します（Pro/Max、最初の応答以降）。ご自身の status line はそのまま表示されます。設定 > ライブステータスでオフにできます（表示も消えます）。オンの間、Claude Code はフッターのキー操作ヒントを表示しません。ご自身のスクリプトが一時フォルダに残す `claude_usage_cache.json` も予備として読みます（Snipyard 自身が Claude のサインイン情報を使うことはありません）
 - **権限プロンプトの解説** - 承認オーバーレイに、そのコマンドが何をするかの平易な説明と危険度（読み取りのみ / ファイルを変更 / 削除・ネットワーク）を表示
 - **エラー診断バナー** - 既知の失敗（サインアウト・レート制限・使用量上限・ネットワーク断・CLI が古い）を検出し、対処をワンクリックで実行できるバナーを表示。お知らせ系のバナーは自動で消える
 - **停止ボタン** - 作業中のウィンドウの入力行に停止ボタンを表示。Escape で中断できることを知らなくても止められる
@@ -495,7 +501,7 @@ Avalonia UI で構築された、AI コーディング CLI 用の Windows MDI（
 ## プロジェクト構成
 
 ```
-Claucraft/
+Snipyard/
 ├── Program.cs                      # アプリケーションのエントリポイント
 ├── App.axaml / .cs                 # アプリケーションルートとテーマリソース
 ├── MainWindow.axaml / .cs          # アプリ本体のウィンドウ。中身は AppShell ひとつ
@@ -619,17 +625,17 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 
 | データ | パス |
 |---|---|
-| 設定 | `%APPDATA%\Claucraft\appsettings.json` |
-| スニペット | `%APPDATA%\Claucraft\snippets.json` |
-| ワークスペース | `%APPDATA%\Claucraft\workspace.json` |
-| CLI プロバイダー | `%APPDATA%\Claucraft\providers.json` |
-| Light プロファイル設定 | `%APPDATA%\Claucraft\light-settings.json` |
-| スラッシュコマンド上書き | `%APPDATA%\Claucraft\slashcommands.json`（任意） |
-| スケジュールタスク | `%APPDATA%\Claucraft\schedules.json` |
-| ヘルプページ | `%APPDATA%\Claucraft\Help\` |
-| チェックポイント | `%APPDATA%\Claucraft\checkpoints\` |
-| セッション用 worktree | `%LOCALAPPDATA%\Claucraft\worktrees\` |
-| レート制限（status line 経由） | `%LOCALAPPDATA%\Claucraft\rate-limits.json` |
+| 設定 | `%APPDATA%\Snipyard\appsettings.json` |
+| スニペット | `%APPDATA%\Snipyard\snippets.json` |
+| ワークスペース | `%APPDATA%\Snipyard\workspace.json` |
+| CLI プロバイダー | `%APPDATA%\Snipyard\providers.json` |
+| Light プロファイル設定 | `%APPDATA%\Snipyard\light-settings.json` |
+| スラッシュコマンド上書き | `%APPDATA%\Snipyard\slashcommands.json`（任意） |
+| スケジュールタスク | `%APPDATA%\Snipyard\schedules.json` |
+| ヘルプページ | `%APPDATA%\Snipyard\Help\` |
+| チェックポイント | `%APPDATA%\Snipyard\checkpoints\` |
+| セッション用 worktree | `%LOCALAPPDATA%\Snipyard\worktrees\` |
+| レート制限（status line 経由） | `%LOCALAPPDATA%\Snipyard\rate-limits.json` |
 | セッションインデックス（読み書き） | `~/.claude/projects/*/sessions-index.json` |
 | セッション記録（読み取り専用） | `~/.claude/projects/*/*.jsonl` |
 | ダイアグラムのキャッシュ | `~/.claude/projects/*/diagrams/` |
@@ -638,11 +644,13 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 | CLI 設定・プラグイン（読み取り専用） | `~/.claude/settings.json`, `~/.claude.json`, `~/.claude/plugins/installed_plugins.json` |
 | プロジェクトの MCP・スキル（読み取り専用） | `<project>/.mcp.json`, `<project>/.claude/settings.local.json`, `<project>/.claude/commands/*.md` |
 
+**Claucraft からの移行:** 初回起動時に `%APPDATA%\Claucraft` を `%APPDATA%\Snipyard` にコピーするので、設定・スニペット・プロバイダー・スケジュール・チェックポイントはそのまま引き継がれます。旧フォルダは残るので、以前の版に戻す必要がなくなったら削除してかまいません。改名前に作った worktree は `%LOCALAPPDATA%\Claucraft\worktrees\` に残ったまま認識されます。アプリ内の更新で上書きした場合、ファイル名は `Claucraft.exe` のままなので、都合のよいときに `Snipyard.exe` へ変更してください。
+
 ## 免責事項
 
-Claucraft は非公式の個人プロジェクトであり、Anthropic とは提携・承認・後援のいずれの関係もありません。Claude および Claude Code は Anthropic, PBC の商標です。その他の製品名は各社の商標です。
+Snipyard は非公式の個人プロジェクトであり、Anthropic とは提携・承認・後援のいずれの関係もありません。Claude および Claude Code は Anthropic, PBC の商標です。その他の製品名は各社の商標です。
 
-Claucraft は Claude Code を同梱していません。利用者がインストールした Claude Code を、利用者自身のアカウントで起動します。
+Snipyard は Claude Code を同梱していません。利用者がインストールした Claude Code を、利用者自身のアカウントで起動します。
 
 ## ライセンス
 

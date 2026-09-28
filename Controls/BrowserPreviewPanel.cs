@@ -10,10 +10,10 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform;
 using Avalonia.Threading;
-using Claucraft.Services;
+using Snipyard.Services;
 using Microsoft.Web.WebView2.Core;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// The side pane's Preview tab: a WebView2 browser for the dev server the session started. A
@@ -255,7 +255,7 @@ internal sealed class WebViewHost : NativeControlHost
         {
             if (_env == null)
             {
-                var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Claucraft", "WebView2");
+                var data = Path.Combine(AppPaths.Local, "WebView2");
                 _env = await CoreWebView2Environment.CreateAsync(null, data);
             }
             var controller = await _env.CreateCoreWebView2ControllerAsync(hwnd);

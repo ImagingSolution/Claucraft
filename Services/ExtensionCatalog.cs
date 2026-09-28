@@ -7,7 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public enum ExtensionKind { Mcp, Skill, Plugin }
 
@@ -15,7 +15,7 @@ public enum ExtensionKind { Mcp, Skill, Plugin }
 /// One MCP server, skill or plugin, as the extensions panel shows it.
 ///
 /// <see cref="Id"/> is what a toggle writes back, and it is only meaningful when
-/// <see cref="CanToggle"/> is true. Everything Claucraft can see but not switch -
+/// <see cref="CanToggle"/> is true. Everything Snipyard can see but not switch -
 /// a server a plugin brings with it, a skill file on disk - is reported with
 /// CanToggle false and a <see cref="Source"/> that says who owns it, so the panel
 /// can point at the row that does own the switch instead of pretending it has one.
@@ -252,7 +252,7 @@ public static class ExtensionCatalog
     {
         var items = new List<ExtensionItem>();
 
-        // Project .mcp.json - the one set Claucraft can switch, via .claude/settings.local.json.
+        // Project .mcp.json - the one set Snipyard can switch, via .claude/settings.local.json.
         if (!string.IsNullOrEmpty(projectFolder))
         {
             var disabled = DisabledProjectServers(projectFolder);
@@ -538,13 +538,13 @@ public static class ExtensionCatalog
             var root = ReadJson(path)?.AsObject() ?? new JsonObject();
 
             if (File.Exists(path))
-                File.Copy(path, path + ".claucraft-backup", overwrite: true);
+                File.Copy(path, path + ".snipyard-backup", overwrite: true);
             else
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
 
             edit(root);
 
-            var temp = path + ".claucraft-tmp";
+            var temp = path + ".snipyard-tmp";
             using (var stream = File.Create(temp))
             {
                 // Writing the node straight out keeps JsonSerializer - and the type resolver

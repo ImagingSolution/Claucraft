@@ -7,9 +7,9 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// Lets a mouse drag select across the separate text blocks a chat reply is built from, the

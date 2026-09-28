@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>What the session has cost so far and what continuing it will cost.</summary>
 public sealed class TurnCost

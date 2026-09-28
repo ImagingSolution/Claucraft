@@ -8,7 +8,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public record SessionInfo(string Id, string? Cwd, string? Summary, DateTime? Timestamp)
 {
@@ -486,12 +486,12 @@ public static class SessionService
 
     /// <summary>
     /// Session id of the transcript a window just started writing: one <em>created</em> in the
-    /// project folder at or after the given time. Used to learn the id of a session Claucraft
+    /// project folder at or after the given time. Used to learn the id of a session Snipyard
     /// launched itself, which the CLI only reveals by creating the transcript file.
     ///
     /// Creation time is the whole test. Matching on last-write instead hands the window whichever
     /// session in the project was typed into most recently - and with several windows on one
-    /// project, or a session running outside Claucraft, that is routinely somebody else's. Ids
+    /// project, or a session running outside Snipyard, that is routinely somebody else's. Ids
     /// another window already claimed are skipped for the same reason.
     ///
     /// Returns null while the CLI has not written a transcript yet.
@@ -526,7 +526,7 @@ public static class SessionService
     /// Sends a session's transcript, and the folder holding its subagents and tool results,
     /// to the recycle bin. Returns null on success, else the reason.
     ///
-    /// This is the one place Claucraft removes anything under ~/.claude, so it goes only where
+    /// This is the one place Snipyard removes anything under ~/.claude, so it goes only where
     /// the id points and only to the bin - a transcript is the sole copy of a conversation.
     /// </summary>
     public static string? Delete(string projectFolder, string sessionId)

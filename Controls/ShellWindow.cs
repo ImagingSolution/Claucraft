@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Platform;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// A window dragged out with a terminal in it. It holds a whole shell - toolbar, side panel, IME
@@ -24,7 +24,7 @@ internal class ShellWindow : Window
         Shell = new AppShell(primary: false);
         Content = Shell;
 
-        Title = "Claucraft";
+        Title = "Snipyard";
         Width = 1100;
         Height = 750;
         MinWidth = 600;
@@ -32,7 +32,7 @@ internal class ShellWindow : Window
 
         try
         {
-            Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Claucraft/icon.ico")));
+            Icon = new WindowIcon(AssetLoader.Open(new Uri("avares://Snipyard/icon.ico")));
         }
         catch { }
     }

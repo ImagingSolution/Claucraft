@@ -4,7 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>What a decoration on a commit points at.</summary>
 public enum GitRefKind

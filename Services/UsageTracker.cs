@@ -2,7 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public class UsageInfo
 {

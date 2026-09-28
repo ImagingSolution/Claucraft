@@ -6,7 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public enum ExecutionKind { Wsl, Ssh }
 

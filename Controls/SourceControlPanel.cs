@@ -13,9 +13,9 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// The few things the panel needs from the window it sits in: somewhere to put text the user

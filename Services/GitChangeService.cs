@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// One entry from `git status --porcelain`: a single changed, staged, or untracked file.

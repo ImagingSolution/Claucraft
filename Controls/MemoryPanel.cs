@@ -7,9 +7,9 @@ using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// What the memory panel needs from the window around it. Deliberately small: this panel reads,

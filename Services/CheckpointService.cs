@@ -8,7 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// One work-tree snapshot taken right before a prompt is sent, so the user can undo whatever
@@ -28,7 +28,7 @@ public record Checkpoint(
 /// Takes a snapshot of a project's working tree before each prompt and restores it on demand.
 /// Git repos use "stash create", which builds a commit object without touching the working
 /// tree or the stash list, so capture never interferes with what the user is doing. Non-git
-/// folders fall back to a plain recursive file copy under %AppData%\Claucraft\checkpoints.
+/// folders fall back to a plain recursive file copy under %AppData%\Snipyard\checkpoints.
 /// </summary>
 public class CheckpointService
 {
@@ -42,9 +42,7 @@ public class CheckpointService
 
     private readonly List<Checkpoint> _checkpoints = new();
 
-    private static readonly string RootDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Claucraft", "checkpoints");
+    private static readonly string RootDir = Path.Combine(AppPaths.Roaming, "checkpoints");
 
     private static readonly string IndexFile = Path.Combine(RootDir, "index.json");
 
@@ -181,6 +179,8 @@ public class CheckpointService
 
         // The commit "stash create" makes is dangling (no ref points to it), so without this
         // it would be swept away by the next "git gc".
+        // Still named after Claucraft, the app's name before the rename: the refs are internal,
+        // and a new name would hide every checkpoint an existing repository already holds.
         RunGit(gitRoot, $"update-ref refs/claucraft/checkpoints/{id} {sha}");
 
         return new Checkpoint(id, projectFolder, DateTime.Now, label, true, sha);

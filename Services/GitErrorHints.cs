@@ -1,6 +1,6 @@
 using System;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Turns git's raw refusal into something a user can act on: recognises the common failures

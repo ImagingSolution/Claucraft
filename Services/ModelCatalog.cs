@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// The models the status-bar dropdown offers, one per line (fable, opus, ...), each named after

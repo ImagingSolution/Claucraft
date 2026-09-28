@@ -8,9 +8,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Shapes;
 using Avalonia.Media;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft;
+namespace Snipyard;
 
 public partial class UsageChartWindow : Window
 {

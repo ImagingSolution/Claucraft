@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>Where the current branch stands against the remote it tracks.</summary>
 public sealed record BranchState(string Current, int Ahead, int Behind, bool HasUpstream)
@@ -46,7 +46,10 @@ public static class GitWriteService
     /// from the folder name. Git has no such concept on its own; this is local config only, so
     /// it never leaks into a push and disappears if the repository is ever re-cloned.
     /// </summary>
-    public const string RepoNameConfigKey = "claucraft.repo-name";
+    public const string RepoNameConfigKey = "snipyard.repo-name";
+
+    /// <summary>The same setting as written before the app was renamed from Claucraft.</summary>
+    public const string LegacyRepoNameConfigKey = "claucraft.repo-name";
 
     /// <summary>Turns an existing, ordinary folder into a new git repository.</summary>
     /// <param name="repoName">

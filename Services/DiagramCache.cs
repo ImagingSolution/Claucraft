@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
-using Claucraft.Terminal;
+using Snipyard.Terminal;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Caches detected Excalidraw diagrams per project folder.
@@ -56,7 +56,7 @@ public static class DiagramCache
             {
                 type = "excalidraw",
                 version = 2,
-                source = "Claucraft",
+                source = "Snipyard",
                 createdAt = DateTime.Now.ToString("o"),
                 elements = JsonSerializer.Deserialize<JsonElement>(
                     CleanJsonWhitespace(block.Content))

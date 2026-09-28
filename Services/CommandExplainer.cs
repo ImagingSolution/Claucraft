@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>How risky it looks for the user to approve this action.</summary>
 public enum RiskLevel { ReadOnly, FileChange, Dangerous }

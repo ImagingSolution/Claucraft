@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public enum MessageRole { User, Assistant, System }
 
@@ -574,7 +574,7 @@ public static class SessionMessageReader
 
         text = string.IsNullOrWhiteSpace(text) ? "" : CleanMetadataTags(SlashCommandText(text));
 
-        // Claucraft hands pasted images to the CLI as file paths, so the prompt text carries
+        // Snipyard hands pasted images to the CLI as file paths, so the prompt text carries
         // them. Show those as thumbnails and keep the path out of the bubble.
         text = ImagePathPattern.Replace(text, m =>
         {
@@ -592,7 +592,7 @@ public static class SessionMessageReader
             Images: images.Count > 0 ? images : null, Uuid: uuid);
     }
 
-    /// <summary>An absolute Windows image path, optionally @-prefixed and quoted, as Claucraft writes it.</summary>
+    /// <summary>An absolute Windows image path, optionally @-prefixed and quoted, as Snipyard writes it.</summary>
     private static readonly Regex ImagePathPattern = new(
         @"@?""?(?<p>[A-Za-z]:\\[^""\r\n]*?\.(?:png|jpe?g|gif|bmp|webp))""?",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);

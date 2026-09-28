@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// The bare shape the graph layout needs from a commit: its hash and its parents'.

@@ -6,7 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// A window dragged out of the main one. It is the dock area and its tab strip and nothing else -
@@ -195,7 +195,7 @@ internal partial class DetachedWindow : Window, IDockOwner
     {
         WindowStripBar.IsVisible = _items.Count > 1;
         MdiHost.Rebuild();
-        Title = _active?.Title ?? "Claucraft";
+        Title = _active?.Title ?? "Snipyard";
         Paint();
     }
 

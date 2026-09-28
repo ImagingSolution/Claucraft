@@ -8,7 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>A published release newer than the one running, and the file to fetch for it.</summary>
 public sealed record UpdateInfo(
@@ -38,28 +38,35 @@ public sealed record UpdateInfo(
 /// </summary>
 public static class UpdateService
 {
-    private const string LatestUrl = "https://api.github.com/repos/ImagingSolution/Claucraft/releases/latest";
+    private const string LatestUrl = "https://api.github.com/repos/ImagingSolution/Snipyard/releases/latest";
 
     /// <summary>The asset the releases carry. A release without it is not one this can install.</summary>
-    private const string AssetName = "Claucraft.exe";
+    private const string AssetName = "Snipyard.exe";
 
-    public const string ReleasesUrl = "https://github.com/ImagingSolution/Claucraft/releases";
+    /// <summary>
+    /// The asset's name before the app was renamed from Claucraft. Releases made during the
+    /// transition carry both, so builds from before the rename can still find their update;
+    /// this side accepts the old one too, in case a release only has that.
+    /// </summary>
+    private const string LegacyAssetName = "Claucraft.exe";
+
+    public const string ReleasesUrl = "https://github.com/ImagingSolution/Snipyard/releases";
 
     /// <summary>Staged download, kept beside the executable so the final step is a same-volume move.</summary>
-    private const string StageName = "Claucraft.new.exe";
+    private const string StageName = "Snipyard.new.exe";
 
     private const string OldSuffix = ".old";
 
     /// <summary>
     /// Test hook. The build number climbs on every local build, so a development copy is always
     /// ahead of whatever is published and the notice would never appear. With
-    /// CLAUCRAFT_UPDATE_TEST=1 the running version reads as 0.0.0.0, which makes any release look
+    /// SNIPYARD_UPDATE_TEST=1 the running version reads as 0.0.0.0, which makes any release look
     /// newer, and the check runs even where <see cref="CanSelfUpdate"/> is false. The swap itself
     /// still refuses in that case, so a development build can show the notice and download
     /// without its output folder being replaced.
     /// </summary>
     public static bool TestMode =>
-        Environment.GetEnvironmentVariable("CLAUCRAFT_UPDATE_TEST") == "1";
+        Environment.GetEnvironmentVariable("SNIPYARD_UPDATE_TEST") == "1";
 
     /// <summary>
     /// Its own client rather than the one <see cref="RateLimitService"/> shares: that one is
@@ -80,7 +87,7 @@ public static class UpdateService
     /// <summary>The version a release is measured against.</summary>
     public static Version CurrentVersion => TestMode ? new Version(0, 0, 0) : RunningVersion;
 
-    private static readonly string UserAgent = $"Claucraft/{RunningVersion}";
+    private static readonly string UserAgent = $"Snipyard/{RunningVersion}";
 
     /// <summary>The running executable, or null in a host that does not report one.</summary>
     public static string? ExePath
@@ -99,7 +106,7 @@ public static class UpdateService
 
     /// <summary>
     /// True only for the published single-file build. A bundle has no assembly on disk to point
-    /// at, so Location comes back empty; a development build has a real Claucraft.dll beside it
+    /// at, so Location comes back empty; a development build has a real Snipyard.dll beside it
     /// and must not be overwritten.
     /// </summary>
     public static bool CanSelfUpdate =>
@@ -161,23 +168,30 @@ public static class UpdateService
             if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
                 return null;
 
+            JsonElement? chosen = null;
             foreach (var asset in assets.EnumerateArray())
             {
                 if (!TryString(asset, "name", out var name)) continue;
-                if (!string.Equals(name, AssetName, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!TryString(asset, "browser_download_url", out var url)) continue;
-
-                var size = asset.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number
-                    ? s.GetInt64()
-                    : 0;
-
-                TryString(root, "body", out var notes);
-                if (!TryString(root, "html_url", out var page)) page = ReleasesUrl;
-
-                return new UpdateInfo(version, tag, url, size, notes.Trim(), page);
+                if (!TryString(asset, "browser_download_url", out _)) continue;
+                if (string.Equals(name, AssetName, StringComparison.OrdinalIgnoreCase))
+                {
+                    chosen = asset;
+                    break;
+                }
+                if (chosen is null && string.Equals(name, LegacyAssetName, StringComparison.OrdinalIgnoreCase))
+                    chosen = asset;
             }
+            if (chosen is not { } pick) return null;
 
-            return null;
+            TryString(pick, "browser_download_url", out var url);
+            var size = pick.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number
+                ? s.GetInt64()
+                : 0;
+
+            TryString(root, "body", out var notes);
+            if (!TryString(root, "html_url", out var page)) page = ReleasesUrl;
+
+            return new UpdateInfo(version, tag, url, size, notes.Trim(), page);
         }
         catch
         {

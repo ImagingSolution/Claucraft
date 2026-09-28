@@ -5,7 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>Why a file is one the user probably did not mean to commit.</summary>
 public enum StagingRiskKind

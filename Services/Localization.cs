@@ -1,6 +1,6 @@
 ﻿using System.Collections.Generic;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public static class Loc
 {
@@ -35,7 +35,7 @@ public static class Loc
         ["PrAddressPrompt"] = new() { ["English"] = "Please address this review feedback on PR #{0}: {1}", ["日本語"] = "PR #{0} の次のレビュー指摘に対応してください: {1}" },
         ["ScheduleMenu"] = new() { ["English"] = "Scheduled Tasks...", ["日本語"] = "スケジュールタスク..." },
         ["ScheduleTitle"] = new() { ["English"] = "Scheduled Tasks", ["日本語"] = "スケジュールタスク" },
-        ["ScheduleHint"] = new() { ["English"] = "Each task opens a new session in its project and sends its prompt. Tasks run only while Claucraft is open; a run missed by more than 30 minutes is skipped.", ["日本語"] = "各タスクは指定したプロジェクトで新しいセッションを開き、プロンプトを送ります。Claucraft の起動中だけ実行され、30分以上過ぎた実行はスキップされます。" },
+        ["ScheduleHint"] = new() { ["English"] = "Each task opens a new session in its project and sends its prompt. Tasks run only while Snipyard is open; a run missed by more than 30 minutes is skipped.", ["日本語"] = "各タスクは指定したプロジェクトで新しいセッションを開き、プロンプトを送ります。Snipyard の起動中だけ実行され、30分以上過ぎた実行はスキップされます。" },
         ["ScheduleEmpty"] = new() { ["English"] = "No scheduled tasks yet.", ["日本語"] = "スケジュールタスクはまだありません。" },
         ["ScheduleAdd"] = new() { ["English"] = "Add Task", ["日本語"] = "タスクを追加" },
         ["ScheduleAddTitle"] = new() { ["English"] = "New Scheduled Task", ["日本語"] = "新しいスケジュールタスク" },
@@ -161,7 +161,7 @@ public static class Loc
         ["HelpTooltip"] = new() { ["English"] = "Help", ["日本語"] = "ヘルプ" },
 
         // ── Window Title ──
-        ["AppTitle"] = new() { ["English"] = "Claucraft", ["日本語"] = "Claucraft" },
+        ["AppTitle"] = new() { ["English"] = "Snipyard", ["日本語"] = "Snipyard" },
 
         // ── Settings - Claude Folder ──
         ["OpenClaudeFolder"] = new() { ["English"] = "Open .claude Folder", ["日本語"] = ".claude フォルダを開く" },
@@ -170,7 +170,7 @@ public static class Loc
         ["ClickToShowUsage"] = new() { ["English"] = "Click to show usage chart", ["日本語"] = "クリックして使用状況チャートを表示" },
 
         // ── Welcome Page ──
-        ["WelcomeTitle"] = new() { ["English"] = "Claucraft", ["日本語"] = "Claucraft" },
+        ["WelcomeTitle"] = new() { ["English"] = "Snipyard", ["日本語"] = "Snipyard" },
         ["Start"] = new() { ["English"] = "Start", ["日本語"] = "開始" },
         ["NewProject"] = new() { ["English"] = "New Project", ["日本語"] = "新しいプロジェクト" },
         ["PreviousProject"] = new() { ["English"] = "Previous Project", ["日本語"] = "前回のプロジェクト" },
@@ -448,7 +448,7 @@ public static class Loc
         ["UpdateDownloadingFmt"] = new() { ["English"] = "{0} / {1}", ["日本語"] = "{0} / {1}" },
         ["UpdateAbort"] = new() { ["English"] = "Abort", ["日本語"] = "中止" },
         ["UpdateFailed"] = new() { ["English"] = "The download failed. Please try again later.", ["日本語"] = "ダウンロードに失敗しました。時間をおいて再試行してください。" },
-        ["UpdateNoPermission"] = new() { ["English"] = "Claucraft.exe could not be replaced. Download it from the release page and overwrite it yourself.", ["日本語"] = "Claucraft.exe を置き換えられませんでした。リリースページから手動でダウンロードして上書きしてください。" },
+        ["UpdateNoPermission"] = new() { ["English"] = "Snipyard.exe could not be replaced. Download it from the release page and overwrite it yourself.", ["日本語"] = "Snipyard.exe を置き換えられませんでした。リリースページから手動でダウンロードして上書きしてください。" },
         // {0} = number of sessions still open
         ["UpdateSessionsRunningFmt"] = new() { ["English"] = "{0} session(s) are still running. Close them and update?", ["日本語"] = "{0} 個のセッションが実行中です。終了して更新しますか？" },
 
@@ -463,7 +463,7 @@ public static class Loc
         ["EnableLiveStatus"] = new() { ["English"] = "Show mode, activity and context left", ["日本語"] = "モード・作業内容・コンテキスト残量を表示する" },
         ["EnableErrorBanner"] = new() { ["English"] = "Explain errors in a banner", ["日本語"] = "エラーをバナーで解説する" },
         ["RateLimitStatusLine"] = new() { ["English"] = "Get rate limits from Claude Code (adds a status line)", ["日本語"] = "Claude Code からレート制限を取得する（status line を追加）" },
-        ["RateLimitStatusLineTooltip"] = new() { ["English"] = "Claude sessions started from Claucraft get a status line that passes the plan's 5-hour and 7-day usage to the status bar (Pro/Max, after the first reply). A status line of your own keeps showing. While this is on, Claude Code hides its footer key hints such as \"? for shortcuts\". Applies to sessions started afterwards.", ["日本語"] = "Claucraft から起動した Claude セッションに status line を追加し、プランの5時間枠・7日枠の使用状況をステータスバーへ渡します（Pro/Max、最初の応答以降）。ご自身で設定した status line はそのまま表示されます。オンの間、Claude Code はフッターのキー操作ヒント（「? for shortcuts」など）を表示しません。以降に起動したセッションに適用されます。" },
+        ["RateLimitStatusLineTooltip"] = new() { ["English"] = "Claude sessions started from Snipyard get a status line that passes the plan's 5-hour and 7-day usage to the status bar (Pro/Max, after the first reply). A status line of your own keeps showing. While this is on, Claude Code hides its footer key hints such as \"? for shortcuts\". Applies to sessions started afterwards.", ["日本語"] = "Snipyard から起動した Claude セッションに status line を追加し、プランの5時間枠・7日枠の使用状況をステータスバーへ渡します（Pro/Max、最初の応答以降）。ご自身で設定した status line はそのまま表示されます。オンの間、Claude Code はフッターのキー操作ヒント（「? for shortcuts」など）を表示しません。以降に起動したセッションに適用されます。" },
         ["ModeBadgeTooltip"] = new() { ["English"] = "Current mode - click to cycle (Shift+Tab)", ["日本語"] = "現在のモード - クリックで切替 (Shift+Tab)" },
         ["ActivityThinking"] = new() { ["English"] = "Thinking…", ["日本語"] = "考えています…" },
         ["ActivityReading"] = new() { ["English"] = "Reading files…", ["日本語"] = "ファイルを読んでいます…" },
@@ -474,7 +474,7 @@ public static class Loc
         ["ActivityBrowsing"] = new() { ["English"] = "Fetching from the web…", ["日本語"] = "Web を参照しています…" },
         ["ActivityWaiting"] = new() { ["English"] = "Waiting for your answer…", ["日本語"] = "あなたの回答を待っています…" },
         // Shown once the CLI's spinner is gone but the turn left something running - a
-        // backgrounded subagent or command, or a job Claucraft itself is still finishing.
+        // backgrounded subagent or command, or a job Snipyard itself is still finishing.
         ["ActivityBackground"] = new() { ["English"] = "Background work still running…", ["日本語"] = "バックグラウンド処理を実行中…" },
         ["ContextMeterTooltip"] = new() { ["English"] = "Context used before auto-compact - click to run /compact", ["日本語"] = "自動コンパクトまでのコンテキスト使用量 - クリックで /compact を実行" },
         ["ContextLabel"] = new() { ["English"] = "Context", ["日本語"] = "コンテキスト" },
@@ -678,7 +678,7 @@ public static class Loc
         ["ExtensionsSearch"] = new() { ["English"] = "Search extensions...", ["日本語"] = "拡張機能を検索..." },
         ["ExtensionsLoading"] = new() { ["English"] = "Reading configuration...", ["日本語"] = "設定を読み込み中..." },
         ["ExtensionsApplyHint"] = new() { ["English"] = "Changes apply to sessions started from now on.", ["日本語"] = "変更はこれから開始するセッションに反映されます。" },
-        ["ExtensionsChangedFmt"] = new() { ["English"] = "Updated {0}. Applies to new sessions; the previous file was kept as .claucraft-backup.", ["日本語"] = "{0} 件を更新しました。新規セッションから反映されます（変更前のファイルは .claucraft-backup に残しています）。" },
+        ["ExtensionsChangedFmt"] = new() { ["English"] = "Updated {0}. Applies to new sessions; the previous file was kept as .snipyard-backup.", ["日本語"] = "{0} 件を更新しました。新規セッションから反映されます（変更前のファイルは .snipyard-backup に残しています）。" },
         ["ExtensionsWriteFailedFmt"] = new() { ["English"] = "Could not save: {0}", ["日本語"] = "保存できませんでした: {0}" },
         ["ExtensionsMoreFmt"] = new() { ["English"] = "{0} more - search to narrow", ["日本語"] = "他 {0} 件 - 検索で絞り込めます" },
         ["McpServers"] = new() { ["English"] = "MCP SERVERS", ["日本語"] = "MCP サーバー" },
@@ -687,7 +687,7 @@ public static class Loc
         ["DisableAll"] = new() { ["English"] = "Disable all", ["日本語"] = "すべて無効化" },
         ["DisableAllFmt"] = new() { ["English"] = "Turn off all {0} enabled entries", ["日本語"] = "有効な {0} 件をすべて無効にします" },
         ["DisableAllConfirmFmt"] = new() { ["English"] = "Turn off {0} entries? You can switch them back on here.", ["日本語"] = "{0} 件を無効にしますか？ここで戻せます。" },
-        ["McpUserScoped"] = new() { ["English"] = "Registered with 'claude mcp' in ~/.claude.json. Claucraft does not edit that file.", ["日本語"] = "~/.claude.json に 'claude mcp' で登録されています。Claucraft はこのファイルを書き換えません。" },
+        ["McpUserScoped"] = new() { ["English"] = "Registered with 'claude mcp' in ~/.claude.json. Snipyard does not edit that file.", ["日本語"] = "~/.claude.json に 'claude mcp' で登録されています。Snipyard はこのファイルを書き換えません。" },
         ["McpOwnedByFmt"] = new() { ["English"] = "Comes with the {0} plugin - switch the plugin off to remove it.", ["日本語"] = "{0} プラグインに含まれています。外すにはプラグインを無効にしてください。" },
         ["FromMarketplaceFmt"] = new() { ["English"] = "From the {0} marketplace", ["日本語"] = "マーケットプレイス: {0}" },
         ["SkillInvokeFmt"] = new() { ["English"] = "Double-click to run {0}. Claude also picks it up from the description above.", ["日本語"] = "ダブルクリックで {0} を実行します。上の説明に合致すれば Claude が自動で選ぶこともあります。" },
@@ -891,7 +891,7 @@ public static class Loc
         ["GitFailedTitle"] = new() { ["English"] = "Git could not do that", ["日本語"] = "Git の実行に失敗しました" },
         ["GitHintRawOutput"] = new() { ["English"] = "Git's output:", ["日本語"] = "Git の出力（詳細）:" },
         ["GitHintPushBehind"] = new() { ["English"] = "The remote has commits you don't have yet, so the push was refused.\nPress [{0}] to bring those commits in first, then press [{1}] again.\n(If {0} reports a conflict, resolve the conflicting files, commit, and push.)", ["日本語"] = "リモート側に、手元にまだ無いコミットがあるため、プッシュが拒否されました。\n先に［{0}］ボタンでリモートの変更を取り込んでから、もう一度［{1}］してください。\n（取り込み時に競合が出た場合は、競合したファイルを修正してコミットし、その後プッシュします。）" },
-        ["GitHintNoUpstream"] = new() { ["English"] = "This branch isn't linked to a remote branch yet. Press [{1}] again - Claucraft will create it on origin.", ["日本語"] = "このブランチはまだリモートと紐付いていません。もう一度［{1}］すると origin に同名のブランチを作成してプッシュします。" },
+        ["GitHintNoUpstream"] = new() { ["English"] = "This branch isn't linked to a remote branch yet. Press [{1}] again - Snipyard will create it on origin.", ["日本語"] = "このブランチはまだリモートと紐付いていません。もう一度［{1}］すると origin に同名のブランチを作成してプッシュします。" },
         ["GitHintAuth"] = new() { ["English"] = "GitHub rejected the sign-in. Sign in again (for example run `gh auth login` in a terminal) and check you have write access to this repository.", ["日本語"] = "GitHub への認証に失敗しました。ターミナルで `gh auth login` を実行するなどして再ログインし、このリポジトリへの書き込み権限があるか確認してください。" },
         ["GitHintNetwork"] = new() { ["English"] = "Could not reach the remote. Check your network / proxy connection and try again.", ["日本語"] = "リモートに接続できませんでした。ネットワークやプロキシの接続を確認して、もう一度実行してください。" },
         ["GitHintLocalChanges"] = new() { ["English"] = "You have uncommitted changes that would be overwritten. Commit (or stash) them first, then try again.", ["日本語"] = "未コミットの変更が上書きされるため中断しました。先に変更をコミット（または stash）してから、もう一度実行してください。" },

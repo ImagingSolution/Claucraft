@@ -6,9 +6,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>Colours shared by the memory list and the note windows opened from it.</summary>
 internal static class MemoryColors

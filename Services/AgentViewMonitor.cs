@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>One background session, as agent view lists it.</summary>
 public sealed record BackgroundAgent

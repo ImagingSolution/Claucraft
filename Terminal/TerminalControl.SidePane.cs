@@ -5,9 +5,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Claucraft.Controls;
+using Snipyard.Controls;
 
-namespace Claucraft.Terminal;
+namespace Snipyard.Terminal;
 
 // The pane to the right of Chat View. Its Terminal tab is this control's own grid, drawn into
 // the pane's content area with the PTY sized to fit it, so the transcript and the live CLI can

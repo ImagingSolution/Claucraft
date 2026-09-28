@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claucraft ヘルプ</title>
+<title>Snipyard ヘルプ</title>
 <style>
   :root {
     --bg: #ffffff;
@@ -153,10 +153,10 @@
 <body>
 
 <nav class="sidebar" id="nav">
-  <h1>Claucraft ヘルプ</h1>
+  <h1>Snipyard ヘルプ</h1>
 
   <div class="group-title">はじめに</div>
-  <a href="#about">Claucraft とは？</a>
+  <a href="#about">Snipyard とは？</a>
   <a href="#toolbar">ツールバー：プロジェクト・セッション</a>
   <a href="#activity-bar">アクティビティバー</a>
 
@@ -190,19 +190,19 @@
 <main class="content">
 
 <section id="about">
-  <h2>Claucraft とは？</h2>
+  <h2>Snipyard とは？</h2>
   <p class="subtitle">複数の Claude Code セッションを同時に実行・管理するための Windows デスクトップシェルです。</p>
-  <p>Claucraft は MDI（マルチドキュメントインターフェース）型のターミナルアプリケーションです。各 Claude Code
+  <p>Snipyard は MDI（マルチドキュメントインターフェース）型のターミナルアプリケーションです。各 Claude Code
   セッションは独立したフローティングターミナルウィンドウとして動作し、ファイルエディタ・ダイアグラムビューア・
   メモリパネルと共にタイル表示やカスケード表示で並べられ、すべてがプロジェクト単位で管理される一つのシェルの中に
-  収まります。内部で使っているのは普段お使いの <code>claude</code> CLI そのものであり、Claucraft はこれを
+  収まります。内部で使っているのは普段お使いの <code>claude</code> CLI そのものであり、Snipyard はこれを
   置き換えるものではなく、複数セッションを並行して扱うためのプロジェクト管理・セッション履歴・git 操作・
   ウィンドウレイアウト機能で包むものです。</p>
-  <p>Claucraft は非公式の個人プロジェクトであり、Anthropic とは提携・承認・後援のいずれの関係もありません。
-  Claude および Claude Code は Anthropic, PBC の商標です。Claucraft は Claude Code を同梱しておらず、
+  <p>Snipyard は非公式の個人プロジェクトであり、Anthropic とは提携・承認・後援のいずれの関係もありません。
+  Claude および Claude Code は Anthropic, PBC の商標です。Snipyard は Claude Code を同梱しておらず、
   利用者がインストールした Claude Code を利用者自身のアカウントで起動します。</p>
   <table>
-    <tr><th></th><th>Claude デスクトップアプリ</th><th>Claude Code CLI</th><th>VS Code 拡張機能</th><th>Claucraft</th></tr>
+    <tr><th></th><th>Claude デスクトップアプリ</th><th>Claude Code CLI</th><th>VS Code 拡張機能</th><th>Snipyard</th></tr>
     <tr>
       <td><strong>何であるか</strong></td>
       <td>ターミナルやファイルシステムにアクセスしない、Claude とのチャットクライアント</td>
@@ -253,7 +253,7 @@
       <td>複数のプロジェクト・複数のセッションを同時に走らせ、見比べながら進めたいとき</td>
     </tr>
   </table>
-  <p>Claucraft が対象とするのは、他のどれもうまくカバーできない領域です。複数の Claude Code セッション
+  <p>Snipyard が対象とするのは、他のどれもうまくカバーできない領域です。複数の Claude Code セッション
   （異なるプロジェクト・異なる worktree・異なるタスク）を同時に走らせながら、どのターミナルが何をしているかを
   見失わないようにする——それを自前の tmux やウィンドウマネージャの設定なしで実現します。</p>
 </section>
@@ -484,12 +484,12 @@
     直近の記録から各系統の最新バージョンを学習するため、新しいモデルが出ても古いままになりません。会話の途中で
     モデルや effort を切り替えるときは、残す価値のあるコンテキストがあれば黙ってプロンプトキャッシュを捨てる前に
     先に compact します。</li>
-    <li><strong>レートリミット</strong> — プランの5時間枠・7日枠に対する使用状況と、各リセットまでの残り時間。Claucraft から起動した Claude セッションに status line を追加し、
+    <li><strong>レートリミット</strong> — プランの5時間枠・7日枠に対する使用状況と、各リセットまでの残り時間。Snipyard から起動した Claude セッションに status line を追加し、
     Claude Code 自身が報告する <code>rate_limits</code> を保存して表示します（Pro/Max プラン、最初の応答以降）。
     ご自身の status line はそのまま表示されます。ライブステータスの「Claude Code からレート制限を取得する」で
     オフにできます（表示も消えます）。オンの間、Claude Code はフッターのキー操作ヒント（「? for shortcuts」など）を
     表示しません。ご自身のスクリプトが一時フォルダに残す <code>claude_usage_cache.json</code> も予備として読みます。
-    Claucraft 自身が Claude のサインイン情報を使うことはありません。</li>
+    Snipyard 自身が Claude のサインイン情報を使うことはありません。</li>
   </ul>
   <p>アイドル中のセッションがプロンプトキャッシュの期限に近づくと「今すぐ compact」バナーが表示されます。実行しない
   まま次のメッセージを送ると、会話全体を通常料金で読み直すことになるためです。</p>

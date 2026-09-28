@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>The permission/edit mode Claude Code is currently running in, as shown on its status line.</summary>
 public enum AiMode { Unknown, Normal, AcceptEdits, Plan, BypassPermissions }
@@ -55,7 +55,7 @@ public sealed class TerminalSnapshot
     /// <summary>
     /// The model named in the CLI's own "Set model to X" confirmation, if one is on screen right
     /// now. This fires for a switch made any way - typed at the prompt, picked from the CLI's own
-    /// interactive picker, or sent by Claucraft's dropdown - so the status bar never depends on
+    /// interactive picker, or sent by Snipyard's dropdown - so the status bar never depends on
     /// which of those triggered it.
     /// </summary>
     public string? ModelSwitchedTo { get; init; }

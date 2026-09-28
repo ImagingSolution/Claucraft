@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>One subagent the CLI spawned, as the windows panel shows it.</summary>
 public sealed record SubagentRun

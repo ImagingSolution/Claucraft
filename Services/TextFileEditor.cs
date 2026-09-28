@@ -3,7 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>Why a file opened read-only.</summary>
 public enum EditBlock { None, TooLarge, Binary, NotUtf8 }

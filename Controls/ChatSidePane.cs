@@ -6,9 +6,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>What the pane next to Chat View is showing.</summary>
 public enum SidePaneTab { Terminal, Preview }

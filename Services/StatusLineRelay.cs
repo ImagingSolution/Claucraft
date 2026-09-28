@@ -8,13 +8,13 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Gets the plan's rate limits the way Anthropic documents it. Claude Code hands every status
 /// line command a JSON snapshot on stdin, and for Pro/Max accounts that snapshot carries
-/// rate_limits.five_hour / seven_day. Claucraft launches its Claude sessions with --settings
-/// pointing the status line at its own executable ("Claucraft.exe --statusline"); that process
+/// rate_limits.five_hour / seven_day. Snipyard launches its Claude sessions with --settings
+/// pointing the status line at its own executable ("Snipyard.exe --statusline"); that process
 /// saves the rate_limits object for <see cref="RateLimitService"/> and then runs the status line
 /// the user had configured, if any, so its output still shows.
 ///
@@ -26,12 +26,10 @@ public static class StatusLineRelay
 {
     public const string Flag = "--statusline";
 
-    private static readonly string SettingsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Claucraft");
+    private static readonly string SettingsDir = AppPaths.Roaming;
 
     /// <summary>The latest rate_limits object, exactly as Claude Code sent it.</summary>
-    public static string CachePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Claucraft", "rate-limits.json");
+    public static string CachePath => Path.Combine(AppPaths.Local, "rate-limits.json");
 
     /// <summary>The user's own status line gets this long before the relay gives up on it.</summary>
     private static readonly TimeSpan ChainTimeout = TimeSpan.FromSeconds(10);
@@ -175,7 +173,7 @@ public static class StatusLineRelay
     private static string ShortHash(string text)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToUpperInvariant())))[..8].ToLowerInvariant();
 
-    // ── Relay side: "Claucraft.exe --statusline" ──
+    // ── Relay side: "Snipyard.exe --statusline" ──
 
     /// <summary>
     /// The whole of a relay run. Called from Program.Main before anything of the UI loads,
@@ -276,10 +274,20 @@ public static class StatusLineRelay
         return null;
     }
 
+    /// <summary>
+    /// The exe names this relay runs under: whatever this copy is called, plus both names the app
+    /// has had, since an install updated in place from before the rename is still Claucraft.exe.
+    /// </summary>
+    private static readonly string[] RelayExeNames =
+    {
+        Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? AppPaths.AppName),
+        AppPaths.AppName,
+        "Claucraft",
+    };
+
     private static bool IsRelay(string command)
         => command.Contains(Flag, StringComparison.Ordinal)
-           && command.Contains(Path.GetFileNameWithoutExtension(Environment.ProcessPath ?? "Claucraft"),
-               StringComparison.OrdinalIgnoreCase);
+           && Array.Exists(RelayExeNames, name => command.Contains(name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Runs the user's status line the way Claude Code would have - Git Bash when it is there,

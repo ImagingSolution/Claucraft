@@ -1,7 +1,7 @@
 ﻿using Avalonia;
 using System;
 
-namespace Claucraft;
+namespace Snipyard;
 
 class Program
 {

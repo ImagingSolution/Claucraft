@@ -8,11 +8,11 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
-/// Owns the list of AI CLIs Claucraft can drive, which one is active, and all
-/// command-line construction. Definitions live in %AppData%\Claucraft\providers.json
+/// Owns the list of AI CLIs Snipyard can drive, which one is active, and all
+/// command-line construction. Definitions live in %AppData%\Snipyard\providers.json
 /// so argument changes in a CLI can be fixed without rebuilding.
 /// </summary>
 public class CliProviderService
@@ -26,9 +26,7 @@ public class CliProviderService
 
     private const int VersionTimeoutMs = 3000;
 
-    private static readonly string SettingsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Claucraft");
+    private static readonly string SettingsDir = AppPaths.Roaming;
 
     private static readonly string ProvidersFile = Path.Combine(SettingsDir, "providers.json");
 

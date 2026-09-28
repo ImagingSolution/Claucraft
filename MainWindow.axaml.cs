@@ -1,7 +1,7 @@
 ﻿using System;
 using Avalonia.Controls;
 
-namespace Claucraft;
+namespace Snipyard;
 
 /// <summary>
 /// The application's own window. Everything in it is one <see cref="AppShell"/> - the same shell

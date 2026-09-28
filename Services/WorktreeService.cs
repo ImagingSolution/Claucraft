@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>One entry from `git worktree list`.</summary>
 public sealed record WorktreeInfo(string Path, string Branch);
@@ -21,11 +21,15 @@ public sealed record WorktreeInfo(string Path, string Branch);
 public static class WorktreeService
 {
     /// <summary>Branch names created here all carry this prefix, so they are recognisable later.</summary>
-    public const string BranchPrefix = "claucraft/";
+    public const string BranchPrefix = "snipyard/";
 
-    public static string Root { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Claucraft", "worktrees");
+    public static string Root { get; } = Path.Combine(AppPaths.Local, "worktrees");
+
+    /// <summary>
+    /// Where worktrees were made before the rename. They are registered in their repositories
+    /// at this path, so they are left there and only recognised.
+    /// </summary>
+    private static string LegacyRoot { get; } = Path.Combine(AppPaths.LegacyLocal, "worktrees");
 
     /// <summary>True when the folder is one of ours, so callers can keep it out of project lists.</summary>
     public static bool IsWorktreePath(string? folder)
@@ -34,7 +38,8 @@ public static class WorktreeService
         try
         {
             var full = Path.GetFullPath(folder);
-            return full.StartsWith(Root, StringComparison.OrdinalIgnoreCase);
+            return full.StartsWith(Root, StringComparison.OrdinalIgnoreCase)
+                || full.StartsWith(LegacyRoot, StringComparison.OrdinalIgnoreCase);
         }
         catch
         {

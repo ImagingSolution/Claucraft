@@ -16,7 +16,7 @@ using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
-namespace Claucraft.Terminal;
+namespace Snipyard.Terminal;
 
 public partial class TerminalControl : Control, IDisposable
 {
@@ -60,7 +60,7 @@ public partial class TerminalControl : Control, IDisposable
     private bool _caretMoveInProgress;
 
     // Undo for the CLI's input line. The CLI owns that line and offers no undo of its
-    // own, so Claucraft keeps snapshots of the text and rewrites the line to put one
+    // own, so Snipyard keeps snapshots of the text and rewrites the line to put one
     // back. See PushUndo / UndoAsync.
     private readonly List<InputSnapshot> _undoStack = new();
     private readonly List<InputSnapshot> _redoStack = new();
@@ -1230,7 +1230,7 @@ public partial class TerminalControl : Control, IDisposable
     {
         try
         {
-            var tempDir = Path.Combine(Path.GetTempPath(), "Claucraft");
+            var tempDir = Services.AppPaths.Temp;
             Directory.CreateDirectory(tempDir);
             var fileName = $"clipboard_{DateTime.Now:yyyyMMdd_HHmmss}.png";
             var filePath = Path.Combine(tempDir, fileName);
@@ -4798,7 +4798,7 @@ public partial class TerminalControl : Control, IDisposable
                 var excalidrawDoc = $@"{{
   ""type"": ""excalidraw"",
   ""version"": 2,
-  ""source"": ""Claucraft"",
+  ""source"": ""Snipyard"",
   ""elements"": {cleanJson},
   ""appState"": {{
     ""viewBackgroundColor"": ""{(_isDark ? "#1e1e1e" : "#ffffff")}""
@@ -5005,7 +5005,7 @@ public partial class TerminalControl : Control, IDisposable
             var pngBytes = RenderDiagramToPng(block, 1200, 600);
             if (pngBytes == null) return;
 
-            var tempPath = Path.Combine(Path.GetTempPath(), "Claucraft", $"diagram_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+            var tempPath = Path.Combine(Services.AppPaths.Temp, $"diagram_{DateTime.Now:yyyyMMdd_HHmmss}.png");
             Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
             await File.WriteAllBytesAsync(tempPath, pngBytes);
 
@@ -6270,7 +6270,7 @@ public partial class TerminalControl : Control, IDisposable
     /// Drag payload format used by the in-app Explorer tree: one full path per line.
     /// </summary>
     public static readonly DataFormat<string> ExplorerPathFormat =
-        DataFormat.CreateStringApplicationFormat("Claucraft.FilePaths");
+        DataFormat.CreateStringApplicationFormat("Snipyard.FilePaths");
 
     private static bool HasDroppablePaths(IDataTransfer data)
         => data.Contains(DataFormat.File)

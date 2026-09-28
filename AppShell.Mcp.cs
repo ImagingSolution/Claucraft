@@ -5,9 +5,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft;
+namespace Snipyard;
 
 /// <summary>
 /// The MCP manager: every server <c>claude mcp list</c> knows with its live health, and adding,

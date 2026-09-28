@@ -8,7 +8,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>Where a tab dropped at a given point would land.</summary>
 internal enum DockDropKind

@@ -4,7 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Threading;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// A thin indeterminate progress line: a band of accent colour that fades out at both ends and

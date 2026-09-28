@@ -1,6 +1,6 @@
 using System;
 
-namespace Claucraft.Terminal;
+namespace Snipyard.Terminal;
 
 public struct TerminalCell
 {

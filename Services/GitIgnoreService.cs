@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>How one ignored entry is kept out of git's way.</summary>
 public enum IgnoreKind
@@ -44,8 +44,16 @@ public sealed record IgnoreEntry(string Value, IgnoreKind Kind);
 /// </summary>
 public static class GitIgnoreService
 {
-    private const string BlockStart = "# >>> Claucraft ignore >>>";
-    private const string BlockEnd = "# <<< Claucraft ignore <<<";
+    private const string BlockStart = "# >>> Snipyard ignore >>>";
+    private const string BlockEnd = "# <<< Snipyard ignore <<<";
+
+    // The markers as written before the app was renamed from Claucraft. A block under them is
+    // read as ours and replaced by a new-style block on the next write, never duplicated.
+    private const string LegacyBlockStart = "# >>> Claucraft ignore >>>";
+    private const string LegacyBlockEnd = "# <<< Claucraft ignore <<<";
+
+    private static bool IsBlockStart(string line) => line == BlockStart || line == LegacyBlockStart;
+    private static bool IsBlockEnd(string line) => line == BlockEnd || line == LegacyBlockEnd;
 
     /// <summary>
     /// Everything currently ignored: the patterns in the managed block, then the tracked files
@@ -272,8 +280,8 @@ public static class GitIgnoreService
             foreach (var raw in File.ReadAllLines(file))
             {
                 var line = raw.Trim();
-                if (line == BlockStart) { inside = true; continue; }
-                if (line == BlockEnd) { inside = false; continue; }
+                if (IsBlockStart(line)) { inside = true; continue; }
+                if (IsBlockEnd(line)) { inside = false; continue; }
                 if (inside && line.Length > 0 && !line.StartsWith('#')) patterns.Add(line);
             }
         }
@@ -309,8 +317,8 @@ public static class GitIgnoreService
             // newline back at the end keeps the file from growing a blank line per write.
             if (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
 
-            int start = lines.FindIndex(l => l.Trim() == BlockStart);
-            int end = lines.FindIndex(l => l.Trim() == BlockEnd);
+            int start = lines.FindIndex(l => IsBlockStart(l.Trim()));
+            int end = lines.FindIndex(l => IsBlockEnd(l.Trim()));
 
             if (start >= 0 && end > start) lines.RemoveRange(start, end - start + 1);
             else if (start >= 0) lines.RemoveAt(start);
@@ -357,7 +365,7 @@ public static class GitIgnoreService
 
     /// <summary>
     /// The exclude pattern for one repository-relative path. Anchored with a leading slash so
-    /// "Claucraft.exe" in the root cannot also silence a file of that name in a subfolder, and
+    /// "Snipyard.exe" in the root cannot also silence a file of that name in a subfolder, and
     /// closed with a trailing slash for a folder so it reads as one.
     /// </summary>
     private static string PatternFor(string repoRoot, string path)

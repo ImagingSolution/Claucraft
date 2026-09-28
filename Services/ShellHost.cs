@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>Which shell a terminal session's CLI is launched inside.</summary>
 public enum ShellKind
@@ -79,7 +79,7 @@ public static class ShellHost
         return _psPath;
     }
 
-    /// <summary>Re-runs the PATH lookup, for when PowerShell is installed while Claucraft is open.</summary>
+    /// <summary>Re-runs the PATH lookup, for when PowerShell is installed while Snipyard is open.</summary>
     public static void InvalidateResolution() => _psResolved = false;
 
     /// <summary>

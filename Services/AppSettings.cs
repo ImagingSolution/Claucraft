@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public class AppSettings
 {
@@ -140,9 +140,7 @@ public class AppSettings
     /// <summary>Ask GitHub for a newer release at startup and offer to install it.</summary>
     public bool CheckUpdateOnStartup { get; set; } = true;
 
-    private static readonly string SettingsDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Claucraft");
+    private static readonly string SettingsDir = AppPaths.Roaming;
 
     private static readonly string SettingsFile = Path.Combine(SettingsDir, "appsettings.json");
 

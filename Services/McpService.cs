@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public enum McpStatus { Connected, NeedsAuth, Failed, Unknown }
 
@@ -35,7 +35,7 @@ public static class McpService
 
     private static readonly Dictionary<string, string> Env = new(StringComparer.OrdinalIgnoreCase)
     {
-        // A CLI that inherits these joins the session Claucraft was started from
+        // A CLI that inherits these joins the session Snipyard was started from
         ["CLAUDECODE"] = "", ["CLAUDE_CODE_ENTRYPOINT"] = "", ["CLAUDE_CODE_SESSION_ID"] = "",
         ["CLAUDE_CODE_CHILD_SESSION"] = "", ["CLAUDE_PID"] = "",
     };

@@ -9,7 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>Token counts and estimated USD cost for one bucket of usage (a day, model, project, or session).</summary>
 public sealed class TokenTotals

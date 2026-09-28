@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>One saved arrangement of MDI windows, restorable down to the sessions they were showing.</summary>
 public class WorkspaceInfo
@@ -60,9 +60,7 @@ public class WorkspaceFileData
 
 public static class WorkspaceService
 {
-    private static readonly string WorkspaceFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Claucraft", "workspace.json");
+    private static readonly string WorkspaceFile = Path.Combine(AppPaths.Roaming, "workspace.json");
 
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 

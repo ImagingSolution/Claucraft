@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>One open pull request, as much of it as the panel shows.</summary>
 public sealed record PullRequestInfo(
@@ -29,7 +29,7 @@ public sealed record PrFeedback(string Author, string Body, string? Path, int? L
 /// <summary>
 /// The pull-request half of the source-control panel, driven through GitHub's own `gh` CLI.
 /// Going through gh rather than the REST API means the user's existing `gh auth login` is the
-/// only credential involved: Claucraft never sees or stores a token.
+/// only credential involved: Snipyard never sees or stores a token.
 ///
 /// Every method is safe to call when gh is missing or signed out - the panel asks
 /// <see cref="IsReadyAsync"/> first and hides the whole section when the answer is no.

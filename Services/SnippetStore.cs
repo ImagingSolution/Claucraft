@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public class SnippetItem
 {
@@ -19,9 +19,7 @@ public class SnippetStore
     /// <summary>Set once the starter templates have been added, so clearing the list keeps it clear.</summary>
     public bool Seeded { get; set; }
 
-    private static readonly string StoreDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Claucraft");
+    private static readonly string StoreDir = AppPaths.Roaming;
 
     private static readonly string StoreFile = Path.Combine(StoreDir, "snippets.json");
 

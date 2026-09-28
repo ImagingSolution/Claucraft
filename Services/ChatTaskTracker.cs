@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public enum ChatTaskStatus { Pending, InProgress, Completed }
 

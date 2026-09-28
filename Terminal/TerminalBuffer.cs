@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace Claucraft.Terminal;
+namespace Snipyard.Terminal;
 
 public class TerminalBuffer
 {

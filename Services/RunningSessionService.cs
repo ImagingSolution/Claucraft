@@ -4,7 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Which sessions a Claude Code process is already holding. A session only runs in one place at a

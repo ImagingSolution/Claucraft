@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>What the AI made of the currently staged diff.</summary>
 public enum SecretScanVerdict { Safe, Risk }

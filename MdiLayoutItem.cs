@@ -1,9 +1,9 @@
 using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
-using Claucraft.Controls;
+using Snipyard.Controls;
 
-namespace Claucraft;
+namespace Snipyard;
 
 /// <summary>What an MDI window holds, for the places that have to tell the kinds apart.</summary>
 internal enum MdiItemKind { Terminal, Editor, Graph, Memory }

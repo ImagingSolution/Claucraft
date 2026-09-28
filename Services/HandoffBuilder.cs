@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Builds a hand-off brief from a session transcript so work can continue in a fresh session.
@@ -14,7 +14,7 @@ namespace Claucraft.Services;
 /// Why this exists: every turn re-reads the whole conversation at the cache-read rate, so a
 /// long session keeps paying for its own history. /compact fixes the size but pays full price
 /// to do it - the model reads the entire context and writes the summary. The transcript is on
-/// disk and Claucraft can already read it, so the same material can be extracted locally for
+/// disk and Snipyard can already read it, so the same material can be extracted locally for
 /// nothing and used to start a short session instead.
 ///
 /// This is structural extraction, not summarisation: it reports what was asked, what was

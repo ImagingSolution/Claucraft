@@ -7,9 +7,9 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using Avalonia.Media;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft;
+namespace Snipyard;
 
 public class FileTreeNode : INotifyPropertyChanged
 {

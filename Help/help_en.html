@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claucraft Help</title>
+<title>Snipyard Help</title>
 <style>
   :root {
     --bg: #ffffff;
@@ -159,10 +159,10 @@
 <body>
 
 <nav class="sidebar" id="nav">
-  <h1>Claucraft Help</h1>
+  <h1>Snipyard Help</h1>
 
   <div class="group-title">Getting Started</div>
-  <a href="#about">What Is Claucraft?</a>
+  <a href="#about">What Is Snipyard?</a>
   <a href="#toolbar">Toolbar: Project &amp; Session</a>
   <a href="#activity-bar">Activity Bar</a>
 
@@ -196,19 +196,19 @@
 <main class="content">
 
 <section id="about">
-  <h2>What Is Claucraft?</h2>
+  <h2>What Is Snipyard?</h2>
   <p class="subtitle">A Windows desktop shell for running and managing multiple Claude Code sessions at once.</p>
-  <p>Claucraft is an MDI (multiple-document-interface) terminal application: every Claude Code
+  <p>Snipyard is an MDI (multiple-document-interface) terminal application: every Claude Code
   session runs inside its own floating terminal window, tiled or cascaded alongside file editors,
   diagram viewers and memory panels, all within one project-aware shell. It talks to the same
-  <code>claude</code> CLI you already use — Claucraft does not replace it, it wraps it with project
+  <code>claude</code> CLI you already use — Snipyard does not replace it, it wraps it with project
   management, session history, git tooling and layout features built around running several
   sessions side by side.</p>
-  <p>Claucraft is an unofficial, independent project, not affiliated with, endorsed by, or sponsored
-  by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC. Claucraft does not bundle
+  <p>Snipyard is an unofficial, independent project, not affiliated with, endorsed by, or sponsored
+  by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC. Snipyard does not bundle
   Claude Code; it runs the copy you installed, signed in with your own account.</p>
   <table>
-    <tr><th></th><th>Claude Desktop app</th><th>Claude Code CLI</th><th>VS Code extension</th><th>Claucraft</th></tr>
+    <tr><th></th><th>Claude Desktop app</th><th>Claude Code CLI</th><th>VS Code extension</th><th>Snipyard</th></tr>
     <tr>
       <td><strong>What it is</strong></td>
       <td>Chat client for Claude, no terminal or file system access</td>
@@ -259,7 +259,7 @@
       <td>Running and comparing several Claude Code sessions across one or more projects at once</td>
     </tr>
   </table>
-  <p>Claucraft is aimed at the case none of the others cover well: juggling several active Claude
+  <p>Snipyard is aimed at the case none of the others cover well: juggling several active Claude
   Code sessions — different projects, different worktrees, different tasks — without losing track
   of which terminal is which, or wiring up your own tmux/window-manager setup to do it.</p>
 </section>
@@ -288,7 +288,7 @@
   remote host. Remote sessions are left out of saved workspaces.</p>
   <p><strong>Scheduled Tasks...</strong>, also on the New Session menu, opens a dialog for starting a
   session automatically in a chosen project with a given prompt — once, every day, or every N
-  minutes — for as long as Claucraft is running. A slot that falls more than 30 minutes behind is
+  minutes — for as long as Snipyard is running. A slot that falls more than 30 minutes behind is
   skipped rather than caught up.</p>
   <p>A model and effort level can be pinned for every new session (Claude only) instead of switching
   mid-conversation, which would throw away the prompt cache. That choice carries across new windows,
@@ -514,12 +514,12 @@
     model or effort mid-conversation compacts first when there is enough context worth saving,
     rather than throwing the prompt cache away silently.</li>
     <li><strong>Rate limits</strong> — usage against the plan's 5-hour and 7-day metering windows,
-    with time until each resets. Claude sessions started from Claucraft get a status line that saves
+    with time until each resets. Claude sessions started from Snipyard get a status line that saves
     the <code>rate_limits</code> Claude Code itself reports (Pro/Max plans, after the first reply); a
     status line of your own keeps showing. <em>Get rate limits from Claude Code</em> under Live status
     turns this off, together with the readout. While it is on, Claude Code hides its footer key hints
     such as "? for shortcuts". A <code>claude_usage_cache.json</code> your own script leaves in the
-    temp folder is read as a fallback. Claucraft never uses your Claude sign-in itself.</li>
+    temp folder is read as a fallback. Snipyard never uses your Claude sign-in itself.</li>
   </ul>
   <p>An idle session approaching its prompt-cache expiry shows a "compact now" banner, since the
   next message would otherwise re-read the whole conversation at full price.</p>

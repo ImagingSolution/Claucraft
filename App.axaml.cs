@@ -4,7 +4,7 @@ using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Styling;
 
-namespace Claucraft;
+namespace Snipyard;
 
 public partial class App : Application
 {

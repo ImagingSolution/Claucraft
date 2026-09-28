@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>What a line of a diff is: unchanged, added, removed, a hunk header or git's "\ No newline" note.</summary>
 public enum DiffLineKind { Context, Added, Removed, Hunk, Note }

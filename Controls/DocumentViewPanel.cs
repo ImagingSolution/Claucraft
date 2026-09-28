@@ -10,9 +10,9 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// Colours and metrics of the chat view, modelled on the Claude desktop app. Shared with the
@@ -1203,7 +1203,7 @@ public class DocumentViewPanel : Panel
     {
         try
         {
-            var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Claucraft");
+            var dir = AppPaths.Temp;
             System.IO.Directory.CreateDirectory(dir);
             var path = System.IO.Path.Combine(dir, $"chat_{(uint)base64.GetHashCode():x8}.png");
             if (!System.IO.File.Exists(path))

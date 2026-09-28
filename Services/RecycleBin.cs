@@ -2,12 +2,12 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Sends files and folders to the Windows recycle bin.
 ///
-/// Anything Claucraft deletes on the user's behalf goes through here rather than
+/// Anything Snipyard deletes on the user's behalf goes through here rather than
 /// <see cref="File.Delete(string)"/>: a transcript is the only copy of a conversation, and a
 /// confirmation dialog the user clicked through by habit should still be recoverable.
 /// </summary>

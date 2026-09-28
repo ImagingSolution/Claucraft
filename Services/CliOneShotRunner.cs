@@ -4,7 +4,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Runs one prompt through whichever AI CLI is selected and hands back its answer, with none of
@@ -15,7 +15,7 @@ namespace Claucraft.Services;
 public static class CliOneShotRunner
 {
     /// <summary>
-    /// What a Claude Code session exports to everything it starts. Claucraft may itself have been
+    /// What a Claude Code session exports to everything it starts. Snipyard may itself have been
     /// launched from inside one, and a CLI that inherits these joins that session instead of
     /// running once on its own - so they are cleared for this call.
     /// </summary>

@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>What kind of event a notification is reporting, used to pick icon/sound.</summary>
 public enum NotifyKind
@@ -19,7 +19,7 @@ public enum NotifyKind
 /// </summary>
 public class NotificationService : IDisposable
 {
-    private const string ClassName = "ClaucraftNotifyWnd";
+    private const string ClassName = "SnipyardNotifyWnd";
 
     public bool EnableToast { get; set; } = true;
     public bool EnableSound { get; set; } = true;
@@ -132,7 +132,7 @@ public class NotificationService : IDisposable
                 var nid = NewNotifyIconData();
                 nid.uFlags = NIF_ICON | NIF_TIP;
                 nid.hIcon = _hIcon;
-                nid.szTip = "Claucraft";
+                nid.szTip = "Snipyard";
 
                 _iconAdded = Shell_NotifyIconW(NIM_ADD, ref nid);
             }

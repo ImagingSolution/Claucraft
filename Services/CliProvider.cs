@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 /// <summary>
 /// Feature flags describing which Claude Code specific integrations a CLI supports.
@@ -18,7 +18,7 @@ public class CliFeatures
     public bool ModeSwitchButton { get; set; }
     public bool DiagramViewer { get; set; }
 
-    /// <summary>Whether this CLI takes --model/--effort flags Claucraft can pin at launch.</summary>
+    /// <summary>Whether this CLI takes --model/--effort flags Snipyard can pin at launch.</summary>
     public bool SupportsModelEffortOverride { get; set; }
 
     /// <summary>Command sent to the PTY on shutdown. Empty means kill the process directly.</summary>
@@ -66,8 +66,8 @@ public class LaunchProfile
 }
 
 /// <summary>
-/// One AI CLI that Claucraft can drive (Claude Code, Antigravity CLI, Codex CLI, ...).
-/// Serialized to %AppData%\Claucraft\providers.json so users can adjust arguments
+/// One AI CLI that Snipyard can drive (Claude Code, Antigravity CLI, Codex CLI, ...).
+/// Serialized to %AppData%\Snipyard\providers.json so users can adjust arguments
 /// without a rebuild when a CLI changes its flags.
 /// </summary>
 public class CliProvider

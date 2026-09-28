@@ -6,7 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
 
-namespace Claucraft.Terminal;
+namespace Snipyard.Terminal;
 
 public class PseudoConsole : IDisposable
 {

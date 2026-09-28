@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Avalonia.Layout;
 
-namespace Claucraft.Controls;
+namespace Snipyard.Controls;
 
 /// <summary>
 /// One node of a window's dock tree. The tree, not a set of coordinates, is what says where each

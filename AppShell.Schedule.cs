@@ -9,9 +9,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-using Claucraft.Services;
+using Snipyard.Services;
 
-namespace Claucraft;
+namespace Snipyard;
 
 /// <summary>
 /// Scheduled tasks: prompts that open a session of their own at a set time, every day, or every

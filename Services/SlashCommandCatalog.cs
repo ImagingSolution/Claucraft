@@ -3,14 +3,14 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 public record SlashCommand(string Name, string Description, string DescriptionJa, bool NeedsArgument = false);
 
 /// <summary>
 /// Lists slash commands for the active AI CLI, so the UI can offer completion/help without
 /// the user having to remember them. Built-ins are hard-coded per provider; a user can extend
-/// or override them via %AppData%\Claucraft\slashcommands.json without a rebuild.
+/// or override them via %AppData%\Snipyard\slashcommands.json without a rebuild.
 /// </summary>
 public static class SlashCommandCatalog
 {

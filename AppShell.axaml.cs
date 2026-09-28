@@ -25,11 +25,11 @@ using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using Claucraft.Controls;
-using Claucraft.Services;
-using Claucraft.Terminal;
+using Snipyard.Controls;
+using Snipyard.Services;
+using Snipyard.Terminal;
 
-namespace Claucraft;
+namespace Snipyard;
 
 internal partial class AppShell : UserControl, IDockOwner
 {
@@ -120,7 +120,7 @@ internal partial class AppShell : UserControl, IDockOwner
     /// The model the user just picked, held until the transcript confirms it. The name on the
     /// bar is read from the transcript, which only learns about a switch when the next reply
     /// lands - without this the bar would keep naming the old model until then. Set both when
-    /// Claucraft's own dropdown sends the switch and when the CLI's own "Set model to X" banner
+    /// Snipyard's own dropdown sends the switch and when the CLI's own "Set model to X" banner
     /// is spotted on screen, so a model changed by typing "/model" directly, or through the
     /// CLI's own picker, is not missed either.
     /// </summary>
@@ -143,7 +143,7 @@ internal partial class AppShell : UserControl, IDockOwner
     private bool _activeBusy;
 
     /// <summary>Banner action that opens the hand-off flow rather than typing a slash command.</summary>
-    private const string HandoffActionCommand = "claucraft:handoff";
+    private const string HandoffActionCommand = "snipyard:handoff";
 
     /// <summary>
     /// The CLI's own context-remaining percentage below which the low-context banner shows
@@ -327,7 +327,7 @@ internal partial class AppShell : UserControl, IDockOwner
         public DateTime? LastToastUtc { get; set; }
 
         /// <summary>
-        /// Claucraft's own jobs for this window that have not come back yet, by name. The CLI
+        /// Snipyard's own jobs for this window that have not come back yet, by name. The CLI
         /// can hand the prompt back while the app is still finishing what the turn started -
         /// snapshotting the tree for a checkpoint, say - and a window that calls itself done
         /// with one of these outstanding is answering for the CLI alone, not for the turn.
@@ -789,7 +789,7 @@ internal partial class AppShell : UserControl, IDockOwner
         LblNewClaude.Text = Loc.Get("NewSession");
         ToolTip.SetTip(BtnNewClaude, string.Format(Loc.Get("NewSessionTooltipFmt"), provider.Name));
 
-        // Session row — only Claude-style CLIs expose a session index Claucraft can read.
+        // Session row — only Claude-style CLIs expose a session index Snipyard can read.
         LblSession.IsVisible = features.SessionList;
         SessionRow.IsVisible = features.SessionList;
         if (features.SessionList)
@@ -883,7 +883,7 @@ internal partial class AppShell : UserControl, IDockOwner
     }
 
     /// <summary>
-    /// Window title, e.g. "Claucraft Ver.1.0.12". Called from
+    /// Window title, e.g. "Snipyard Ver.1.0.12". Called from
     /// ApplyProviderUi() so it follows both a language change and an AI switch.
     /// </summary>
     private void UpdateWindowTitle()
@@ -4279,6 +4279,9 @@ internal partial class AppShell : UserControl, IDockOwner
                 // name (saved to local git config), otherwise the folder name itself.
                 var configuredName = GitCli.Run(_projectFolder, "config", "--local", "--get",
                     GitWriteService.RepoNameConfigKey).Trim();
+                if (string.IsNullOrEmpty(configuredName))
+                    configuredName = GitCli.Run(_projectFolder, "config", "--local", "--get",
+                        GitWriteService.LegacyRepoNameConfigKey).Trim();
                 StatusRepoName.Text = !string.IsNullOrEmpty(configuredName)
                     ? configuredName
                     : System.IO.Path.GetFileName(_projectFolder.TrimEnd(System.IO.Path.DirectorySeparatorChar));
@@ -5034,7 +5037,7 @@ internal partial class AppShell : UserControl, IDockOwner
     /// backgrounded subagent or a <c>run_in_background</c> command is answered the instant it
     /// launches, so a turn that dispatched one hands the prompt back with the work still going.
     /// Reporting that as "done" - green dot, no progress line, the frame blinking to say the
-    /// answer is in - was the whole complaint. Claucraft's own jobs for the window count too:
+    /// answer is in - was the whole complaint. Snipyard's own jobs for the window count too:
     /// <see cref="MdiChildInfo.PendingWork"/> holds whatever the turn started on this side.
     ///
     /// Ordered cheapest first, because this runs for every window on every 700 ms poll: the
@@ -5179,7 +5182,7 @@ internal partial class AppShell : UserControl, IDockOwner
     /// line and the strip dot have said it, and a tray balloon on every turn of a session
     /// somebody is sitting and watching is noise. "In front of" means the app has focus *and*
     /// this is the window it is showing - a background window finishing is worth a toast even
-    /// when Claucraft itself is focused, which is the case the strip dot alone reports weakly.
+    /// when Snipyard itself is focused, which is the case the strip dot alone reports weakly.
     /// </summary>
     private void NotifyTurnEnd(MdiChildInfo entry, int busyPolls)
     {
@@ -5520,7 +5523,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
     /// <summary>
     /// Idle time after which the cache-expiry banner fires. Anthropic's cache TTL is ~1 hour on
-    /// a subscription plan (shorter on API-key billing, which Claucraft has no setting to tell
+    /// a subscription plan (shorter on API-key billing, which Snipyard has no setting to tell
     /// apart from a subscription plan today); this stays a safety margin under that.
     /// </summary>
     private const int CacheTtlWarningMinutes = 50;
@@ -7273,7 +7276,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         // Only the window's own session, never a guess. Falling back to the newest transcript in
         // the project put whichever session happened to be written last on the status bar - a
-        // neighbouring window mid-turn, or a CLI running outside Claucraft altogether - under
+        // neighbouring window mid-turn, or a CLI running outside Snipyard altogether - under
         // this window's name. TrackSessionIdAsync learns the real id within a poll or two of
         // launch, and until it does, no readout at all beats a confident wrong one.
         if (string.IsNullOrEmpty(child.SessionId)) return null;
@@ -7294,7 +7297,7 @@ internal partial class AppShell : UserControl, IDockOwner
     private async void RefreshSessionReadout(TerminalSnapshot snap)
     {
 
-        // Caught here regardless of what triggered it - Claucraft's own dropdown, "/model x"
+        // Caught here regardless of what triggered it - Snipyard's own dropdown, "/model x"
         // typed straight at the prompt, or the CLI's own interactive picker - since all three
         // end with the CLI printing this same banner.
         if (snap.ModelSwitchedTo is { Length: > 0 } switched)
@@ -7846,7 +7849,7 @@ internal partial class AppShell : UserControl, IDockOwner
 
         LaunchClaudeWithInitialPrompt();
 
-        // The brief goes into Claucraft's own input panel, not the PTY, so it does not race
+        // The brief goes into Snipyard's own input panel, not the PTY, so it does not race
         // the CLI's startup and cannot be sent before the user has read it.
         if (_children.Count > 0)
             _children[^1].Terminal.ShowInExpandedInput(edited!);
@@ -8269,15 +8272,13 @@ internal partial class AppShell : UserControl, IDockOwner
         var fileName = Loc.Language == "日本語" ? "help_ja.html" : "help_en.html";
         try
         {
-            var helpDir = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "Claucraft", "Help");
+            var helpDir = System.IO.Path.Combine(AppPaths.Roaming, "Help");
             System.IO.Directory.CreateDirectory(helpDir);
 
             // Help files (HTML + images) are embedded in the exe (avares://), so they always ship
             // with it even when only the .exe gets copied/updated. Re-extract the whole tree on
             // every open so relative <img> references resolve and newer builds' content applies.
-            var baseUri = new Uri("avares://Claucraft/Help");
+            var baseUri = new Uri("avares://Snipyard/Help");
             foreach (var assetUri in Avalonia.Platform.AssetLoader.GetAssets(baseUri, null))
             {
                 var relative = assetUri.AbsolutePath.Substring(baseUri.AbsolutePath.Length).TrimStart('/');
@@ -9468,7 +9469,7 @@ internal partial class AppShell : UserControl, IDockOwner
     /// </summary>
     private async Task<(string Command, SessionInfo? Session)> BuildContinueLaunchAsync(string folderPath)
     {
-        // Session summaries only exist for CLIs whose history Claucraft can read
+        // Session summaries only exist for CLIs whose history Snipyard can read
         if (!_cli.Features.SessionList)
             return (_cli.BuildContinueCommand(ActiveLaunchProfile()), null);
 

@@ -21,11 +21,17 @@ No test framework is configured. Verify changes by building successfully (`dotne
 ## Release Process
 
 Whenever a GitHub Release is made (tag `vX.Y.Z`), it MUST carry the published
-single-file `Claucraft.exe` as an asset — the in-app updater (`UpdateService`)
+single-file `Snipyard.exe` as an asset — the in-app updater (`UpdateService`)
 reads `/releases/latest` and only recognizes a release as installable if it
 finds that exact asset. A tag with no asset silently breaks update checks for
 everyone, since GitHub always serves the newest release as "latest" regardless
 of assets.
+
+The app was called Claucraft until the rename, and builds from before it look
+for an asset named `Claucraft.exe`. During the transition every release also
+carries the same binary under that name (`Claucraft.exe`), or those installs
+never see another update. The current updater prefers `Snipyard.exe` and
+accepts `Claucraft.exe`.
 
 Steps, every time:
 
@@ -36,12 +42,14 @@ dotnet publish -c Release -r win-x64 --self-contained true \
     -p:DebugType=none -o ./publish-single     # (or run publish.bat)
 git add build.number && git commit -m "..."   # commit the bumped counter
 git push
-gh release create vX.Y.Z ./publish-single/Claucraft.exe --title vX.Y.Z --notes "..."
+cp ./publish-single/Snipyard.exe ./publish-single/Claucraft.exe   # transition: old-name copy
+gh release create vX.Y.Z ./publish-single/Snipyard.exe ./publish-single/Claucraft.exe \
+    --title vX.Y.Z --notes "..."
 ```
 
 The version in the tag must match the `FileVersion` baked into
-`publish-single/Claucraft.exe` by that publish (check with
-`(Get-Item .\publish-single\Claucraft.exe).VersionInfo.FileVersion`).
+`publish-single/Snipyard.exe` by that publish (check with
+`(Get-Item .\publish-single\Snipyard.exe).VersionInfo.FileVersion`).
 
 ## Architecture
 
@@ -70,7 +78,7 @@ Switching active child triggers project context switching — the toolbar, explo
 
 ### Services
 
-- **AppSettings** / **SnippetStore**: JSON persistence to `%APPDATA%\Claucraft/`
+- **AppSettings** / **SnippetStore**: JSON persistence to `%APPDATA%\Snipyard/` (`AppPaths` copies an old `%APPDATA%\Claucraft` across on first start)
 - **SessionService**: Reads Claude Code JSONL session files from `~/.claude/projects/` (read-only)
 - **UsageTracker**: Aggregates today's usage from the Claude Code session transcripts (via CostAnalytics) on a 30-second polling interval (read-only)
 - **Localization**: Static dictionary-based EN/JP localization via `Loc.Get("key")`

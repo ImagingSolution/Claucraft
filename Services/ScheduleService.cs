@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Claucraft.Services;
+namespace Snipyard.Services;
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ScheduleKind { Once, Daily, Interval }
@@ -45,7 +45,7 @@ public class ScheduledTask
 }
 
 /// <summary>
-/// The scheduled prompts, kept in %APPDATA%\Claucraft\schedules.json. They only fire while the
+/// The scheduled prompts, kept in %APPDATA%\Snipyard\schedules.json. They only fire while the
 /// application is running; a slot missed by more than <see cref="Grace"/> is skipped rather than
 /// caught up, so opening the app in the morning does not set off last night's runs.
 /// </summary>
@@ -55,9 +55,7 @@ public class ScheduleStore
 
     public static readonly TimeSpan Grace = TimeSpan.FromMinutes(30);
 
-    private static readonly string StoreFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Claucraft", "schedules.json");
+    private static readonly string StoreFile = Path.Combine(AppPaths.Roaming, "schedules.json");
 
     public static ScheduleStore Shared { get; } = Load();
 
