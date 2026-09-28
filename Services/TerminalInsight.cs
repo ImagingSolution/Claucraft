@@ -111,9 +111,11 @@ public static class TerminalInsight
     /// line. The whole shape is required, not just the bracketed figures - spinner glyph, one
     /// word, ellipsis, readout - because the figures on their own turn up in the transcript
     /// whenever the session talks about them, and a line of prose is not a running spinner.
+    /// The token count is not required: it only turns up once output streams, and a turn that
+    /// streams late (a /compact, a long think) reads "(16s)" or "(16s · thinking)" until then.
     /// </summary>
     private static readonly Regex WorkingSpinnerRegex = new(
-        @"^\s{0,6}[^\s\p{L}\p{N}]\s*\p{L}[\p{L} ]*(?:…|\.\.\.)\s*\(\s*(?:\d+m\s*)?\d+s\s*[·.][^)]*tokens",
+        @"^\s{0,6}[^\s\p{L}\p{N}]\s*\p{L}[\p{L} ]*(?:…|\.\.\.)\s*\(\s*(?:\d+m\s*)?\d+s\s*(?:\)|[·.])",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
     /// <summary>Matches the elapsed-time part of a working line: "(12s" or "(1m 5s".</summary>
