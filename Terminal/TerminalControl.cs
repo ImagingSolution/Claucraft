@@ -524,6 +524,9 @@ public partial class TerminalControl : Control, IDisposable
         };
 
         ClipToBounds = true;
+        // Ctrl+wheel zooms on the way down, before the chat view's ScrollViewer takes the wheel
+        // for scrolling: on the bubble it only got through when there was nowhere left to scroll
+        AddHandler(PointerWheelChangedEvent, OnZoomWheel, RoutingStrategies.Tunnel);
 
         // Built here but added to the visual tree last, so it paints over the input row
         _marquee = new Controls.MarqueeBar();
@@ -5262,23 +5265,22 @@ public partial class TerminalControl : Control, IDisposable
 
     // ── Scroll & Zoom ──
 
+    // Ctrl+Scroll: font zoom (works in both modes)
+    private void OnZoomWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.Delta.Y == 0) return;
+        double newSize = Math.Clamp(_fontSize + (e.Delta.Y > 0 ? 1 : -1), 8, 32);
+        if (newSize != _fontSize)
+        {
+            SetFont(_typeface.FontFamily.Name, newSize);
+            FontSizeChanged?.Invoke(newSize);
+        }
+        e.Handled = true;
+    }
+
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
-
-        // Ctrl+Scroll: font zoom (works in both modes)
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
-        {
-            double newSize = _fontSize + (e.Delta.Y > 0 ? 1 : -1);
-            newSize = Math.Clamp(newSize, 8, 32);
-            if (newSize != _fontSize)
-            {
-                SetFont(_typeface.FontFamily.Name, newSize);
-                FontSizeChanged?.Invoke(newSize);
-            }
-            e.Handled = true;
-            return;
-        }
 
         // Document view: let ScrollViewer inside DocumentViewPanel handle scrolling
         // (the side pane's terminal still scrolls here)
