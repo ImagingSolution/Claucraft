@@ -8,6 +8,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Snipyard.Services;
@@ -144,6 +145,16 @@ public class DocumentViewPanel : Panel
         _codeTypeface = codeTypeface;
         // Every TextBlock below inherits the prose face; code sets its own
         SetValue(Avalonia.Controls.Documents.TextElement.FontFamilyProperty, ChatTheme.BodyFont);
+        // The answers' blue-and-white selection for every text in the view, the user's own
+        // posts included; the theme's default is a dark grey that leaves the text dark
+        Styles.Add(new Avalonia.Styling.Style(x => x.OfType<SelectableTextBlock>())
+        {
+            Setters =
+            {
+                new Avalonia.Styling.Setter(SelectableTextBlock.SelectionBrushProperty, MarkdownParser.ChatSelectionBg),
+                new Avalonia.Styling.Setter(SelectableTextBlock.SelectionForegroundBrushProperty, Brushes.White),
+            },
+        });
 
         _titleText = new TextBlock
         {
