@@ -4240,9 +4240,8 @@ public partial class TerminalControl : Control, IDisposable
     }
 
     /// <summary>
-    /// Runs for the life of the session, not just while the chat view is up. The overlay is a
-    /// card floating above the input row in either view, so the terminal's own prompt stays
-    /// readable behind it.
+    /// Runs for the life of the session, so the card appears as soon as the chat view is switched
+    /// on over an open prompt, and goes away when the view is switched back to the terminal.
     /// </summary>
     private void StartPermissionWatch()
     {
@@ -4259,10 +4258,9 @@ public partial class TerminalControl : Control, IDisposable
     {
         if (!EnablePermissionOverlay) return;
 
-        var prompt = ReadChoicePrompt();
-        // A plain menu is already answerable from the keyboard in the terminal view; the card is
+        // The terminal view shows the CLI's own prompt, answerable from the keyboard; the card is
         // for the chat view, which hides the terminal
-        if (prompt?.Kind == ChoiceKind.Menu && !_isDocumentView) prompt = null;
+        var prompt = _isDocumentView ? ReadChoicePrompt() : null;
 
         // Rebuilt only when the prompt itself changes, not on every caret move. A card that was
         // just answered stays down until its prompt leaves the screen, rather than popping back up
