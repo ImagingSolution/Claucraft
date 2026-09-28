@@ -333,9 +333,12 @@ public partial class TerminalControl : Control, IDisposable
         _inputTextBox.SelectionForegroundBrush = Brushes.White;
         // Fluent repaints the box on hover and focus; inside the card it has to stay invisible
         var res = _inputTextBox.Resources;
+        // Each key gets a value of its own type: the focused box reads its keys live, and a brush
+        // parked even for a moment on the thickness key is an InvalidCastException that kills the app
         foreach (var key in ChatChromeResourceKeys)
-            res[key] = key.Contains("Placeholder") ? new SolidColorBrush(pal.Dim) : Brushes.Transparent;
-        res["TextControlBorderThemeThicknessFocused"] = new Thickness(0);
+            res[key] = key.Contains("Thickness") ? new Thickness(0)
+                : key.Contains("Placeholder") ? new SolidColorBrush(pal.Dim)
+                : Brushes.Transparent;
 
         _expandButton.Background = Brushes.Transparent;
         _expandButton.Foreground = new SolidColorBrush(pal.Dim);
