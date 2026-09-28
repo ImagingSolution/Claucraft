@@ -2855,7 +2855,12 @@ public partial class TerminalControl : Control, IDisposable
     /// </summary>
     private async void WriteAndSubmit(string text, bool withImages)
     {
-        _pty?.WriteInput(text);
+        // A burst is only a guess the CLI makes; one it misses sends the prompt line by line, so a
+        // multi-line prompt goes as a marked paste whenever the CLI takes one
+        if (_buffer.BracketedPasteMode && (text.Contains('\n') || text.Contains('\r')))
+            _pty?.WriteInput("\x1b[200~" + text + "\x1b[201~");
+        else
+            _pty?.WriteInput(text);
         // Text arriving in one burst reads as a paste to the CLI, and a CR inside a paste is a
         // newline rather than a submit. Attached image paths also need time to be resolved.
         await Task.Delay(withImages ? AttachmentSubmitDelayMs : SubmitDelayMs);
@@ -6249,7 +6254,8 @@ public partial class TerminalControl : Control, IDisposable
 
     /// <summary>
     /// Chat view counterpart of typing a snippet into the console: every CR submits the text
-    /// before it as a prompt, and whatever follows the last CR is left in the box to edit.
+    /// before it as a prompt, and whatever follows the last CR is left in the box to edit. An LF
+    /// is a line break inside one prompt.
     /// </summary>
     public async void SubmitSnippet(string text)
     {
@@ -6262,6 +6268,28 @@ public partial class TerminalControl : Control, IDisposable
             await Task.Delay(AttachmentSubmitDelayMs + 100);
         }
         SetInputText(parts[^1]);
+    }
+
+    /// <summary>
+    /// Types a snippet into the console: every CR presses Enter, and an LF is a line break
+    /// inside the prompt being typed, sent as a paste so the CLI does not take it for Enter.
+    /// </summary>
+    public async void SendSnippet(string text)
+    {
+        var parts = text.Split('\r');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var part = parts[i];
+            if (_buffer.BracketedPasteMode && part.Contains('\n'))
+                _pty?.WriteInput("\x1b[200~" + part + "\x1b[201~");
+            else if (part.Length > 0)
+                _pty?.WriteInput(part);
+            if (i == parts.Length - 1) break;
+            // Text arriving in one burst with its CR reads as a paste, where a CR is no submit
+            if (part.Length > 0) await Task.Delay(SubmitDelayMs);
+            _pty?.WriteInput("\r");
+            if (i < parts.Length - 2) await Task.Delay(AttachmentSubmitDelayMs + 100);
+        }
     }
 
     /// <summary>

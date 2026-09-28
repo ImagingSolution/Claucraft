@@ -3660,13 +3660,15 @@ internal partial class AppShell : UserControl, IDockOwner
 
     // ── Snippets Panel ──
 
-    // A snippet may write a newline as the escape text \r, \n or \r\n, or hold a real
-    // line break. All of them mean "press Enter", which the console expects as a CR.
-    private static readonly Regex SnippetNewlineRegex =
-        new(@"\\r\\n|\\r|\\n|\r\n|\r|\n", RegexOptions.Compiled);
+    // A snippet presses Enter with the escape text \r, \n or \r\n, which the console expects
+    // as a CR. A real line break is a line break of the prompt itself and becomes an LF.
+    private static readonly Regex SnippetEnterRegex =
+        new(@"\\r\\n|\\r|\\n", RegexOptions.Compiled);
+    private static readonly Regex SnippetLineBreakRegex =
+        new(@"\r\n|\r|\n", RegexOptions.Compiled);
 
     private static string NormalizeSnippetNewlines(string text)
-        => SnippetNewlineRegex.Replace(text, "\r");
+        => SnippetEnterRegex.Replace(SnippetLineBreakRegex.Replace(text, "\n"), "\r");
 
     private void LoadSnippetsPanel()
     {
@@ -3792,7 +3794,7 @@ internal partial class AppShell : UserControl, IDockOwner
                 else if (terminal.IsExpanded)
                     terminal.AppendToExpandedInput(snippetText);
                 else
-                    terminal.SendText(snippetText);
+                    terminal.SendSnippet(snippetText);
                 if (_activeChild != null) ActivateTerminal(_activeChild);
                 terminal.FocusTerminal();
             }
