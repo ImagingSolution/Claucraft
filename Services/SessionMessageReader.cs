@@ -993,6 +993,10 @@ public static class SessionMessageReader
             @"<(?:ide_selection|ide_opened_file|user-prompt-submit-hook|system-reminder|local-command-caveat|local-command-stdout|command-name|command-message|command-args|available-deferred-tools|fast_mode_info|antml_thinking|antml_function_calls)[^>]*>.*?</(?:ide_selection|ide_opened_file|user-prompt-submit-hook|system-reminder|local-command-caveat|local-command-stdout|command-name|command-message|command-args|available-deferred-tools|fast_mode_info|antml_thinking|antml_function_calls)>",
             "", RegexOptions.Singleline);
 
+        // A paste is wrapped in pasted_content tags; the body is the user's own text, so only
+        // the tags go (with the line break each one sits on)
+        text = Regex.Replace(text, @"<pasted_content\b[^>]*>\r?\n?|\r?\n?</pasted_content\b[^>]*>", "");
+
         // Strip self-closing or unclosed metadata tags
         text = Regex.Replace(text, @"<(?:ide_selection|ide_opened_file|user-prompt-submit-hook|system-reminder|local-command-caveat|local-command-stdout|command-name|command-message|command-args|available-deferred-tools)[^>]*/?>", "");
 
