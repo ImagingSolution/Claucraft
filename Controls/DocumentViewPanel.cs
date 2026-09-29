@@ -213,6 +213,8 @@ public class DocumentViewPanel : Panel
         {
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            // Keep the bar on screen: auto-hide leaves no sign of where a long transcript is scrolled to
+            AllowAutoHide = false,
             Content = scrollContent,
         };
         _scrollViewer.ScrollChanged += OnScrollChanged;

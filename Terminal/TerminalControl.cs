@@ -1267,7 +1267,8 @@ public partial class TerminalControl : Control, IDisposable
         double viewW = TermViewWidth;
         if (_cellWidth <= 0 || _cellHeight <= 0 || viewW <= 0) return;
         double termH = TerminalAreaHeight;
-        int newCols = Math.Max(10, (int)(viewW / _cellWidth));
+        // Leave the scrollbar its own strip; cells reaching into it paint over the bar
+        int newCols = Math.Max(10, (int)((viewW - ScrollbarWidth) / _cellWidth));
         int newRows = Math.Max(5, (int)(termH / _cellHeight));
         if (newCols != _buffer.Cols || newRows != _buffer.Rows)
         {
@@ -1280,7 +1281,7 @@ public partial class TerminalControl : Control, IDisposable
     {
         _workingDirectory = workingDirectory;
         double termH = TerminalAreaHeight;
-        int cols = Math.Max(10, (int)(Bounds.Width / _cellWidth));
+        int cols = Math.Max(10, (int)((Bounds.Width - ScrollbarWidth) / _cellWidth));
         int rows = Math.Max(5, (int)(termH / _cellHeight));
         if (cols < 10) cols = 80;
         if (rows < 5) rows = 24;
@@ -1600,7 +1601,7 @@ public partial class TerminalControl : Control, IDisposable
 
     private bool IsOnScrollbar(Point pos)
     {
-        return _buffer.Scrollback.Count > 0 && pos.X >= TermViewWidth - ScrollbarWidth && pos.Y < TerminalAreaHeight;
+        return _buffer.Scrollback.Count > 0 && !_buffer.IsAltBuffer && pos.X >= TermViewWidth - ScrollbarWidth && pos.Y < TerminalAreaHeight;
     }
 
     private (double y, double height) GetScrollbarThumb()
@@ -5382,8 +5383,10 @@ public partial class TerminalControl : Control, IDisposable
             context.DrawLine(sepPen, new Point(0, termH), new Point(viewW, termH));
         }
 
-        // Draw scrollbar
-        if (_buffer.Scrollback.Count > 0)
+        // Draw scrollbar, even with nothing scrolled off yet (the thumb then fills the track),
+        // so the view always shows where it sits. Not on the alternate screen: a full-screen app
+        // such as the Claude CLI scrolls inside itself and never tells us where it is
+        if (!_buffer.IsAltBuffer)
         {
             var (thumbY, thumbH) = GetScrollbarThumb();
             double barX = viewW - ScrollbarWidth;
@@ -5392,7 +5395,7 @@ public partial class TerminalControl : Control, IDisposable
             context.FillRectangle(new SolidColorBrush(Color.FromArgb(30, scrollbarBase, scrollbarBase, scrollbarBase)),
                 new Rect(barX, 0, ScrollbarWidth, termH));
 
-            byte thumbAlpha = _isScrollbarDragging ? (byte)160 : (_scrollOffset > 0 ? (byte)100 : (byte)50);
+            byte thumbAlpha = _isScrollbarDragging ? (byte)160 : (_scrollOffset > 0 ? (byte)100 : (byte)70);
             context.FillRectangle(new SolidColorBrush(Color.FromArgb(thumbAlpha, scrollbarBase, scrollbarBase, scrollbarBase)),
                 new Rect(barX + 2, thumbY, ScrollbarWidth - 4, thumbH));
         }
