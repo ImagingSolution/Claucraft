@@ -2887,56 +2887,107 @@ public partial class TerminalControl : Control, IDisposable
     private async void AnswerAskUserQuestion(IReadOnlyList<Services.AskUserQuestionItem> questions, IReadOnlyList<Controls.AskReply> replies)
     {
         const string down = "\x1b[B", right = "\x1b[C";
-        var keys = new List<string>();
         for (int i = 0; i < questions.Count && i < replies.Count; i++)
         {
             var q = questions[i];
             var r = replies[i];
             int n = q.Options.Count;
             var other = r.OtherText?.Replace("\r", " ").Replace("\n", " ");
+            // When any question carries option previews, the CLI lays every page out without
+            // the "Type something" and Next rows: arrowing down past the options lands on
+            // "Chat about this", and Enter there abandons the whole selector. So the free
+            // text only goes in where its row is on screen, and pages are left with Right.
+            bool freeTextRow = GetScreenText(0).Contains("Type something", StringComparison.Ordinal);
+            var keys = new List<string>();
             if (r.Skipped)
             {
                 keys.Add(right);
             }
             else if (!q.MultiSelect)
             {
-                if (other == null && r.Selected.Count > 0)
+                if ((other == null || !freeTextRow) && r.Selected.Count > 0)
+                {
                     keys.Add((r.Selected[0] + 1).ToString());
-                else
+                    // On a preview page a digit only moves the caret; Enter picks the option
+                    if (!freeTextRow) keys.Add("\r");
+                }
+                else if (other != null && freeTextRow)
                 {
                     for (int k = 0; k < n; k++) keys.Add(down);
-                    keys.Add(other ?? "");
+                    keys.Add(other);
                     keys.Add("\r");
                 }
+                else
+                    keys.Add(right);
             }
             else
             {
                 foreach (var idx in r.Selected) keys.Add((idx + 1).ToString());
-                for (int k = 0; k < n; k++) keys.Add(down);
-                if (other != null) keys.Add(other);
-                keys.Add(down);
-                keys.Add("\r");
+                if (other != null && freeTextRow)
+                {
+                    for (int k = 0; k < n; k++) keys.Add(down);
+                    keys.Add(other);
+                }
+                keys.Add(right);
             }
-        }
-        bool submitsItself = questions.Count == 1 && !questions[0].MultiSelect;
-        if (!submitsItself) keys.Add("\r");
 
-        foreach (var key in keys)
+            var before = GetScreenText(0);
+            foreach (var key in keys)
+            {
+                _pty?.WriteInput(key);
+                // Paced as measured: keys arriving in one burst read to the CLI as a paste
+                await Task.Delay(AskKeyDelayMs);
+            }
+            // Let the page turn before reading the next one
+            for (int w = 0; w < 10 && GetScreenText(0) == before; w++) await Task.Delay(100);
+            await Task.Delay(150);
+            if (!IsAskSelectorOnScreen()) return;
+        }
+
+        await FinishAskSubmitAsync();
+    }
+
+    /// <summary>
+    /// Drives the selector the rest of the way to submitted by reading the screen rather than
+    /// trusting the key count: a key that lands while the CLI is still turning a page is lost,
+    /// which left it parked on a question or on the review page with the caret off "Submit
+    /// answers". Stops as soon as the selector is gone.
+    /// </summary>
+    private async Task FinishAskSubmitAsync()
+    {
+        const string up = "\x1b[A", right = "\x1b[C";
+        for (int attempt = 0; attempt < 12; attempt++)
         {
-            _pty?.WriteInput(key);
-            // Paced as measured: keys arriving in one burst read to the CLI as a paste
-            await Task.Delay(AskKeyDelayMs);
+            await Task.Delay(attempt == 0 ? 400 : 300);
+            if (!IsAskSelectorOnScreen() && !GetScreenText(0).Contains("Submit answers", StringComparison.Ordinal))
+                return;
+
+            var lines = GetScreenText(0).Split('\n');
+            var submitLine = lines.FirstOrDefault(l => l.Contains("Submit answers", StringComparison.Ordinal));
+            if (submitLine == null)
+                _pty?.WriteInput(right);          // still on a question: move on to the review page
+            else if (System.Text.RegularExpressions.Regex.IsMatch(submitLine, @"^[\s│|]*[❯>]"))
+                _pty?.WriteInput("\r");
+            else
+                _pty?.WriteInput(up);             // caret sits on Cancel below it
         }
     }
 
     /// <summary>
-    /// The AskUserQuestion selector is up: every page of it lists a "Type something" row and
+    /// The AskUserQuestion selector is up: every page of it lists a "Type something" (or "Chat about this") row and
     /// ends with an "Esc to cancel" hint. Without it, the keys would land in the prompt.
     /// </summary>
     private bool IsAskSelectorOnScreen()
     {
+        // A question with option previews has no "Type something" row; it shows "Chat about
+        // this" under the options instead
         var screen = GetScreenText(0);
-        return screen.Contains("Type something", StringComparison.Ordinal)
+        // The closing review page has neither row nor the Esc hint
+        if (screen.Contains("Review your answers", StringComparison.Ordinal)
+            && screen.Contains("Submit answers", StringComparison.Ordinal))
+            return true;
+        return (screen.Contains("Type something", StringComparison.Ordinal)
+                || screen.Contains("Chat about this", StringComparison.Ordinal))
             && screen.Contains("Esc to cancel", StringComparison.Ordinal);
     }
 
