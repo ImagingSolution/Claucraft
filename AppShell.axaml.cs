@@ -327,6 +327,21 @@ internal partial class AppShell : UserControl, IDockOwner
         public DateTime? LastToastUtc { get; set; }
 
         /// <summary>
+        /// UTC time when a notification is pending - scheduled for delivery once the turn stays
+        /// idle long enough (settle period). Null when no notification is pending or one has
+        /// already been delivered for this turn. Reset to null when the turn goes back to busy.
+        /// </summary>
+        public DateTime? PendingNotifyAtUtc { get; set; }
+
+        /// <summary>
+        /// Whether this window has raised a notification for the current turn. Set to true once
+        /// <see cref="NotifyTurnEnd"/> actually fires; reset to false when the user starts a new
+        /// prompt. Prevents multiple notifications for the same turn even if the turn ends multiple
+        /// times (e.g., if a background task completes after the answer is already shown).
+        /// </summary>
+        public bool NotifiedForTurn { get; set; }
+
+        /// <summary>
         /// Snipyard's own jobs for this window that have not come back yet, by name. The CLI
         /// can hand the prompt back while the app is still finishing what the turn started -
         /// snapshotting the tree for a checkpoint, say - and a window that calls itself done
@@ -5056,9 +5071,13 @@ internal partial class AppShell : UserControl, IDockOwner
     /// working in the background still shows it. The active child reuses the judgement
     /// <see cref="RefreshLiveStatus"/> just made; the rest read the spinner off their own
     /// screen, which always carries it, so they need no scrollback.
+    ///
+    /// Also checks for pending notifications that have reached their settle deadline and fires
+    /// them, but only once per turn (guarded by <see cref="MdiChildInfo.NotifiedForTurn"/>).
     /// </summary>
     private void RefreshGenerationBars()
     {
+        var now = DateTime.UtcNow;
         for (int i = 0; i < _children.Count; i++)
         {
             var child = _children[i];
@@ -5071,6 +5090,14 @@ internal partial class AppShell : UserControl, IDockOwner
                 terminal.IsGenerating = working;
                 PaintChildDots(child);
                 NoteChildTurnEnd(child, working);
+
+                // Fire any pending notification that has passed its settle deadline.
+                if (child.PendingNotifyAtUtc is DateTime notifyAt && now >= notifyAt && !child.NotifiedForTurn)
+                {
+                    NotifyTurnEnd(child, child.BusyPolls);
+                    child.PendingNotifyAtUtc = null;
+                    child.BusyPolls = 0;
+                }
             }
             catch
             {
@@ -5143,6 +5170,10 @@ internal partial class AppShell : UserControl, IDockOwner
     /// for the active one only, so a window that answered in the background gets its title
     /// refreshed too. The idle state has to hold for two polls for the same reason it does there:
     /// the spinner can be missing from a single frame mid-turn.
+    ///
+    /// To avoid duplicate notifications, this schedules a notification for a later settle period
+    /// rather than raising it immediately. If the turn goes back to busy during settle, the
+    /// scheduled notification is cancelled.
     /// </summary>
     private void NoteChildTurnEnd(MdiChildInfo entry, bool working)
     {
@@ -5151,30 +5182,35 @@ internal partial class AppShell : UserControl, IDockOwner
             entry.SawWorking = true;
             entry.IdlePolls = 0;
             entry.BusyPolls++;
+            // Turn is busy again - cancel any pending notification and keep BusyPolls.
+            entry.PendingNotifyAtUtc = null;
             return;
         }
 
         if (!entry.SawWorking) return;
         if (++entry.IdlePolls < TurnEndIdlePolls) return;
 
+        var now = DateTime.UtcNow;
         var busyPolls = entry.BusyPolls;
         entry.SawWorking = false;
         entry.IdlePolls = 0;
-        entry.BusyPolls = 0;
-        entry.LastTurnEndUtc = DateTime.UtcNow;
+        entry.LastTurnEndUtc = now;
+        // Schedule notification to fire after the settle period (not immediately).
+        entry.PendingNotifyAtUtc = now + NotifySettle;
         _ = SyncTitleFromSessionAsync(entry);
-        NotifyTurnEnd(entry, busyPolls);
     }
 
     /// <summary>A turn shorter than this many polls is a flicker, not an answer. See BusyPolls.</summary>
     private const int TurnEndMinBusyPolls = 2;
 
     /// <summary>
-    /// How long after <see cref="NoteChildTurnEnd"/> raises its toast the process-exit path
-    /// stays quiet, so a one-shot run's process exiting right after the turn ends does not
-    /// raise a second toast for the same answer.
+    /// How long the turn must stay idle before a notification is actually sent. This settle
+    /// period absorbs spurious intermediate completions (e.g. when a subagent finishes but the
+    /// CLI continues, or when permission waiting is satisfied but more work is coming).
+    /// At 700ms/poll, ~8 seconds is 11 polls - long enough to be confident but short enough
+    /// to not feel slow.
     /// </summary>
-    private static readonly TimeSpan ExitNotifyDedupWindow = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan NotifySettle = TimeSpan.FromSeconds(8);
 
     /// <summary>
     /// Raises the Windows notification for a finished answer, on the same working → idle edge
@@ -5185,11 +5221,14 @@ internal partial class AppShell : UserControl, IDockOwner
     /// somebody is sitting and watching is noise. "In front of" means the app has focus *and*
     /// this is the window it is showing - a background window finishing is worth a toast even
     /// when Snipyard itself is focused, which is the case the strip dot alone reports weakly.
+    ///
+    /// Only fires once per turn, guarded by <see cref="MdiChildInfo.NotifiedForTurn"/>.
     /// </summary>
     private void NotifyTurnEnd(MdiChildInfo entry, int busyPolls)
     {
         if (!_settings.NotifyOnComplete || entry.IsClosing) return;
         if (busyPolls < TurnEndMinBusyPolls) return;
+        if (entry.NotifiedForTurn) return;  // Already notified for this turn
 
         bool inFront = _activeChildIndex >= 0 && _activeChildIndex < _children.Count
                        && ReferenceEquals(_children[_activeChildIndex], entry);
@@ -5203,6 +5242,7 @@ internal partial class AppShell : UserControl, IDockOwner
             Loc.Get("AnswerReady"),
             string.Format(Loc.Get("AnswerReadyFmt"), name));
         entry.LastToastUtc = DateTime.UtcNow;
+        entry.NotifiedForTurn = true;  // Mark as notified to prevent duplicates
     }
 
     /// <summary>
@@ -6695,6 +6735,9 @@ internal partial class AppShell : UserControl, IDockOwner
     /// <summary>
     /// Snapshots the project before a prompt runs. Git repos get a dangling stash commit, which
     /// leaves the working tree untouched; folders outside Git get a file copy.
+    ///
+    /// Also resets the notification guard for the new turn, so the next completion will be
+    /// notified again.
     /// </summary>
     private async void CaptureCheckpoint(MdiChildInfo entry, string? prompt)
     {
@@ -6702,6 +6745,9 @@ internal partial class AppShell : UserControl, IDockOwner
 
         var folder = entry.ProjectFolder;
         if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder)) return;
+
+        // Reset notification guard for the new turn
+        entry.NotifiedForTurn = false;
 
         // Enter also confirms permission prompts and answers y/n, so snapshots are rate
         // limited; identical trees are then dropped by the service's SHA de-duplication.
@@ -8969,12 +9015,9 @@ internal partial class AppShell : UserControl, IDockOwner
             // The user closing the tab themselves is not a completion - NotifyTurnEnd
             // already skips this case, so the exit path has to as well.
             if (entry.IsClosing) return;
-            // A one-shot run's process can exit right on the heels of NotifyTurnEnd's own
-            // toast for the same answer - without this, that is two notifications for one
-            // completion.
-            if (entry.LastToastUtc is DateTime lastToast
-                && DateTime.UtcNow - lastToast < ExitNotifyDedupWindow)
-                return;
+            // Only notify if we haven't already notified for this turn. This prevents duplicates
+            // when the process exits after or during the settle period.
+            if (entry.NotifiedForTurn) return;
 
             // Flash the taskbar and raise a toast when the window is not focused
             if (!HostWindow.IsActive)
@@ -8986,6 +9029,7 @@ internal partial class AppShell : UserControl, IDockOwner
                         NotifyKind.TaskComplete,
                         Loc.Get("TaskComplete"),
                         string.Format(Loc.Get("TaskCompleteFmt"), stripText.Text ?? _cli.Active.Name));
+                    entry.NotifiedForTurn = true;  // Mark as notified
                 }
             }
         };
