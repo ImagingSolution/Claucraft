@@ -6314,11 +6314,21 @@ public partial class TerminalControl : Control, IDisposable
     /// <summary>
     /// Chat view counterpart of typing a snippet into the console: every CR submits the text
     /// before it as a prompt, and whatever follows the last CR is left in the box to edit. An LF
-    /// is a line break inside one prompt.
+    /// is a line break inside one prompt. The snippet goes in at the caret, replacing any
+    /// selection, so what was already typed stays: the text before the caret leads the first
+    /// prompt submitted and the text after it follows what is left in the box.
     /// </summary>
     public async void SubmitSnippet(string text)
     {
+        var current = _inputTextBox.Text ?? "";
+        int start = Math.Clamp(Math.Min(_inputTextBox.SelectionStart, _inputTextBox.SelectionEnd), 0, current.Length);
+        int end = Math.Clamp(Math.Max(_inputTextBox.SelectionStart, _inputTextBox.SelectionEnd), start, current.Length);
+        if (start == end) start = end = Math.Clamp(_inputTextBox.CaretIndex, 0, current.Length);
+        var before = current[..start];
+        var after = current[end..];
+
         var parts = text.Split('\r');
+        parts[0] = before + parts[0];
         for (int i = 0; i < parts.Length - 1; i++)
         {
             _inputTextBox.Text = parts[i];
@@ -6326,7 +6336,11 @@ public partial class TerminalControl : Control, IDisposable
             // Let the previous submit's delayed CR land before the next prompt is typed
             await Task.Delay(AttachmentSubmitDelayMs + 100);
         }
-        SetInputText(parts[^1]);
+        var last = parts[^1];
+        _inputTextBox.Text = last + after;
+        _inputTextBox.SelectionStart = _inputTextBox.SelectionEnd = last.Length;
+        _inputTextBox.CaretIndex = last.Length;
+        _inputTextBox.Focus();
     }
 
     /// <summary>
