@@ -645,6 +645,19 @@ public class CliProviderService
                 }
             }
 
+            // Same story for the PermissionOverlay flag: an entry written before it was added to
+            // BuildPresets() will deserialize false and leave Chat View disabled, even though the
+            // preset now enables it. Backfill from the preset if it's switched on there.
+            if (!stale.Features.PermissionOverlay)
+            {
+                var match = presets.FirstOrDefault(p => p.Id == stale.Id);
+                if (match != null && match.Features.PermissionOverlay)
+                {
+                    stale.Features.PermissionOverlay = true;
+                    changed = true;
+                }
+            }
+
             result.Add(stale);
         }
 
