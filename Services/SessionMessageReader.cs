@@ -726,6 +726,7 @@ public static class SessionMessageReader
         string? toolName = null;
         bool isToolUse = false;
         ConversationMessage? pendingAsk = null;
+        string? planText = null;
 
         foreach (var item in contentProp.EnumerateArray())
         {
@@ -786,6 +787,16 @@ public static class SessionMessageReader
                                 new AskUserData(questions, new Dictionary<string, string>(), null), PendingAskId: askIdStr);
                     }
                 }
+                // The plan being put up for approval is read as Claude's own words, not folded
+                // away into a tool line - the terminal prints it in full, and so does the chat
+                else if (toolName == "ExitPlanMode"
+                    && item.TryGetProperty("input", out var planInput)
+                    && planInput.TryGetProperty("plan", out var planEl)
+                    && planEl.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(planEl.GetString()))
+                {
+                    planText = planEl.GetString();
+                }
                 else if (toolName != null)
                 {
                     string? id = item.TryGetProperty("id", out var cid) ? cid.GetString() : null;
@@ -801,6 +812,11 @@ public static class SessionMessageReader
         // Text said alongside tool calls rides with the group as its narration
         if (isToolUse)
         {
+            if (tools.Count == 0 && planText != null)
+            {
+                textParts.Add(planText);
+                return new ConversationMessage(MessageRole.Assistant, string.Join("\n\n", textParts), timestamp, null, false, false);
+            }
             if (tools.Count == 0) return pendingAsk;
             return new ConversationMessage(MessageRole.Assistant, $"[Tool: {toolName}]", timestamp, toolName, true, false,
                 Tools: tools, Narration: textParts.Count > 0 ? string.Join("\n", textParts) : null);
