@@ -78,21 +78,35 @@ public static class CostAnalytics
 {
     /// <summary>
     /// Approximate per-model list pricing in USD per 1M tokens, based on publicly posted
-    /// rates as of 2026. Matched against the model name by case-insensitive substring, so
-    /// e.g. "claude-opus-4-7" and "claude-opus-5" both match the "opus" row. This is an
-    /// estimate for dashboard purposes, not a billing-accurate figure.
+    /// rates as of September 2026. Matched against the model name by case-insensitive
+    /// substring, first match wins, so the specific versions come before the line-wide row:
+    /// "claude-opus-5-5" takes its own row, "claude-opus-4-7" and "claude-opus-5" fall through
+    /// to "opus". A null cache-read price means <see cref="CacheReadMultiplier"/> of the input
+    /// rate; the newer models post their own, which is lower. This is an estimate for dashboard
+    /// purposes, not a billing-accurate figure.
     /// </summary>
-    private static readonly (string Match, double InputPerMTok, double OutputPerMTok)[] PriceTable =
+    private static readonly (string Match, double InputPerMTok, double OutputPerMTok, double? CacheReadPerMTok)[] PriceTable =
     {
-        ("opus", 15.0, 75.0),
-        ("sonnet", 3.0, 15.0),
-        ("haiku", 0.80, 4.0),
+        ("fable-5-1", 10.0, 50.0, 0.25),
+        ("mythos-5-1", 10.0, 50.0, 0.25),
+        ("fable", 10.0, 50.0, null),
+        ("mythos", 10.0, 50.0, null),
+        ("opus-5-5", 4.0, 20.0, 0.20),
+        ("opus-4-1", 15.0, 75.0, null),
+        ("opus-4-2025", 15.0, 75.0, null), // claude-opus-4-20250514
+        ("opus", 5.0, 25.0, null),
+        ("sonnet-4", 3.0, 15.0, null),
+        ("sonnet-3", 3.0, 15.0, null),
+        ("sonnet", 2.0, 10.0, 0.20),
+        ("haiku-3", 0.80, 4.0, null),
+        ("haiku", 1.0, 5.0, null),
     };
 
-    /// <summary>Fallback pricing row (Sonnet rates) used for models not found in <see cref="PriceTable"/>.</summary>
-    private static readonly (double InputPerMTok, double OutputPerMTok) FallbackPrice = (3.0, 15.0);
+    /// <summary>Fallback pricing row (current Sonnet rates) used for models not found in <see cref="PriceTable"/>.</summary>
+    private static readonly (double InputPerMTok, double OutputPerMTok, double? CacheReadPerMTok) FallbackPrice = (2.0, 10.0, 0.20);
 
-    /// <summary>cache_read_input_tokens are billed at this fraction of the input-token rate.</summary>
+    /// <summary>cache_read_input_tokens are billed at this fraction of the input-token rate
+    /// for a model that does not post a cache-read price of its own.</summary>
     private const double CacheReadMultiplier = 0.1;
 
     /// <summary>cache_creation_input_tokens are billed at this multiple of the input-token rate.</summary>
@@ -108,23 +122,23 @@ public static class CostAnalytics
     /// Estimate the USD cost of one usage sample for a given model name. Matches
     /// <paramref name="model"/> against <see cref="PriceTable"/> by case-insensitive substring.
     /// A model name of exactly "unknown" (case-insensitive) costs 0; any other unmatched model
-    /// falls back to Sonnet pricing.
+    /// falls back to current Sonnet pricing.
     /// </summary>
     public static double EstimateCostUsd(string model, long input, long output, long cacheRead, long cacheCreation)
     {
         if (string.IsNullOrEmpty(model))
-            return Compute(FallbackPrice.InputPerMTok, FallbackPrice.OutputPerMTok, input, output, cacheRead, cacheCreation);
+            return Compute(FallbackPrice.InputPerMTok, FallbackPrice.OutputPerMTok, FallbackPrice.CacheReadPerMTok, input, output, cacheRead, cacheCreation);
 
         if (string.Equals(model, "unknown", StringComparison.OrdinalIgnoreCase))
             return 0.0;
 
-        foreach (var (match, inPrice, outPrice) in PriceTable)
+        foreach (var (match, inPrice, outPrice, cacheReadPrice) in PriceTable)
         {
             if (model.Contains(match, StringComparison.OrdinalIgnoreCase))
-                return Compute(inPrice, outPrice, input, output, cacheRead, cacheCreation);
+                return Compute(inPrice, outPrice, cacheReadPrice, input, output, cacheRead, cacheCreation);
         }
 
-        return Compute(FallbackPrice.InputPerMTok, FallbackPrice.OutputPerMTok, input, output, cacheRead, cacheCreation);
+        return Compute(FallbackPrice.InputPerMTok, FallbackPrice.OutputPerMTok, FallbackPrice.CacheReadPerMTok, input, output, cacheRead, cacheCreation);
     }
 
     /// <summary>
@@ -135,12 +149,13 @@ public static class CostAnalytics
     public static double EstimateNextTurnCostUsd(string model, long contextTokens)
         => EstimateCostUsd(model, 0, 0, contextTokens, 0);
 
-    private static double Compute(double inPrice, double outPrice, long input, long output, long cacheRead, long cacheCreation)
+    private static double Compute(double inPrice, double outPrice, double? cacheReadPrice,
+        long input, long output, long cacheRead, long cacheCreation)
     {
         const double perTok = 1.0 / 1_000_000.0;
         return input * perTok * inPrice
              + output * perTok * outPrice
-             + cacheRead * perTok * (inPrice * CacheReadMultiplier)
+             + cacheRead * perTok * (cacheReadPrice ?? inPrice * CacheReadMultiplier)
              + cacheCreation * perTok * (inPrice * CacheCreationMultiplier);
     }
 
