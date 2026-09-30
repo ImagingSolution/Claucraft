@@ -77,6 +77,8 @@ public class DocumentViewPanel : Panel
     // Prompts sent while Claude was busy, waiting for the turn to end
     private readonly StackPanel _queueView;
     private IReadOnlyList<string> _queueItems = Array.Empty<string>();
+    // The selector the CLI is sitting on (permission, plan approval, menu), as a card after the reply
+    private Control? _liveCard;
 
     /// <summary>The reader took back a queued prompt, by its index in the queue.</summary>
     public event Action<int>? QueuedPromptRemoved;
@@ -514,13 +516,31 @@ public class DocumentViewPanel : Panel
     // shows the spinner too, since the CLI takes a moment to start its own.
     private void PlaceWorkingView()
     {
+        if (_liveCard != null) _messagesStack.Children.Remove(_liveCard);
         _messagesStack.Children.Remove(_workingView);
         _messagesStack.Children.Remove(_queueView);
         // A fixed-width cell, so the text beside it holds still while the glyph changes shape
         _workingGlyph.FontSize = _baseFontSize;
         _workingGlyph.Width = _baseFontSize * 1.2;
+        if (_liveCard != null) _messagesStack.Children.Add(_liveCard);
         if (IsBusy) _messagesStack.Children.Add(_workingView);
         if (_queueItems.Count > 0) _messagesStack.Children.Add(_queueView);
+    }
+
+    /// <summary>
+    /// Shows the card for the selector the CLI is waiting on after the last reply, where it reads
+    /// as part of the conversation instead of covering it; null takes it down.
+    /// </summary>
+    public void SetLiveCard(Control? card)
+    {
+        if (ReferenceEquals(card, _liveCard)) return;
+        if (_liveCard != null) _messagesStack.Children.Remove(_liveCard);
+        _liveCard = card;
+        PlaceWorkingView();
+        if (card == null) return;
+        SetEmptyState(null);
+        _autoScroll = true;
+        ScrollToBottom();
     }
 
     /// <summary>Hides a rewound prompt and what followed it (see <see cref="_hideFromUuid"/>).</summary>
@@ -622,6 +642,7 @@ public class DocumentViewPanel : Panel
         _viewMessages = messages;
         UpdateExtras(messages);
         RemovePendingView();
+        if (_liveCard != null) _messagesStack.Children.Remove(_liveCard);
         _messagesStack.Children.Remove(_workingView);
         _messagesStack.Children.Remove(_queueView);
 

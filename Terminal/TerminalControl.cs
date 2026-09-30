@@ -1455,7 +1455,6 @@ public partial class TerminalControl : Control, IDisposable
                 docH));
         }
         MeasureSidePane(availableSize);
-        _permissionOverlay?.Measure(availableSize);
         return availableSize;
     }
 
@@ -1574,13 +1573,6 @@ public partial class TerminalControl : Control, IDisposable
             }
         }
         ArrangeSidePane(finalSize);
-
-        // Position permission overlay (centered, above input)
-        if (_permissionOverlay != null)
-        {
-            double docH = Math.Max(0, finalSize.Height - InputAreaHeight - ExpandedPanelHeight);
-            _permissionOverlay.Arrange(new Rect(0, 0, ChatWidth(finalSize.Width), docH));
-        }
 
         // Position search bar at top-right
         if (_searchBar != null && _searchVisible)
@@ -4538,9 +4530,7 @@ public partial class TerminalControl : Control, IDisposable
 
         var content = new StackPanel
         {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            MaxWidth = 560,
+            HorizontalAlignment = HorizontalAlignment.Left,
         };
         content.Children.Add(new TextBlock
         {
@@ -4553,9 +4543,9 @@ public partial class TerminalControl : Control, IDisposable
             FontSize = 14,
             FontWeight = FontWeight.SemiBold,
             TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
+            TextAlignment = TextAlignment.Left,
             Foreground = primary,
-            HorizontalAlignment = HorizontalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Left,
             Margin = new Thickness(0, 0, 0, 8),
         });
 
@@ -4577,7 +4567,7 @@ public partial class TerminalControl : Control, IDisposable
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(5),
                 Padding = new Thickness(8, 2),
-                HorizontalAlignment = HorizontalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
                 Margin = new Thickness(0, 0, 0, 6),
                 Child = new TextBlock
                 {
@@ -4595,7 +4585,7 @@ public partial class TerminalControl : Control, IDisposable
                 FontSize = 12,
                 FontWeight = FontWeight.SemiBold,
                 TextWrapping = TextWrapping.Wrap,
-                TextAlignment = TextAlignment.Center,
+                TextAlignment = TextAlignment.Left,
                 Foreground = primary,
                 Margin = new Thickness(0, 0, 0, 2),
             });
@@ -4607,7 +4597,7 @@ public partial class TerminalControl : Control, IDisposable
                     Text = explanation.Detail,
                     FontSize = 11,
                     TextWrapping = TextWrapping.Wrap,
-                    TextAlignment = TextAlignment.Center,
+                    TextAlignment = TextAlignment.Left,
                     Foreground = secondary,
                     Margin = new Thickness(0, 0, 0, 10),
                 });
@@ -4639,13 +4629,13 @@ public partial class TerminalControl : Control, IDisposable
                     Text = prompt.Footer,
                     FontSize = 11,
                     TextWrapping = TextWrapping.Wrap,
-                    TextAlignment = TextAlignment.Center,
+                    TextAlignment = TextAlignment.Left,
                     Foreground = secondary,
                     Margin = new Thickness(0, 8, 0, 6),
                 });
             }
             var cancel = MakeChoiceButton(Services.Loc.Get("MenuCancel", "Cancel (Esc)"), "Esc", null, false);
-            cancel.HorizontalAlignment = HorizontalAlignment.Center;
+            cancel.HorizontalAlignment = HorizontalAlignment.Left;
             cancel.Click += (_, _) => { HidePermissionOverlay(); _pty?.WriteInput("\x1b"); };
             content.Children.Add(cancel);
         }
@@ -4654,7 +4644,7 @@ public partial class TerminalControl : Control, IDisposable
             var buttonPanel = new WrapPanel
             {
                 Orientation = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
             };
             ChoiceOption? textOption = null;
             int shown = 0;
@@ -4699,7 +4689,7 @@ public partial class TerminalControl : Control, IDisposable
                 var row = new StackPanel
                 {
                     Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left,
                     Margin = new Thickness(0, 10, 0, 0),
                 };
                 row.Children.Add(box);
@@ -4708,32 +4698,26 @@ public partial class TerminalControl : Control, IDisposable
             }
         }
 
+        // A card in the transcript, after the reply it follows, styled like the chat's own
+        // question card rather than floating over the text
         _permissionOverlay = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(200, _isDark ? (byte)28 : (byte)240, _isDark ? (byte)28 : (byte)240, _isDark ? (byte)30 : (byte)245)),
-            Child = content,
-            Padding = new Thickness(20),
+            Background = new SolidColorBrush(Controls.ChatTheme.Surface(_isDark)),
+            BorderBrush = new SolidColorBrush(Controls.ChatTheme.Outline(_isDark)),
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(12),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(0, 0, 0, 40),
-            BoxShadow = new BoxShadows(new BoxShadow { OffsetY = 4, Blur = 16, Color = Color.FromArgb(80, 0, 0, 0) }),
+            Padding = new Thickness(16, 14),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Child = content,
         };
-
-        VisualChildren.Add(_permissionOverlay);
-        LogicalChildren.Add(_permissionOverlay);
-        InvalidateMeasure();
-        InvalidateArrange();
+        _docViewPanel?.SetLiveCard(_permissionOverlay);
     }
 
     private void HidePermissionOverlay()
     {
         if (_permissionOverlay == null) return;
-        VisualChildren.Remove(_permissionOverlay);
-        LogicalChildren.Remove(_permissionOverlay);
+        _docViewPanel?.SetLiveCard(null);
         _permissionOverlay = null;
-        InvalidateMeasure();
-        InvalidateArrange();
     }
 
     // ── Diagram Cache ──
