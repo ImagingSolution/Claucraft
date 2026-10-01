@@ -134,7 +134,10 @@ public class DocumentViewPanel : Panel
     private int _matchIndex = -1;
 
     private string? _currentSessionPath;
-    private int _lastLineCount;
+    // Size of the transcript when it was last read. Not a line count: a poll that lands while
+    // the CLI is still writing a row counts the half-written line, and the count stays the same
+    // once the row is finished, so a question row would never get its card
+    private long _lastFileLength;
     private bool _autoScroll = true;
     private bool _isDark;
     private Typeface _codeTypeface;
@@ -572,7 +575,7 @@ public class DocumentViewPanel : Panel
         _agentPath = null;
         _extrasPanel.Children.Clear();
         _extrasKey = "";
-        _lastLineCount = 0;
+        _lastFileLength = 0;
         SetEmptyState(Loc.Get("NoSession", "No session loaded"));
         _titleText.Text = "";
         _projectChip.IsVisible = false;
@@ -614,7 +617,7 @@ public class DocumentViewPanel : Panel
         if (string.IsNullOrEmpty(path)) return;
         if (!System.IO.File.Exists(path)) return;
         bool pendingExpired = _pendingView != null && DateTime.UtcNow - _pendingSince > PendingPromptTimeout;
-        if (CountLines(path) == _lastLineCount && !pendingExpired) return;
+        if (FileLength(path) == _lastFileLength && !pendingExpired) return;
 
         if (Refresh(force: false) && _autoScroll)
             ScrollToBottom();
@@ -626,6 +629,8 @@ public class DocumentViewPanel : Panel
         var path = _agentPath ?? _currentSessionPath;
         if (path == null) return false;
 
+        // Taken before reading, so bytes that land during the read trigger another pass
+        _lastFileLength = FileLength(path);
         var messages = SessionMessageReader.ReadSession(path);
         if (_agentPath == null)
         {
@@ -638,7 +643,6 @@ public class DocumentViewPanel : Panel
             _shownMessages = messages;
             UpdateHeader(path, messages);
         }
-        _lastLineCount = CountLines(path);
         _viewMessages = messages;
         UpdateExtras(messages);
         RemovePendingView();
@@ -2402,17 +2406,16 @@ public class DocumentViewPanel : Panel
         Dispatcher.UIThread.Post(() => _scrollViewer.ScrollToEnd(), DispatcherPriority.Background);
     }
 
-    private static int CountLines(string filePath)
+    private static long FileLength(string filePath)
     {
+        // Through a handle: FileInfo reads the directory entry, which NTFS updates lazily while
+        // the CLI holds the file open
         try
         {
-            using var stream = new System.IO.FileStream(filePath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite);
-            using var reader = new System.IO.StreamReader(stream);
-            int count = 0;
-            while (reader.ReadLine() != null) count++;
-            return count;
+            using var stream = new System.IO.FileStream(filePath, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete);
+            return stream.Length;
         }
-        catch { return 0; }
+        catch { return -1; }
     }
 }
 
