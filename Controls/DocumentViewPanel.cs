@@ -304,6 +304,7 @@ public class DocumentViewPanel : Panel
 
         _workingStatus = new TextBlock
         {
+            Text = " ",
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
@@ -427,7 +428,8 @@ public class DocumentViewPanel : Panel
     /// </summary>
     public void SetWorking(bool working, string? status = null)
     {
-        status = working ? status : null;
+        // Never empty, so the row keeps its height when the status line goes away
+        status = working && !string.IsNullOrEmpty(status) ? status : " ";
         if (_workingStatus.Text != status)
         {
             _workingStatus.Text = status;
@@ -525,8 +527,14 @@ public class DocumentViewPanel : Panel
         // A fixed-width cell, so the text beside it holds still while the glyph changes shape
         _workingGlyph.FontSize = _baseFontSize;
         _workingGlyph.Width = _baseFontSize * 1.2;
+        _workingStatus.FontSize = _baseFontSize * 0.9;
         if (_liveCard != null) _messagesStack.Children.Add(_liveCard);
-        if (IsBusy) _messagesStack.Children.Add(_workingView);
+        // Between turns the row stays in place, only blank: the CLI's working state flickers
+        // during a reply, and taking the row out shortened the column and moved the text
+        bool busy = IsBusy;
+        _workingView.Opacity = busy ? 1 : 0;
+        _workingGlyph.Spinning = busy;
+        if (busy || _messagesStack.Children.Count > 0) _messagesStack.Children.Add(_workingView);
         if (_queueItems.Count > 0) _messagesStack.Children.Add(_queueView);
     }
 
@@ -2431,6 +2439,19 @@ public class WorkingSpinnerGlyph : TextBlock
     private static readonly FontFamily GlyphFont = new("Segoe UI Symbol,Segoe UI Emoji,Segoe UI");
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(80) };
     private int _frame;
+    private bool _spinning = true;
+
+    /// <summary>Off while the row is only holding its place, so a hidden glyph does not redraw.</summary>
+    public bool Spinning
+    {
+        get => _spinning;
+        set
+        {
+            _spinning = value;
+            if (value && VisualRoot != null) _timer.Start();
+            else _timer.Stop();
+        }
+    }
 
     public WorkingSpinnerGlyph()
     {
@@ -2444,7 +2465,7 @@ public class WorkingSpinnerGlyph : TextBlock
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
         base.OnAttachedToVisualTree(e);
-        _timer.Start();
+        if (_spinning) _timer.Start();
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
